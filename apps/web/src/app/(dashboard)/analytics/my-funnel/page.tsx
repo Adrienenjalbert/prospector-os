@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 
 import { formatGbp } from "@/lib/utils";
+import { FunnelWaterfall } from "@/components/analytics/funnel-waterfall";
 
 type StageRow = {
   stage: string;
@@ -146,14 +147,35 @@ export default function MyFunnelPage() {
           ))}
         </section>
 
-        <section className="relative overflow-hidden rounded-xl border border-dashed border-zinc-700 bg-zinc-900/40">
-          <div className="flex min-h-[280px] flex-col items-center justify-center gap-2 p-10 text-center">
-            <p className="text-sm font-medium text-zinc-400">FunnelWaterfall</p>
-            <p className="max-w-md text-sm text-zinc-500">
-              Chart placeholder — connect benchmark and stage volumes to render
-              the waterfall visualization.
-            </p>
-          </div>
+        <div className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
+          <p className="text-sm text-amber-300/80">
+            Showing demo data. Connect your CRM to see your real funnel metrics.
+          </p>
+        </div>
+
+        <section>
+          <FunnelWaterfall
+            stages={stageRows.slice(0, -1).map((row, i) => {
+              const next = stageRows[i + 1];
+              return {
+                name: row.stage,
+                entered: row.deals,
+                converted: next ? next.deals : row.deals,
+                dropped: next ? row.deals - next.deals : 0,
+                conversionRate: row.repConv,
+                dropRate: 100 - row.repConv,
+                benchmarkConvRate: row.benchmarkConv,
+                status:
+                  row.delta <= -4
+                    ? "CRITICAL"
+                    : row.delta < 0
+                      ? "MONITOR"
+                      : row.delta >= 4
+                        ? "OPPORTUNITY"
+                        : "HEALTHY",
+              };
+            })}
+          />
         </section>
 
         <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">

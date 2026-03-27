@@ -86,6 +86,13 @@ export default function DashboardLayout({
 
       <div className="flex flex-1 overflow-hidden">
         <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/50 sm:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden
+          />
+        )}
         <ChatSidebar
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}

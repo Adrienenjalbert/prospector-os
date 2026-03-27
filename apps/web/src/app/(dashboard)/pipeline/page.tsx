@@ -50,8 +50,18 @@ export default function PipelinePage() {
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {sorted.length === 0 ? (
-            <div className="col-span-full rounded-xl border border-dashed border-zinc-700 bg-zinc-900/30 px-6 py-16 text-center text-sm text-zinc-500">
-              No open deals.
+            <div className="col-span-full flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/30 px-6 py-16 text-center">
+              <p className="text-base font-medium text-zinc-300">
+                No open deals yet
+              </p>
+              <p className="max-w-sm text-sm leading-relaxed text-zinc-500">
+                Once your CRM is connected, your active deals will appear here
+                grouped by stage. Check your{" "}
+                <a href="/inbox" className="text-zinc-300 underline hover:text-zinc-100">
+                  inbox
+                </a>{" "}
+                for accounts worth prospecting.
+              </p>
             </div>
           ) : (
             sorted.map((deal) => (

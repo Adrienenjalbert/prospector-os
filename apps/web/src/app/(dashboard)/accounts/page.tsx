@@ -83,9 +83,19 @@ export default function AccountsPage() {
                 <tr>
                   <td
                     colSpan={7}
-                    className="px-4 py-16 text-center text-sm text-zinc-500"
+                    className="px-4 py-16 text-center"
                   >
-                    No accounts found. Connect your CRM to get started.
+                    <p className="text-base font-medium text-zinc-300">
+                      No accounts loaded
+                    </p>
+                    <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-zinc-500">
+                      Connect your CRM in{" "}
+                      <a href="/settings" className="text-zinc-300 underline hover:text-zinc-100">
+                        Settings
+                      </a>{" "}
+                      to sync your accounts. They&apos;ll be scored and prioritised
+                      automatically.
+                    </p>
                   </td>
                 </tr>
               </tbody>

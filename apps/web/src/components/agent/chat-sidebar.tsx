@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Send, X } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { Loader2, Send, X } from "lucide-react";
 
 import { useAgentChat } from "@/lib/hooks/use-agent-chat";
 
@@ -19,16 +19,28 @@ const suggestedPrompts = [
   "What signals should I prioritise today?",
 ] as const;
 
+const WELCOME_MESSAGE =
+  "Welcome to Prospector OS. Ask about accounts, funnel health, or outreach — your context loads from CRM.";
+
 export function ChatSidebar({ isOpen, onClose }: ChatSidebarProps) {
-  const [input, setInput] = useState("");
+  const { messages, input, setInput, handleSubmit, append, isLoading, error } =
+    useAgentChat();
 
-  const _agentChat = useAgentChat();
-  void _agentChat;
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    setInput("");
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages, isLoading]);
+
+  function handleSuggestedPrompt(prompt: string) {
+    append({ role: "user", content: prompt });
   }
+
+  const showSuggestions = messages.length === 0;
+  const canSend = input.trim().length > 0 && !isLoading;
 
   return (
     <div
@@ -51,35 +63,48 @@ export function ChatSidebar({ isOpen, onClose }: ChatSidebarProps) {
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="flex flex-col gap-4">
-          <ChatMessage
-            role="assistant"
-            content="Welcome to Prospector OS. Ask about accounts, funnel health, or outreach — your context loads from CRM."
-          />
+          <ChatMessage role="assistant" content={WELCOME_MESSAGE} />
+          {messages.map((m) => (
+            <ChatMessage key={m.id} role={m.role as "user" | "assistant"} content={m.content} />
+          ))}
+          {isLoading && messages.at(-1)?.role === "user" && (
+            <div className="flex items-center gap-2 px-1 text-sm text-zinc-500">
+              <Loader2 className="size-4 animate-spin" />
+              Thinking…
+            </div>
+          )}
+          {error && (
+            <div className="rounded-lg border border-red-900/40 bg-red-950/20 px-3 py-2 text-sm text-red-300">
+              Something went wrong. Try again.
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-zinc-800 px-4 py-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Suggested
-        </p>
-        <div className="mt-2 flex flex-col gap-2">
-          {suggestedPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => setInput(prompt)}
-              className="rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-left text-xs leading-snug text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100"
-            >
-              {prompt}
-            </button>
-          ))}
+      {showSuggestions && (
+        <div className="shrink-0 border-t border-zinc-800 px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Suggested
+          </p>
+          <div className="mt-2 flex flex-col gap-2">
+            {suggestedPrompts.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => handleSuggestedPrompt(prompt)}
+                className="rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-left text-xs leading-snug text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <form
-        onSubmit={handleSend}
+        onSubmit={handleSubmit}
         className="flex shrink-0 gap-2 border-t border-zinc-800 p-4"
       >
         <label htmlFor="agent-chat-input" className="sr-only">
@@ -91,14 +116,20 @@ export function ChatSidebar({ isOpen, onClose }: ChatSidebarProps) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Message Prospector OS…"
-          className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none ring-zinc-600 focus:border-zinc-600 focus:ring-2 focus:ring-zinc-600/40"
+          disabled={isLoading}
+          className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none ring-zinc-600 focus:border-zinc-600 focus:ring-2 focus:ring-zinc-600/40 disabled:opacity-50"
         />
         <button
           type="submit"
-          className="inline-flex shrink-0 items-center justify-center rounded-lg bg-zinc-100 px-3 py-2 text-zinc-900 transition-colors hover:bg-zinc-200"
+          disabled={!canSend}
+          className="inline-flex shrink-0 items-center justify-center rounded-lg bg-zinc-100 px-3 py-2 text-zinc-900 transition-colors hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
           aria-label="Send message"
         >
-          <Send className="size-4" />
+          {isLoading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Send className="size-4" />
+          )}
         </button>
       </form>
     </div>

@@ -15,7 +15,6 @@ const accountViewModel = {
     icpTier: null as "A" | "B" | "C" | "D" | null,
     priorityTier: null as "HOT" | "WARM" | "COOL" | "MONITOR" | null,
     dealValue: null as number | null,
-    urgencyMultiplier: null as number | null,
   },
   company: {
     industry: null as string | null,
@@ -107,10 +106,8 @@ export default async function AccountDetailPage({ params }: PageProps) {
 
   const tabs = [
     { id: "overview", label: "Overview" },
-    { id: "deals", label: "Deals" },
-    { id: "contacts", label: "Contacts" },
     { id: "signals", label: "Signals" },
-    { id: "activity", label: "Activity" },
+    { id: "contacts", label: "Contacts" },
   ] as const;
 
   return (
@@ -152,7 +149,7 @@ export default async function AccountDetailPage({ params }: PageProps) {
             </p>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Propensity
+                Win likelihood
               </p>
               <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-zinc-100">
                 {s.propensityPct != null ? (
@@ -185,14 +182,6 @@ export default async function AccountDetailPage({ params }: PageProps) {
               <p className="text-xs text-zinc-500">Deal value</p>
               <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-zinc-200">
                 {s.dealValue != null ? formatGbp(s.dealValue) : "—"}
-              </p>
-            </div>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
-              <p className="text-xs text-zinc-500">Urgency multiplier</p>
-              <p className="font-mono text-lg font-semibold tabular-nums text-zinc-200">
-                {s.urgencyMultiplier != null
-                  ? `${s.urgencyMultiplier.toFixed(2)}×`
-                  : "—"}
               </p>
             </div>
           </aside>
