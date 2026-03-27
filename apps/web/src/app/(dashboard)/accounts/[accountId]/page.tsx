@@ -6,8 +6,58 @@ type PageProps = {
   params: Promise<{ accountId: string }>;
 };
 
-/** Shape-only placeholders; replace with CRM / loader data. */
-const accountViewModel = {
+const DEMO_ACCOUNTS: Record<string, typeof defaultViewModel> = {
+  'demo-001': {
+    displayName: 'Acme Logistics',
+    score: { expectedRevenue: 200_000, propensityPct: 25, icpTier: 'A', priorityTier: 'HOT', dealValue: 800_000 },
+    company: { industry: 'Logistics', size: '1,200 employees', hq: 'London, UK', revenue: 120_000_000, founded: '1998' },
+    scoringDimensions: [
+      { id: 'icp', label: 'ICP Fit', score: 85, weight: 0.15 },
+      { id: 'signal', label: 'Signals', score: 30, weight: 0.20 },
+      { id: 'engage', label: 'Engagement', score: 20, weight: 0.15 },
+      { id: 'contact', label: 'Contacts', score: 15, weight: 0.20 },
+    ],
+    signals: [
+      { id: 's1', title: 'Hiring Surge — 5 temp roles posted', detectedAt: '2 days ago' },
+      { id: 's2', title: 'New VP Operations appointed', detectedAt: '2 weeks ago' },
+    ],
+    contacts: [
+      { id: 'c1', name: 'Sarah Chen', title: 'VP Operations' },
+      { id: 'c2', name: 'James Miller', title: 'Dir. Facilities' },
+    ],
+  },
+  'demo-002': {
+    displayName: 'Beta Warehousing',
+    score: { expectedRevenue: 160_000, propensityPct: 80, icpTier: 'A', priorityTier: 'WARM', dealValue: 200_000 },
+    company: { industry: 'Warehousing', size: '800 employees', hq: 'Manchester, UK', revenue: 85_000_000, founded: '2005' },
+    scoringDimensions: [
+      { id: 'icp', label: 'ICP Fit', score: 90, weight: 0.15 },
+      { id: 'signal', label: 'Signals', score: 75, weight: 0.20 },
+      { id: 'engage', label: 'Engagement', score: 68, weight: 0.15 },
+    ],
+    signals: [
+      { id: 's1', title: 'Hiring Surge — 8 temp warehouse roles', detectedAt: '3 days ago' },
+    ],
+    contacts: [
+      { id: 'c1', name: 'James Miller', title: 'Dir. Facilities' },
+    ],
+  },
+  'demo-003': {
+    displayName: 'Gamma Manufacturing',
+    score: { expectedRevenue: 63_000, propensityPct: 35, icpTier: 'A', priorityTier: 'WARM', dealValue: null },
+    company: { industry: 'Light Industrial', size: '1,400 employees', hq: 'Birmingham, UK', revenue: 95_000_000, founded: '1992' },
+    scoringDimensions: [
+      { id: 'icp', label: 'ICP Fit', score: 92, weight: 0.15 },
+      { id: 'signal', label: 'Signals', score: 40, weight: 0.20 },
+    ],
+    signals: [
+      { id: 's1', title: 'New VP Operations started 2 months ago', detectedAt: '8 weeks ago' },
+    ],
+    contacts: [],
+  },
+};
+
+const defaultViewModel = {
   displayName: null as string | null,
   score: {
     expectedRevenue: null as number | null,
@@ -100,7 +150,8 @@ function ScoringBreakdownPlaceholder() {
 
 export default async function AccountDetailPage({ params }: PageProps) {
   const { accountId } = await params;
-  const name = accountViewModel.displayName ?? "—";
+  const accountViewModel = DEMO_ACCOUNTS[accountId] ?? defaultViewModel;
+  const name = accountViewModel.displayName ?? accountId;
   const s = accountViewModel.score;
   const c = accountViewModel.company;
 

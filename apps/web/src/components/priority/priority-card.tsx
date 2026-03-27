@@ -1,6 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
+import { Phone } from 'lucide-react'
 import { cn, formatGbp } from '@/lib/utils'
 
 export interface PriorityCardProps {
@@ -20,10 +22,10 @@ export interface PriorityCardProps {
 }
 
 const SEVERITY = {
-  critical: { border: 'border-l-red-500', emoji: '🔴', label: 'STALL' },
-  high: { border: 'border-l-amber-500', emoji: '🟡', label: 'SIGNAL' },
-  medium: { border: 'border-l-emerald-500', emoji: '🟢', label: 'PROSPECT' },
-  low: { border: 'border-l-blue-500', emoji: '🔵', label: 'PIPELINE' },
+  critical: { border: 'border-l-red-500', emoji: '🔴' },
+  high: { border: 'border-l-amber-500', emoji: '🟡' },
+  medium: { border: 'border-l-emerald-500', emoji: '🟢' },
+  low: { border: 'border-l-blue-500', emoji: '🔵' },
 } as const
 
 export function PriorityCard({
@@ -41,6 +43,35 @@ export function PriorityCard({
   onFeedback,
 }: PriorityCardProps) {
   const sev = SEVERITY[severity]
+  const [completed, setCompleted] = useState(false)
+  const [feedbackGiven, setFeedbackGiven] = useState<'positive' | null>(null)
+
+  function handleComplete() {
+    setCompleted(true)
+    onComplete()
+  }
+
+  function handleFeedback() {
+    setFeedbackGiven('positive')
+    onFeedback('positive')
+  }
+
+  if (completed) {
+    return (
+      <div className="rounded-lg border border-zinc-800/50 bg-zinc-900/30 p-4 text-center">
+        <p className="text-sm text-zinc-500">
+          <span className="mr-1.5">✓</span>
+          {accountName} marked done.{' '}
+          <button
+            onClick={() => setCompleted(false)}
+            className="text-zinc-400 underline hover:text-zinc-200"
+          >
+            Undo
+          </button>
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -50,7 +81,6 @@ export function PriorityCard({
       )}
     >
       <div className="p-4 sm:p-5">
-        {/* Row 1: Account + values */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-base">{sev.emoji}</span>
@@ -63,7 +93,7 @@ export function PriorityCard({
           </div>
           <div className="flex shrink-0 items-center gap-3 text-sm text-zinc-400">
             {dealValue != null && (
-              <span>{formatGbp(dealValue)}</span>
+              <span className="hidden sm:inline">{formatGbp(dealValue)}</span>
             )}
             <span className="font-medium text-zinc-200">
               {formatGbp(expectedRevenue)}
@@ -71,12 +101,10 @@ export function PriorityCard({
           </div>
         </div>
 
-        {/* Row 2: Why this account — full context, not truncated */}
         <p className="mt-2 text-sm leading-relaxed text-zinc-400">
           {triggerDetail}
         </p>
 
-        {/* Row 3: What to do */}
         <div className="mt-3 flex items-start gap-2">
           <span className="mt-0.5 text-emerald-400">▸</span>
           <p className="text-sm font-medium text-zinc-200">
@@ -84,34 +112,40 @@ export function PriorityCard({
             {contactPhone && (
               <a
                 href={`tel:${contactPhone}`}
-                className="ml-2 text-zinc-500 hover:text-zinc-300"
+                className="ml-2 inline-flex items-center gap-1 rounded-md bg-emerald-950/40 px-2 py-0.5 text-xs font-medium text-emerald-400 hover:bg-emerald-950/60 hover:text-emerald-300"
               >
+                <Phone className="size-3" />
                 {contactPhone}
               </a>
             )}
           </p>
         </div>
 
-        {/* Actions: just the primary action + dismiss */}
         <div className="mt-4 flex items-center justify-between border-t border-zinc-800/60 pt-3">
           <button
             onClick={onDraftOutreach}
-            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 active:bg-emerald-700"
           >
             {contactName ? `Draft email to ${contactName}` : 'Draft outreach'}
           </button>
 
           <div className="flex items-center gap-1">
             <button
-              onClick={() => onFeedback('positive')}
-              className="rounded-md p-2 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              onClick={handleFeedback}
+              disabled={feedbackGiven === 'positive'}
+              className={cn(
+                'rounded-md p-2 text-sm transition-colors',
+                feedbackGiven === 'positive'
+                  ? 'text-emerald-400'
+                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
+              )}
               aria-label="Helpful"
             >
-              👍
+              {feedbackGiven === 'positive' ? '👍' : '👍'}
             </button>
             <button
-              onClick={onComplete}
-              className="rounded-md px-3 py-2 text-sm text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              onClick={handleComplete}
+              className="rounded-md px-3 py-2 text-sm text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 active:bg-zinc-700"
             >
               Done
             </button>
