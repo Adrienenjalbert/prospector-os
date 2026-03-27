@@ -120,13 +120,11 @@ export default function MyFunnelPage() {
           </div>
         </div>
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <section className="grid gap-4 sm:grid-cols-3">
           {(
             [
               ["Pipeline", metrics.pipeline],
-              ["Expected Rev", metrics.expectedRev],
               ["Win Rate", metrics.winRate],
-              ["Avg Cycle", metrics.avgCycle],
               ["Stalls", metrics.stalls],
             ] as const
           ).map(([label, m]) => (

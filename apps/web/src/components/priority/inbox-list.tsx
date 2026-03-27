@@ -5,17 +5,14 @@ import { PriorityCard, type PriorityCardProps } from './priority-card'
 type PriorityItem = Omit<PriorityCardProps, 'onDraftOutreach' | 'onComplete' | 'onFeedback'>
 
 export function InboxList({ items }: { items: PriorityItem[] }) {
-  function handleDraftOutreach(accountName: string) {
-    // TODO: Open chat sidebar with pre-filled prompt
-    console.log(`Draft outreach for ${accountName}`)
-  }
+  function handleDraftOutreach(accountName: string, contactName: string | null) {
+    const prompt = contactName
+      ? `Draft a follow-up email to ${contactName} at ${accountName}. Use the latest signals and my outreach tone.`
+      : `Draft an intro email to the decision-maker at ${accountName}. Reference their ICP fit and any recent signals.`
 
-  function handleComplete(accountId: string) {
-    console.log(`Completed ${accountId}`)
-  }
-
-  function handleFeedback(accountId: string, type: 'positive' | 'negative') {
-    console.log(`Feedback ${type} for ${accountId}`)
+    window.dispatchEvent(
+      new CustomEvent('prospector:open-chat', { detail: { prompt } })
+    )
   }
 
   return (
@@ -24,9 +21,11 @@ export function InboxList({ items }: { items: PriorityItem[] }) {
         <PriorityCard
           key={item.accountId}
           {...item}
-          onDraftOutreach={() => handleDraftOutreach(item.accountName)}
-          onComplete={() => handleComplete(item.accountId)}
-          onFeedback={(type) => handleFeedback(item.accountId, type)}
+          onDraftOutreach={() =>
+            handleDraftOutreach(item.accountName, item.contactName)
+          }
+          onComplete={() => {}}
+          onFeedback={() => {}}
         />
       ))}
     </div>

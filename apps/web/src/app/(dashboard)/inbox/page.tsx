@@ -207,13 +207,11 @@ export default async function InboxPage() {
         <InboxList items={displayItems} />
       </div>
 
-      <div className="mt-10 rounded-lg border border-zinc-800/50 bg-zinc-900/30 p-6 text-center">
-        <p className="text-sm text-zinc-500">
-          {useDemoData
-            ? 'These are demo priorities. Your real data will appear once your CRM is connected.'
-            : 'These are your top priorities for today. Complete them and check back tomorrow.'}
+      {!useDemoData && displayItems.length > 0 && (
+        <p className="mt-8 text-center text-sm text-zinc-600">
+          That&apos;s everything for today.
         </p>
-      </div>
+      )}
     </div>
   )
 }

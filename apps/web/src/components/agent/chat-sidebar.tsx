@@ -10,6 +10,8 @@ import { ChatMessage } from "./chat-message";
 export interface ChatSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  initialPrompt?: string | null;
+  onPromptConsumed?: () => void;
 }
 
 const suggestedPrompts = [
@@ -22,11 +24,20 @@ const suggestedPrompts = [
 const WELCOME_MESSAGE =
   "Hi! I know your accounts, deals, and signals. Ask me anything — I'll give you specific names, numbers, and next steps.";
 
-export function ChatSidebar({ isOpen, onClose }: ChatSidebarProps) {
+export function ChatSidebar({ isOpen, onClose, initialPrompt, onPromptConsumed }: ChatSidebarProps) {
   const { messages, input, setInput, handleSubmit, append, isLoading, error } =
     useAgentChat();
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const promptSentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (initialPrompt && isOpen && initialPrompt !== promptSentRef.current) {
+      promptSentRef.current = initialPrompt;
+      append({ role: 'user', content: initialPrompt });
+      onPromptConsumed?.();
+    }
+  }, [initialPrompt, isOpen, append, onPromptConsumed]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({

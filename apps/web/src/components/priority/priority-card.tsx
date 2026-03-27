@@ -91,14 +91,9 @@ export function PriorityCard({
               {accountName}
             </Link>
           </div>
-          <div className="flex shrink-0 items-center gap-3 text-sm text-zinc-400">
-            {dealValue != null && (
-              <span className="hidden sm:inline">{formatGbp(dealValue)}</span>
-            )}
-            <span className="font-medium text-zinc-200">
-              {formatGbp(expectedRevenue)}
-            </span>
-          </div>
+          <span className="shrink-0 text-sm font-medium text-zinc-200">
+            {formatGbp(expectedRevenue)}
+          </span>
         </div>
 
         <p className="mt-2 text-sm leading-relaxed text-zinc-400">

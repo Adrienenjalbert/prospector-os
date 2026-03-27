@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bell, MessageSquare } from "lucide-react";
 import { ChatSidebar } from "@/components/agent/chat-sidebar";
 import { clsx } from "clsx";
@@ -20,6 +20,19 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [chatInitialPrompt, setChatInitialPrompt] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleOpenChat(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.prompt) {
+        setChatInitialPrompt(detail.prompt);
+      }
+      setSidebarOpen(true);
+    }
+    window.addEventListener('prospector:open-chat', handleOpenChat);
+    return () => window.removeEventListener('prospector:open-chat', handleOpenChat);
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-950">
@@ -93,6 +106,8 @@ export default function DashboardLayout({
         <ChatSidebar
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
+          initialPrompt={chatInitialPrompt}
+          onPromptConsumed={() => setChatInitialPrompt(null)}
         />
       </div>
     </div>
