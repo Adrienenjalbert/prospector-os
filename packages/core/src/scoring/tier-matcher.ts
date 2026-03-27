@@ -116,7 +116,7 @@ function evaluateLocationsInRegions(
     .map((c) => c.toLowerCase())
 
   const matchCount = locations.filter((loc) =>
-    allCities.includes(loc.city.toLowerCase())
+    loc.city && allCities.includes(loc.city.toLowerCase())
   ).length
 
   return matchCount >= minCount

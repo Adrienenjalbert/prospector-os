@@ -58,7 +58,7 @@ function computeQuality(
   for (const act of activities) {
     totalPoints += pointMap[act.type] ?? 1
   }
-  const normaliser = 80
+  const normaliser = 143
   return Math.min(100, Math.round((totalPoints / normaliser) * 100))
 }
 
@@ -73,8 +73,8 @@ function computeTrend(activities: CRMActivity[]): number {
     return days > 14 && days <= 28
   })
 
-  const last14Score = last14.length
-  const prior14Score = prior14.length
+  const last14Score = last14.reduce((s, a) => s + activityWeight(a.type), 0)
+  const prior14Score = prior14.reduce((s, a) => s + activityWeight(a.type), 0)
 
   if (prior14Score === 0) return last14Score > 0 ? 75 : 55
 
@@ -108,6 +108,16 @@ function computeRecency(
     if (daysAgo <= tier.max_days) return tier.score
   }
   return 5
+}
+
+const DEFAULT_ACTIVITY_WEIGHTS: Record<string, number> = {
+  proposal_sent: 25, meeting_multi_party: 20, meeting_one_on_one: 15,
+  call_connected: 10, email_reply_received: 8, call_attempted: 3,
+  email_opened_multiple: 2, email_opened_once: 1,
+}
+
+function activityWeight(type: string): number {
+  return DEFAULT_ACTIVITY_WEIGHTS[type] ?? 1
 }
 
 function daysSince(dateStr: string, now: Date): number {

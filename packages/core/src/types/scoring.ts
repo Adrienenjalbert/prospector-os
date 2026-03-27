@@ -90,12 +90,6 @@ export interface RecalibrationReport {
   generated_at: string
 }
 
-export interface ExpectedRevenueInput {
-  deal_value: number
-  propensity: number
-  urgency_multiplier: number
-}
-
 export interface DealValueEstimate {
   value: number
   source: 'actual_opportunity' | 'historical_tier_average' | 'fallback_config'

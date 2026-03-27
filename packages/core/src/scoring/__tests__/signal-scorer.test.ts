@@ -30,9 +30,17 @@ function makeSignal(overrides: Partial<Signal>): Signal {
 }
 
 describe('computeSignalMomentum', () => {
-  it('returns 0 for no signals', () => {
+  it('returns 0 for no signals with no previous score', () => {
     const result = computeSignalMomentum({ signals: [] }, testSignalConfig)
     expect(result.score).toBe(0)
+  })
+
+  it('detects "going dark" when signals vanish', () => {
+    const result = computeSignalMomentum(
+      { signals: [], previous_signal_score: 80 },
+      testSignalConfig
+    )
+    expect(result.score).toBeLessThanOrEqual(5)
   })
 
   it('scores higher with multiple relevant signals', () => {

@@ -65,27 +65,29 @@ export async function assembleAgentContext(
 
   const accountIds = (accountsResult.data ?? []).map((a) => a.id)
 
-  const signalsResult = await supabase
-    .from('signals')
-    .select('id, company_id, signal_type, title, urgency, relevance_score, detected_at')
-    .eq('tenant_id', tenantId)
-    .in('company_id', accountIds.length > 0 ? accountIds : ['none'])
-    .gte('detected_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
-    .order('weighted_score', { ascending: false })
-    .limit(20)
+  const safeIds = accountIds.length > 0 ? accountIds : ['none']
 
-  const oppsForAccounts = await supabase
-    .from('opportunities')
-    .select('company_id, stage, value, days_in_stage, is_stalled')
-    .eq('tenant_id', tenantId)
-    .in('company_id', accountIds.length > 0 ? accountIds : ['none'])
-    .eq('is_closed', false)
-
-  const contactCounts = await supabase
-    .from('contacts')
-    .select('company_id')
-    .eq('tenant_id', tenantId)
-    .in('company_id', accountIds.length > 0 ? accountIds : ['none'])
+  const [signalsResult, oppsForAccounts, contactCounts] = await Promise.all([
+    supabase
+      .from('signals')
+      .select('id, company_id, signal_type, title, urgency, relevance_score, detected_at')
+      .eq('tenant_id', tenantId)
+      .in('company_id', safeIds)
+      .gte('detected_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+      .order('weighted_score', { ascending: false })
+      .limit(20),
+    supabase
+      .from('opportunities')
+      .select('company_id, stage, value, days_in_stage, is_stalled')
+      .eq('tenant_id', tenantId)
+      .in('company_id', safeIds)
+      .eq('is_closed', false),
+    supabase
+      .from('contacts')
+      .select('company_id')
+      .eq('tenant_id', tenantId)
+      .in('company_id', safeIds),
+  ])
 
   const oppsByCompany = new Map<string, typeof oppsForAccounts.data>()
   for (const opp of oppsForAccounts.data ?? []) {
@@ -129,8 +131,22 @@ export async function assembleAgentContext(
     }
   })
 
+  const benchmarksByStage = new Map(
+    (companyBenchResult.data ?? []).map((b) => [b.stage_name, b])
+  )
+
   const funnelComparison: FunnelComparison[] = (repBenchResult.data ?? []).map((rb) => {
-    const cb = (companyBenchResult.data ?? []).find((c) => c.stage_name === rb.stage_name)
+    const cb = benchmarksByStage.get(rb.stage_name)
+    const deltaDrop = rb.drop_rate - (cb?.drop_rate ?? 0)
+    const isHighDrop = deltaDrop >= 5
+    const isHighVolume = rb.deal_count >= (cb?.deal_count ?? 1)
+
+    let status: FunnelComparison['status']
+    if (isHighDrop && isHighVolume) status = 'CRITICAL'
+    else if (isHighDrop) status = 'MONITOR'
+    else if (isHighVolume) status = 'OPPORTUNITY'
+    else status = 'HEALTHY'
+
     return {
       stage: rb.stage_name,
       rep_conv: rb.conversion_rate,
@@ -140,15 +156,16 @@ export async function assembleAgentContext(
       bench_conv: cb?.conversion_rate ?? 0,
       bench_drop: cb?.drop_rate ?? 0,
       delta_conv: Math.round((rb.conversion_rate - (cb?.conversion_rate ?? 0)) * 100) / 100,
-      delta_drop: Math.round((rb.drop_rate - (cb?.drop_rate ?? 0)) * 100) / 100,
+      delta_drop: Math.round(deltaDrop * 100) / 100,
       impact_score: rb.impact_score,
       stall_count: rb.stall_count,
-      status: 'HEALTHY' as const,
+      status,
     }
   })
 
   const stalledDeals: StalledDealSummary[] = (stalledResult.data ?? []).map((o) => {
     const company = (accountsResult.data ?? []).find((a) => a.id === o.company_id)
+    const stageBench = benchmarksByStage.get(o.stage)
     return {
       id: o.id,
       name: o.name,
@@ -157,7 +174,7 @@ export async function assembleAgentContext(
       stage: o.stage,
       value: o.value,
       days_in_stage: o.days_in_stage,
-      median_days: 14,
+      median_days: stageBench?.median_days_in_stage ?? 14,
       stall_reason: o.stall_reason,
       last_activity_date: null,
     }

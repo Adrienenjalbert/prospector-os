@@ -10,6 +10,7 @@ export interface ExpectedRevenueInput {
 
 export interface ExpectedRevenueResult {
   expected_revenue: number
+  priority_score: number
   urgency_multiplier: number
   priority_tier: PriorityTier
   priority_reason: string
@@ -51,13 +52,14 @@ export function computeExpectedRevenue(
     Math.min(uc.max_multiplier, 1.0 + urgencyBonus)
   )
 
-  const expectedRevenue = deal_value * (propensity / 100) * urgencyMultiplier
-  const rounded = Math.round(expectedRevenue * 100) / 100
+  const expectedRevenue = deal_value * (propensity / 100)
+  const priorityScore = expectedRevenue * urgencyMultiplier
 
   const tier = assignPriorityTier(propensity, config.priority_tiers)
 
   return {
-    expected_revenue: rounded,
+    expected_revenue: Math.round(expectedRevenue * 100) / 100,
+    priority_score: Math.round(priorityScore * 100) / 100,
     urgency_multiplier: Math.round(urgencyMultiplier * 100) / 100,
     priority_tier: tier,
     priority_reason:

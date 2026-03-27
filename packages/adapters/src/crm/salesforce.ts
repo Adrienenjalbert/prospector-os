@@ -23,10 +23,15 @@ export interface SalesforceCredentials {
   access_token?: string
 }
 
+function escapeSoql(value: string): string {
+  return value.replace(/[\\']/g, '\\$&')
+}
+
 export class SalesforceAdapter implements CRMAdapter {
   readonly name = 'salesforce'
   private credentials: SalesforceCredentials
   private accessToken: string | null = null
+  private tokenRetried = false
 
   constructor(credentials: SalesforceCredentials) {
     this.credentials = credentials
@@ -37,10 +42,10 @@ export class SalesforceAdapter implements CRMAdapter {
     const conditions: string[] = []
 
     if (filters.owner_crm_id) {
-      conditions.push(`OwnerId = '${filters.owner_crm_id}'`)
+      conditions.push(`OwnerId = '${escapeSoql(filters.owner_crm_id)}'`)
     }
     if (filters.icp_tier?.length) {
-      const tiers = filters.icp_tier.map((t) => `'${t}'`).join(',')
+      const tiers = filters.icp_tier.map((t) => `'${escapeSoql(t)}'`).join(',')
       conditions.push(`ICP_Tier__c IN (${tiers})`)
     }
     if (filters.updated_since) {
@@ -80,16 +85,16 @@ export class SalesforceAdapter implements CRMAdapter {
     const conditions: string[] = []
 
     if (filters.owner_crm_id) {
-      conditions.push(`OwnerId = '${filters.owner_crm_id}'`)
+      conditions.push(`OwnerId = '${escapeSoql(filters.owner_crm_id)}'`)
     }
     if (filters.company_crm_id) {
-      conditions.push(`AccountId = '${filters.company_crm_id}'`)
+      conditions.push(`AccountId = '${escapeSoql(filters.company_crm_id)}'`)
     }
     if (filters.is_closed != null) {
       conditions.push(`IsClosed = ${filters.is_closed}`)
     }
     if (filters.stages?.length) {
-      const stages = filters.stages.map((s) => `'${s}'`).join(',')
+      const stages = filters.stages.map((s) => `'${escapeSoql(s)}'`).join(',')
       conditions.push(`StageName IN (${stages})`)
     }
 
@@ -118,7 +123,7 @@ export class SalesforceAdapter implements CRMAdapter {
   }
 
   async getActivities(accountId: string, since: Date): Promise<CRMActivity[]> {
-    const soql = `SELECT Id, Subject, ActivityDate, TaskSubtype, WhoId, CallDurationInSeconds FROM Task WHERE AccountId = '${accountId}' AND ActivityDate >= ${since.toISOString().split('T')[0]} ORDER BY ActivityDate DESC`
+    const soql = `SELECT Id, Subject, ActivityDate, TaskSubtype, WhoId, CallDurationInSeconds FROM Task WHERE AccountId = '${escapeSoql(accountId)}' AND ActivityDate >= ${since.toISOString().split('T')[0]} ORDER BY ActivityDate DESC`
 
     const records = await this.query(soql)
 
@@ -136,7 +141,7 @@ export class SalesforceAdapter implements CRMAdapter {
   }
 
   async getContacts(accountId: string): Promise<Partial<Contact>[]> {
-    const soql = `SELECT Id, FirstName, LastName, Email, Title, Phone, Department FROM Contact WHERE AccountId = '${accountId}'`
+    const soql = `SELECT Id, FirstName, LastName, Email, Title, Phone, Department FROM Contact WHERE AccountId = '${escapeSoql(accountId)}'`
 
     const records = await this.query(soql)
 
@@ -268,6 +273,13 @@ export class SalesforceAdapter implements CRMAdapter {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     })
+
+    if (res.status === 401 && !this.tokenRetried) {
+      this.accessToken = null
+      this.tokenRetried = true
+      return this.query(soql)
+    }
+    this.tokenRetried = false
 
     if (!res.ok) {
       throw new Error(`Salesforce query failed: ${res.status} — ${await res.text()}`)

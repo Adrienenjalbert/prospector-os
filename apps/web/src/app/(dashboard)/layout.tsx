@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Bell, MessageSquare, Sparkles } from "lucide-react";
+import { Bell, MessageSquare } from "lucide-react";
+import { ChatSidebar } from "@/components/agent/chat-sidebar";
 import { clsx } from "clsx";
 
 const navItems = [
@@ -87,25 +88,10 @@ export default function DashboardLayout({
 
       <div className="flex flex-1 overflow-hidden">
         <main className="min-w-0 flex-1 overflow-auto">{children}</main>
-        {sidebarOpen ? (
-          <aside
-            id="ai-chat-sidebar"
-            className="w-full max-w-md shrink-0 border-l border-zinc-800 bg-zinc-900/80 backdrop-blur-sm"
-          >
-            <div className="flex h-full flex-col p-4">
-              <div className="mb-4 flex items-center gap-2 border-b border-zinc-800 pb-3">
-                <Sparkles className="size-5 text-violet-400" />
-                <span className="text-sm font-semibold text-zinc-100">
-                  AI assistant
-                </span>
-              </div>
-              <p className="text-sm leading-relaxed text-zinc-500">
-                Chat will connect to your agent here. Toggle with the button in
-                the header.
-              </p>
-            </div>
-          </aside>
-        ) : null}
+        <ChatSidebar
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+        />
       </div>
     </div>
   );

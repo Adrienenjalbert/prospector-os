@@ -139,6 +139,9 @@ export interface SignalConfig {
     temperature: number
     max_tokens: number
     only_for_tiers: string[]
+    monthly_for_tiers?: string[]
+    on_demand_for_tiers?: string[]
+    batch_for_tiers?: string[]
   }
 }
 
@@ -177,6 +180,7 @@ export interface FunnelConfig {
     description: string
   }
   drop_volume_matrix: Record<string, { label: string; action: string }>
+  high_drop_threshold_pts?: number
 }
 
 export interface FunnelStageConfig {

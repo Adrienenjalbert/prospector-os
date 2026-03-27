@@ -64,10 +64,12 @@ export function computeICPScore(
 
   const tier = assignTier(finalScore, config.tier_thresholds)
 
-  const topDimension = dimensions.reduce(
-    (max, d) => (d.weighted_score > max.weighted_score ? d : max),
-    dimensions[0]
-  )
+  const topDimension = dimensions.length > 0
+    ? dimensions.reduce(
+        (max, d) => (d.weighted_score > max.weighted_score ? d : max),
+        dimensions[0]
+      )
+    : null
 
   return {
     score: finalScore,

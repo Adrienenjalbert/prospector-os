@@ -88,7 +88,7 @@ describe('computeProfileWinRate', () => {
 })
 
 describe('computeExpectedRevenue', () => {
-  it('calculates expected revenue = value * propensity / 100', () => {
+  it('separates expected revenue from priority score', () => {
     const result = computeExpectedRevenue({
       deal_value: 200000, propensity: 80,
       urgency_components: {
@@ -98,11 +98,12 @@ describe('computeExpectedRevenue', () => {
     }, mockScoringConfig)
 
     expect(result.expected_revenue).toBe(160000)
+    expect(result.priority_score).toBe(160000)
     expect(result.urgency_multiplier).toBe(1.0)
     expect(result.priority_tier).toBe('HOT')
   })
 
-  it('applies urgency multiplier', () => {
+  it('applies urgency to priority_score but not expected_revenue', () => {
     const result = computeExpectedRevenue({
       deal_value: 100000, propensity: 50,
       urgency_components: {
@@ -112,10 +113,11 @@ describe('computeExpectedRevenue', () => {
     }, mockScoringConfig)
 
     expect(result.urgency_multiplier).toBe(1.35)
-    expect(result.expected_revenue).toBe(67500)
+    expect(result.expected_revenue).toBe(50000)
+    expect(result.priority_score).toBe(67500)
   })
 
-  it('applies stall penalty', () => {
+  it('applies stall penalty to priority_score', () => {
     const result = computeExpectedRevenue({
       deal_value: 100000, propensity: 50,
       urgency_components: {
@@ -125,7 +127,8 @@ describe('computeExpectedRevenue', () => {
     }, mockScoringConfig)
 
     expect(result.urgency_multiplier).toBe(0.85)
-    expect(result.expected_revenue).toBe(42500)
+    expect(result.expected_revenue).toBe(50000)
+    expect(result.priority_score).toBe(42500)
   })
 
   it('clamps multiplier to max', () => {

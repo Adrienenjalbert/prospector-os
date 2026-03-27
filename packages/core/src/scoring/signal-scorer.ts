@@ -20,9 +20,7 @@ export function computeSignalMomentum(
     .slice(0, maxSignals)
 
   const strength = computeSignalStrength(activeSignals, config)
-  const velocity = activeSignals.length === 0
-    ? 0
-    : computeSignalVelocity(strength, previous_signal_score ?? null)
+  const velocity = computeSignalVelocity(strength, previous_signal_score ?? null)
 
   const score = Math.round(strength * 0.7 + velocity * 0.3)
   const clamped = Math.max(0, Math.min(100, score))
@@ -80,7 +78,7 @@ function computeSignalVelocity(
   previousScore: number | null
 ): number {
   if (previousScore == null || previousScore === 0) {
-    return currentStrength > 0 ? 65 : 50
+    return currentStrength > 0 ? 65 : 0
   }
 
   const velocity =
