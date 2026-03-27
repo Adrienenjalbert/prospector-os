@@ -1,187 +1,108 @@
-"use client";
+'use client'
 
-import { useState } from "react";
+import { useState } from 'react'
 
-type NotificationFrequency = "High" | "Medium" | "Low";
-type CommunicationStyle = "Formal" | "Casual" | "Brief";
-type OutreachTone = "Professional" | "Consultative" | "Direct";
+const STAGES = ['Lead', 'Qualified', 'Proposal', 'Negotiation']
 
 export default function SettingsPage() {
-  const [notificationFrequency, setNotificationFrequency] =
-    useState<NotificationFrequency>("Medium");
-  const [communicationStyle, setCommunicationStyle] =
-    useState<CommunicationStyle>("Brief");
-  const [outreachTone, setOutreachTone] =
-    useState<OutreachTone>("Professional");
-  const [focusStage, setFocusStage] = useState("");
-  const [briefingTime, setBriefingTime] = useState("09:00");
-  const [monthlyMeetings, setMonthlyMeetings] = useState<number | "">(20);
-  const [monthlyProposals, setMonthlyProposals] = useState<number | "">(8);
-  const [pipelineValue, setPipelineValue] = useState<number | "">(500_000);
-  const [winRate, setWinRate] = useState<number | "">(25);
-
-  function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    // Persist to Google Sheets / CRM when wired
-  }
-
-  const fieldClass =
-    "mt-1 w-full rounded-lg border border-zinc-600 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none ring-zinc-500 focus:border-zinc-500 focus:ring-2 focus:ring-zinc-500/30";
+  const [alertFreq, setAlertFreq] = useState('medium')
+  const [style, setStyle] = useState('brief')
+  const [focusStage, setFocusStage] = useState('')
+  const [briefingTime, setBriefingTime] = useState('08:30')
 
   return (
-    <div className="mx-auto max-w-2xl p-6 sm:p-8">
-      <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
+    <div className="mx-auto max-w-xl px-4 py-8 sm:px-6">
+      <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
         Settings
       </h1>
+      <p className="mt-1 text-sm text-zinc-500">
+        Customise how Prospector OS works for you.
+      </p>
 
-      <form onSubmit={handleSave} className="mt-8 flex flex-col gap-8">
-        <section className="rounded-xl border border-zinc-800 bg-zinc-800 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
-            Preferences
-          </h2>
-          <div className="mt-6 flex flex-col gap-5">
-            <label className="block">
-              <span className="text-sm text-zinc-300">
-                Notification frequency
-              </span>
-              <select
-                value={notificationFrequency}
-                onChange={(e) =>
-                  setNotificationFrequency(
-                    e.target.value as NotificationFrequency,
-                  )
-                }
-                className={fieldClass}
-              >
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Communication style</span>
-              <select
-                value={communicationStyle}
-                onChange={(e) =>
-                  setCommunicationStyle(e.target.value as CommunicationStyle)
-                }
-                className={fieldClass}
-              >
-                <option value="Formal">Formal</option>
-                <option value="Casual">Casual</option>
-                <option value="Brief">Brief</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Outreach tone</span>
-              <select
-                value={outreachTone}
-                onChange={(e) =>
-                  setOutreachTone(e.target.value as OutreachTone)
-                }
-                className={fieldClass}
-              >
-                <option value="Professional">Professional</option>
-                <option value="Consultative">Consultative</option>
-                <option value="Direct">Direct</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Focus stage</span>
-              <input
-                type="text"
-                value={focusStage}
-                onChange={(e) => setFocusStage(e.target.value)}
-                placeholder="e.g. Proposal"
-                className={fieldClass}
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Daily briefing time</span>
-              <input
-                type="time"
-                value={briefingTime}
-                onChange={(e) => setBriefingTime(e.target.value)}
-                className={fieldClass}
-              />
-            </label>
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-zinc-800 bg-zinc-800 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
-            KPI Targets
-          </h2>
-          <div className="mt-6 flex flex-col gap-5">
-            <label className="block">
-              <span className="text-sm text-zinc-300">Monthly meetings</span>
-              <input
-                type="number"
-                min={0}
-                value={monthlyMeetings}
-                onChange={(e) =>
-                  setMonthlyMeetings(
-                    e.target.value === "" ? "" : Number(e.target.value),
-                  )
-                }
-                className={fieldClass}
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Monthly proposals</span>
-              <input
-                type="number"
-                min={0}
-                value={monthlyProposals}
-                onChange={(e) =>
-                  setMonthlyProposals(
-                    e.target.value === "" ? "" : Number(e.target.value),
-                  )
-                }
-                className={fieldClass}
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Pipeline value (£)</span>
-              <input
-                type="number"
-                min={0}
-                value={pipelineValue}
-                onChange={(e) =>
-                  setPipelineValue(
-                    e.target.value === "" ? "" : Number(e.target.value),
-                  )
-                }
-                className={fieldClass}
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-300">Win rate (%)</span>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={winRate}
-                onChange={(e) =>
-                  setWinRate(
-                    e.target.value === "" ? "" : Number(e.target.value),
-                  )
-                }
-                className={fieldClass}
-              />
-            </label>
-          </div>
-        </section>
-
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            className="rounded-lg bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200"
+      <div className="mt-8 space-y-6">
+        <Field label="Alert frequency" hint="How often should we notify you?">
+          <select
+            value={alertFreq}
+            onChange={(e) => setAlertFreq(e.target.value)}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
           >
-            Save
-          </button>
-        </div>
-      </form>
+            <option value="high">High — every signal and stall</option>
+            <option value="medium">Medium — important alerts only</option>
+            <option value="low">Low — daily briefing only</option>
+          </select>
+        </Field>
+
+        <Field
+          label="Communication style"
+          hint="How should the AI respond and draft outreach?"
+        >
+          <select
+            value={style}
+            onChange={(e) => setStyle(e.target.value)}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+          >
+            <option value="brief">Brief and direct</option>
+            <option value="formal">Formal and structured</option>
+            <option value="casual">Casual and conversational</option>
+          </select>
+        </Field>
+
+        <Field
+          label="Focus stage"
+          hint="Which pipeline stage are you working to improve?"
+        >
+          <select
+            value={focusStage}
+            onChange={(e) => setFocusStage(e.target.value)}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+          >
+            <option value="">No focus — all stages</option>
+            {STAGES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field
+          label="Daily briefing time"
+          hint="When should your morning priorities arrive?"
+        >
+          <input
+            type="time"
+            value={briefingTime}
+            onChange={(e) => setBriefingTime(e.target.value)}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+          />
+        </Field>
+      </div>
+
+      <div className="mt-8">
+        <button className="rounded-md bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500">
+          Save preferences
+        </button>
+      </div>
     </div>
-  );
+  )
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string
+  hint: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-zinc-200">
+        {label}
+      </label>
+      <p className="mt-0.5 text-xs text-zinc-500">{hint}</p>
+      <div className="mt-2">{children}</div>
+    </div>
+  )
 }

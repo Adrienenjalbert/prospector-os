@@ -9,9 +9,7 @@ import { clsx } from "clsx";
 
 const navItems = [
   { href: "/inbox", label: "Inbox" },
-  { href: "/pipeline", label: "Pipeline" },
-  { href: "/accounts", label: "Accounts" },
-  { href: "/analytics", label: "Analytics" },
+  { href: "/analytics/my-funnel", label: "My Stats" },
   { href: "/settings", label: "Settings" },
 ] as const;
 
