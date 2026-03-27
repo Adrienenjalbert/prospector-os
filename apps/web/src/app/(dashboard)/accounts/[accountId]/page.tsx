@@ -103,8 +103,7 @@ function TierBadge({
   );
 }
 
-function ScoringBreakdownPlaceholder() {
-  const rows = accountViewModel.scoringDimensions;
+function ScoringBreakdownPlaceholder({ rows }: { rows: { id: string; label: string; score: number | null; weight: number | null }[] }) {
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
       <h3 className="text-sm font-semibold text-zinc-100">Scoring breakdown</h3>
@@ -124,14 +123,21 @@ function ScoringBreakdownPlaceholder() {
                 <span className="truncate font-medium text-zinc-200">
                   {row.label}
                 </span>
-                <span className="shrink-0 font-mono text-xs tabular-nums text-zinc-500">
-                  {row.score != null ? `${row.score}` : "—"} / 100
-                  {row.weight != null ? ` · w ${(row.weight * 100).toFixed(0)}%` : ""}
+                <span className={`shrink-0 text-xs font-medium ${
+                  (row.score ?? 0) >= 70 ? 'text-emerald-400' :
+                  (row.score ?? 0) >= 40 ? 'text-amber-400' :
+                  'text-red-400'
+                }`}>
+                  {(row.score ?? 0) >= 70 ? 'Strong' : (row.score ?? 0) >= 40 ? 'Average' : 'Weak'}
                 </span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-900 ring-1 ring-zinc-800">
                 <div
-                  className="h-full rounded-full bg-zinc-600"
+                  className={`h-full rounded-full ${
+                    (row.score ?? 0) >= 70 ? 'bg-emerald-500' :
+                    (row.score ?? 0) >= 40 ? 'bg-amber-500' :
+                    'bg-red-500'
+                  }`}
                   style={{
                     width:
                       row.score != null
@@ -310,7 +316,7 @@ export default async function AccountDetailPage({ params }: PageProps) {
                 </dl>
               </section>
 
-              <ScoringBreakdownPlaceholder />
+              <ScoringBreakdownPlaceholder rows={accountViewModel.scoringDimensions} />
 
               <section>
                 <h2 className="text-sm font-semibold text-zinc-100">

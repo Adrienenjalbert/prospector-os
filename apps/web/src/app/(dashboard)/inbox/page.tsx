@@ -1,5 +1,5 @@
 import { QueueHeader } from '@/components/priority/queue-header'
-import { PriorityCard } from '@/components/priority/priority-card'
+import { InboxList } from '@/components/priority/inbox-list'
 
 interface PriorityItem {
   accountName: string
@@ -189,7 +189,7 @@ export default async function InboxPage() {
   const realData = await fetchRealData()
   const useDemoData = !realData || realData.items.length === 0
   const displayItems = useDemoData ? DEMO_ITEMS : realData!.items
-  const repName = realData?.repName ?? 'Sales Rep'
+  const repName = realData?.repName ?? 'there'
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
@@ -203,16 +203,8 @@ export default async function InboxPage() {
         </div>
       )}
 
-      <div className="mt-6 flex flex-col gap-4">
-        {displayItems.map((item) => (
-          <PriorityCard
-            key={item.accountId}
-            {...item}
-            onDraftOutreach={() => {}}
-            onComplete={() => {}}
-            onFeedback={() => {}}
-          />
-        ))}
+      <div className="mt-6">
+        <InboxList items={displayItems} />
       </div>
 
       <div className="mt-10 rounded-lg border border-zinc-800/50 bg-zinc-900/30 p-6 text-center">
