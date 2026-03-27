@@ -1,0 +1,90 @@
+{
+  "_comment": "ICP Scoring Configuration — Indeed Flex v1.0. Replace dimensions/weights for different businesses.",
+  "version": "1.0",
+  "business": "indeed_flex",
+  "last_updated": "2026-03-18",
+  
+  "dimensions": [
+    {
+      "name": "industry_vertical",
+      "weight": 0.25,
+      "description": "How well the company's industry matches Indeed Flex's core verticals",
+      "data_source": "apollo.industry",
+      "scoring_tiers": [
+        { "condition": "in", "values": ["Warehousing", "Logistics", "Light Industrial", "Manufacturing", "Distribution"], "score": 100, "label": "Tier 1 — Primary" },
+        { "condition": "in", "values": ["Hospitality", "Food Service", "Facilities Management", "Cleaning Services"], "score": 80, "label": "Tier 2 — Strong fit" },
+        { "condition": "in", "values": ["Retail", "Wholesale", "Merchandising", "Events"], "score": 60, "label": "Tier 3 — Good fit" },
+        { "condition": "in", "values": ["Healthcare", "Construction", "Agriculture"], "score": 40, "label": "Tier 4 — Adjacent" },
+        { "condition": "default", "score": 15, "label": "Other industry" }
+      ]
+    },
+    {
+      "name": "company_size",
+      "weight": 0.20,
+      "description": "Employee count fit — optimal range for Indeed Flex staffing volume",
+      "data_source": "apollo.employee_count",
+      "scoring_tiers": [
+        { "condition": "between", "min": 500, "max": 5000, "score": 100, "label": "Sweet spot" },
+        { "condition": "between", "min": 250, "max": 499, "score": 80, "label": "Good — mid-market" },
+        { "condition": "between", "min": 5001, "max": 10000, "score": 70, "label": "Large — complex but high value" },
+        { "condition": "between", "min": 100, "max": 249, "score": 50, "label": "Small — limited volume" },
+        { "condition": "between", "min": 10001, "max": 50000, "score": 40, "label": "Enterprise — long sales cycle" },
+        { "condition": "default", "score": 10, "label": "Outside range" }
+      ]
+    },
+    {
+      "name": "geography",
+      "weight": 0.15,
+      "description": "HQ and office presence in Indeed Flex operating regions",
+      "data_source": "apollo.hq_location + apollo.office_locations",
+      "scoring_tiers": [
+        { "condition": "locations_in_operating_regions", "min_count": 3, "score": 100, "label": "Multiple locations in our cities" },
+        { "condition": "locations_in_operating_regions", "min_count": 1, "score": 70, "label": "At least one location in our cities" },
+        { "condition": "hq_in_country", "values": ["United Kingdom", "United States"], "score": 50, "label": "In-country but not in our cities" },
+        { "condition": "default", "score": 10, "label": "No UK/US presence" }
+      ],
+      "operating_regions": {
+        "uk": ["Birmingham", "Brighton", "Bristol", "Cardiff", "Coventry", "Edinburgh", "Glasgow", "Leeds", "Liverpool", "London", "Manchester", "York"],
+        "us": ["Austin", "Dallas", "Houston", "Nashville", "Atlanta", "Cincinnati", "Columbus", "Ontario"]
+      }
+    },
+    {
+      "name": "temp_flex_usage",
+      "weight": 0.25,
+      "description": "Evidence of temp/flex/agency worker usage or need",
+      "data_source": "apollo.job_postings + indeed_jobs",
+      "scoring_tiers": [
+        { "condition": "active_temp_postings", "min_count": 5, "score": 100, "label": "Heavy temp hiring now" },
+        { "condition": "active_temp_postings", "min_count": 1, "score": 80, "label": "Some temp hiring" },
+        { "condition": "historical_temp_postings", "score": 60, "label": "Past temp hiring" },
+        { "condition": "high_turnover_industry", "score": 40, "label": "Industry implies temp need" },
+        { "condition": "default", "score": 10, "label": "No evidence of temp usage" }
+      ]
+    },
+    {
+      "name": "tech_ops_maturity",
+      "weight": 0.15,
+      "description": "Workforce management technology adoption",
+      "data_source": "apollo.technologies",
+      "scoring_tiers": [
+        { "condition": "uses_any", "values": ["Kronos", "Deputy", "When I Work", "Sling", "Homebase", "7shifts", "Workday WFM"], "score": 100, "label": "Uses WFM tech — tech-savvy buyer" },
+        { "condition": "uses_any", "values": ["SAP SuccessFactors", "Oracle HCM", "ADP", "BambooHR", "Workday"], "score": 70, "label": "Enterprise HR systems" },
+        { "condition": "uses_any", "values": ["Gusto", "Rippling", "Paychex", "Paylocity"], "score": 50, "label": "Basic HR/payroll" },
+        { "condition": "default", "score": 20, "label": "No detectable HR tech" }
+      ]
+    }
+  ],
+
+  "tier_thresholds": {
+    "A": 80,
+    "B": 60,
+    "C": 40,
+    "D": 0
+  },
+
+  "recalibration": {
+    "frequency_days": 90,
+    "method": "Compare dimension scores of closed-won vs closed-lost cohorts. Flag dimensions where won and lost score similarly (not predictive). Recommend weight adjustments for human review.",
+    "min_sample_size": 20
+  }
+}

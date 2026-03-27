@@ -1,0 +1,92 @@
+{
+  "_comment": "Funnel Stage Configuration — Indeed Flex v1.0. Replace stages for different business pipelines.",
+  "version": "1.0",
+  "business": "indeed_flex",
+  "last_updated": "2026-03-18",
+
+  "stages": [
+    {
+      "name": "Lead",
+      "order": 1,
+      "crm_field_value": "Lead",
+      "stage_type": "top_of_funnel",
+      "expected_velocity_days": 14,
+      "stall_multiplier": 1.5,
+      "description": "New inbound or outbound lead. Not yet qualified."
+    },
+    {
+      "name": "Qualified",
+      "order": 2,
+      "crm_field_value": "Qualified",
+      "stage_type": "qualification",
+      "expected_velocity_days": 21,
+      "stall_multiplier": 1.5,
+      "description": "ICP-validated, decision-maker identified, need confirmed."
+    },
+    {
+      "name": "Proposal",
+      "order": 3,
+      "crm_field_value": "Proposal/Quote",
+      "stage_type": "proposal",
+      "expected_velocity_days": 28,
+      "stall_multiplier": 1.5,
+      "description": "Commercial proposal or quote sent. Awaiting response."
+    },
+    {
+      "name": "Negotiation",
+      "order": 4,
+      "crm_field_value": "Negotiation",
+      "stage_type": "negotiation",
+      "expected_velocity_days": 21,
+      "stall_multiplier": 1.5,
+      "description": "Terms being discussed. Contract review in progress."
+    },
+    {
+      "name": "Closed Won",
+      "order": 5,
+      "crm_field_value": "Closed Won",
+      "stage_type": "closed_won",
+      "expected_velocity_days": null,
+      "stall_multiplier": null,
+      "description": "Deal signed. Implementation begins."
+    },
+    {
+      "name": "Closed Lost",
+      "order": -1,
+      "crm_field_value": "Closed Lost",
+      "stage_type": "closed_lost",
+      "expected_velocity_days": null,
+      "stall_multiplier": null,
+      "description": "Deal lost. Capture reason for feedback loop."
+    }
+  ],
+
+  "benchmark_config": {
+    "rolling_window_days": 90,
+    "refresh_frequency": "weekly",
+    "min_deals_for_valid_benchmark": 20,
+    "scopes": ["company", "team_uk", "team_us", "rep"],
+    "drift_alert_threshold_points": 5,
+    "drift_alert_window_weeks": 4
+  },
+
+  "stall_config": {
+    "default_multiplier": 1.5,
+    "alert_cooldown_days": 7,
+    "escalation_multiplier": 2.5,
+    "escalation_action": "Flag for manager review"
+  },
+
+  "impact_score": {
+    "formula": "|delta_drop_from_benchmark| × deal_count × avg_deal_value",
+    "description": "Ranks which stages need attention regardless of funnel position. Higher = more urgent."
+  },
+
+  "drop_volume_matrix": {
+    "high_drop_high_volume": { "label": "CRITICAL", "action": "Immediate investigation and intervention" },
+    "high_drop_low_volume": { "label": "MONITOR", "action": "Track weekly, investigate if persists" },
+    "low_drop_high_volume": { "label": "OPPORTUNITY", "action": "Healthy — accelerate throughput" },
+    "low_drop_low_volume": { "label": "HEALTHY", "action": "No intervention needed" },
+    "high_drop_threshold_pts": 5
+  }
+}

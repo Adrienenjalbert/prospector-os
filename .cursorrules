@@ -1,0 +1,140 @@
+# Cursor Rules — Prospector OS
+
+## Project Context
+
+You are working on **Prospector OS**, an ontology-driven AI sales intelligence system for Indeed Flex. The mission is: "Cut the noise. Surface the signal. Empower action."
+
+This is NOT a custom app. It is a **pipeline + agent orchestration** built on:
+- **Make.com** — all data pipelines, scheduled jobs, CRM sync, webhook endpoints
+- **Relevance AI** — single AI agent template with per-rep context injection
+- **Apollo.io** — firmographic enrichment, contact discovery, signal detection
+- **Claude API** — deep research, account reports, outreach drafting (via Relevance AI tools)
+- **Slack** — rep-facing interface for alerts and agent interaction
+- **Salesforce + HubSpot** — CRM source of truth (custom fields, not shadow DB)
+
+There is NO custom database, NO custom frontend, NO custom hosting.
+
+## Domain Concepts
+
+### Ontology Objects
+- **Company** — central enriched entity. Everything links here.
+- **Contact** — person records linked to Company
+- **Signal** — external event indicating buying intent (hiring, funding, news)
+- **ICP Score** — computed fit rating from configurable weighted dimensions
+- **Opportunity** — pipeline deal with stage tracking and velocity
+- **Funnel Analytics** — aggregated stage performance with benchmark comparison
+
+### Scoring
+- **ICP Score** = Σ(dimension_score × dimension_weight) from `config/icp-config.json`
+- **Signal Score** = Σ(relevance × type_weight × recency_decay)
+- **Engagement Score** = weighted sum of CRM activities with recency boost
+- **Composite Priority** = ICP(0.35) + Signal(0.30) + Engagement_Funnel(0.35)
+- **Tiers:** HOT(≥80), WARM(60-79), COOL(40-59), MONITOR(<40)
+
+### Funnel Engine
+- **Impact Score** = |delta_drop_from_benchmark| × deal_count × avg_deal_value
+- **Stall threshold** = days_in_stage > 1.5 × median_days_in_stage
+- **Three benchmark levels:** Company (truth), Team/Market (UK/US), Individual Rep
+- Drop rate × volume matrix determines urgency, not conversion rate alone
+
+### Agent Architecture
+- ONE agent template, NOT separate agents per rep
+- Context injected at runtime via CRM query filtered by rep_id
+- Rep preferences stored in Google Sheets (comm_style, alert_frequency, focus_stage, KPIs)
+- Auto-triggers push alerts; on-demand queries via Slack DM
+
+## Indeed Flex ICP Context
+
+Primary industries: Light Industrial, Hospitality, Logistics, Warehousing, Manufacturing, Distribution, Facilities Management
+
+UK operating cities: Birmingham, Brighton, Bristol, Cardiff, Coventry, Edinburgh, Glasgow, Leeds, Liverpool, London, Manchester, York
+
+US locations: Austin TX, Dallas TX, Houston TX, Nashville TN, Atlanta GA, Cincinnati OH, Columbus OH, Ontario CA
+
+Ideal company size: 250-10,000 employees
+Ideal revenue: >$50M USD
+Key signals: temp/flex job postings, hiring surges, expansion, funding, leadership changes
+
+## File Structure
+
+```
+prospector-os/
+├── CURSOR_PRD.md              # Full PRD — primary reference
+├── .cursorrules               # This file
+├── config/
+│   ├── icp-config.json        # ICP scoring dimensions
+│   ├── funnel-config.json     # Pipeline stage definitions
+│   └── signal-config.json     # Signal types and weights
+├── schemas/
+│   └── salesforce-fields.md   # CRM custom field specs
+├── agents/
+│   ├── system-prompt.md       # Relevance AI system prompt
+│   └── tool-specs.md          # Agent tool definitions
+├── make-scenarios/
+│   ├── 01-apollo-enrichment.md
+│   ├── 02-signal-detection.md
+│   ├── 03-funnel-computation.md
+│   └── 04-daily-briefing.md
+└── docs/
+    └── deployment-guide.md
+```
+
+## Code Style
+
+- Make.com scenarios are described as step-by-step flows in markdown (not code)
+- Relevance AI agent configs are YAML-like specifications
+- Config files are JSON with comments via `_comment` fields
+- All scoring formulas documented in CURSOR_PRD.md Section 6
+- CRM field names use Salesforce convention: `Field_Name__c`
+
+## Common Patterns
+
+### Make.com Scenario Pattern
+```
+Trigger (schedule/webhook/CRM event)
+  → Filter (guard clause)
+  → HTTP Module (external API call)
+  → Transform (map response to CRM fields)
+  → Router (branch on conditions)
+  → CRM Update (write back to Salesforce/HubSpot)
+  → Optional: Webhook to Relevance AI (trigger alert)
+```
+
+### Scoring Computation Pattern
+```
+1. Read config file for dimensions/weights
+2. For each dimension: lookup data → apply scoring tier → multiply by weight
+3. Sum weighted scores → normalise to 0-100
+4. Assign tier based on thresholds
+5. Generate priority_reason (top contributing dimension)
+6. Write to CRM custom fields
+```
+
+### Context Injection Pattern (Relevance AI)
+```
+1. Rep sends Slack message → Relevance AI receives with rep's Slack ID
+2. Lookup rep_id from Google Sheets config (Slack ID → CRM user ID)
+3. CRM query: top 20 accounts WHERE owner = rep_id ORDER BY priority DESC
+4. CRM query: funnel benchmarks WHERE scope = rep_id
+5. CRM query: signals WHERE company IN rep's accounts AND last 14 days
+6. Inject all into agent system prompt dynamic variables
+7. Agent responds with full context
+```
+
+## Key Constraints
+
+- Apollo API: 100 calls/minute rate limit. Batch enrichment, not real-time.
+- Salesforce API: 15,000 calls/day. Aggregate operations where possible.
+- Claude API: cost-conscious — deep research only for Tier A accounts.
+- Relevance AI: credit-based — monitor usage weekly.
+- Make.com: 10,000 operations/month on Teams plan — design efficient scenarios.
+
+## Common Mistakes to Avoid
+
+- DO NOT create a custom database — CRM is the store
+- DO NOT clone agents per rep — one template with dynamic context
+- DO NOT use multi-agent orchestration — single agent with tools
+- DO NOT hardcode ICP dimensions — always read from config
+- DO NOT compute funnel benchmarks in real-time — weekly batch computation
+- DO NOT send alerts without cooldown — alert fatigue kills adoption
+- DO NOT skip the feedback loop — 👍/👎 reactions tune the system

@@ -1,0 +1,119 @@
+{
+  "_comment": "Signal Configuration — Indeed Flex v1.0. Add/remove signal types for different businesses.",
+  "version": "1.0",
+  "business": "indeed_flex",
+  "last_updated": "2026-03-18",
+
+  "signal_types": [
+    {
+      "name": "hiring_surge",
+      "display_name": "Hiring Surge",
+      "description": "Company posting significantly more jobs than baseline, especially temp/flex roles",
+      "source": "apollo",
+      "weight_multiplier": 1.2,
+      "recency_decay_days": 30,
+      "min_relevance_threshold": 0.5,
+      "urgency_default": "this_week",
+      "enrichment_depth": "standard"
+    },
+    {
+      "name": "funding",
+      "display_name": "Funding Round",
+      "description": "Company received new funding — budget available for growth/staffing",
+      "source": "apollo",
+      "weight_multiplier": 1.5,
+      "recency_decay_days": 60,
+      "min_relevance_threshold": 0.6,
+      "urgency_default": "this_week",
+      "enrichment_depth": "deep"
+    },
+    {
+      "name": "leadership_change",
+      "display_name": "Leadership Change",
+      "description": "New C-suite, VP, or Director hire — especially Ops, HR, Facilities",
+      "source": "apollo",
+      "weight_multiplier": 1.0,
+      "recency_decay_days": 45,
+      "min_relevance_threshold": 0.5,
+      "urgency_default": "this_week",
+      "enrichment_depth": "standard"
+    },
+    {
+      "name": "expansion",
+      "display_name": "Expansion / New Office",
+      "description": "Company opening new location, expanding operations, entering new market",
+      "source": "claude_research",
+      "weight_multiplier": 1.3,
+      "recency_decay_days": 45,
+      "min_relevance_threshold": 0.6,
+      "urgency_default": "this_month",
+      "enrichment_depth": "deep"
+    },
+    {
+      "name": "temp_job_posting",
+      "display_name": "Temp/Flex Job Posting",
+      "description": "Active job postings specifically for temporary, flexible, or agency workers",
+      "source": "apollo",
+      "weight_multiplier": 1.8,
+      "recency_decay_days": 14,
+      "min_relevance_threshold": 0.7,
+      "urgency_default": "immediate",
+      "enrichment_depth": "standard"
+    },
+    {
+      "name": "competitor_mention",
+      "display_name": "Competitor Dissatisfaction",
+      "description": "Company mentions issues with current staffing provider or seeking alternatives",
+      "source": "claude_research",
+      "weight_multiplier": 2.0,
+      "recency_decay_days": 30,
+      "min_relevance_threshold": 0.8,
+      "urgency_default": "immediate",
+      "enrichment_depth": "deep"
+    },
+    {
+      "name": "seasonal_peak",
+      "display_name": "Seasonal Peak Approaching",
+      "description": "Company's industry entering known high-demand season (e.g., Q4 retail, summer hospitality)",
+      "source": "claude_research",
+      "weight_multiplier": 1.1,
+      "recency_decay_days": 60,
+      "min_relevance_threshold": 0.4,
+      "urgency_default": "this_month",
+      "enrichment_depth": "standard"
+    },
+    {
+      "name": "negative_news",
+      "display_name": "Negative News / Layoffs",
+      "description": "Company in financial trouble, layoffs, or restructuring — reduces priority",
+      "source": "claude_research",
+      "weight_multiplier": 0.3,
+      "recency_decay_days": 90,
+      "min_relevance_threshold": 0.5,
+      "urgency_default": "this_month",
+      "enrichment_depth": "standard",
+      "_note": "Low weight multiplier = reduces signal score, flags risk"
+    }
+  ],
+
+  "recency_decay": {
+    "formula": "max(0.1, 1 - (days_old / recency_decay_days))",
+    "description": "Linear decay from 1.0 to 0.1 over the decay period"
+  },
+
+  "composite_signal_score": {
+    "formula": "Σ(signal.relevance × signal.weight_multiplier × recency_decay) normalised to 0-100",
+    "max_signals_per_company": 10,
+    "description": "Sum of weighted signals, capped and normalised"
+  },
+
+  "deep_research_config": {
+    "model": "claude-sonnet-4",
+    "temperature": 0.2,
+    "max_tokens": 3000,
+    "only_for_tiers": ["A"],
+    "monthly_for_tiers": ["A"],
+    "on_demand_for_tiers": ["A", "B"],
+    "batch_for_tiers": ["B"]
+  }
+}
