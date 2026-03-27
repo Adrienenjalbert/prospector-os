@@ -108,8 +108,7 @@ function ScoringBreakdownPlaceholder({ rows }: { rows: { id: string; label: stri
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
       <h3 className="text-sm font-semibold text-zinc-100">Scoring breakdown</h3>
       <p className="mt-1 text-xs text-zinc-500">
-        Dimensions and weights from ICP config; populated after enrichment
-        runs.
+        How well this account fits your ideal customer profile.
       </p>
       <ul className="mt-4 space-y-3">
         {rows.length === 0 ? (
@@ -161,11 +160,7 @@ export default async function AccountDetailPage({ params }: PageProps) {
   const s = accountViewModel.score;
   const c = accountViewModel.company;
 
-  const tabs = [
-    { id: "overview", label: "Overview" },
-    { id: "signals", label: "Signals" },
-    { id: "contacts", label: "Contacts" },
-  ] as const;
+  // All content shows in a single scroll — no tabs to confuse users
 
   return (
     <div className="mx-auto max-w-7xl p-6 sm:p-8">
@@ -183,17 +178,14 @@ export default async function AccountDetailPage({ params }: PageProps) {
               <h1 className="truncate text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl">
                 {name}
               </h1>
-              <p className="mt-0.5 font-mono text-xs text-zinc-500">
-                {accountId}
-              </p>
+              {c.industry && (
+                <p className="mt-0.5 text-sm text-zinc-500">
+                  {c.industry} · {c.size ?? ''}
+                </p>
+              )}
             </div>
           </div>
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-lg border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-700"
-          >
-            Research
-          </button>
+          {/* Research button will open AI chat with account context */}
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
@@ -244,32 +236,7 @@ export default async function AccountDetailPage({ params }: PageProps) {
           </aside>
 
           <div className="min-w-0 space-y-6">
-            <div
-              role="tablist"
-              aria-label="Account sections"
-              className="flex flex-wrap gap-1 border-b border-zinc-800 pb-px"
-            >
-              {tabs.map((tab) => {
-                const selected = tab.id === "overview";
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    className={
-                      selected
-                        ? "border-b-2 border-violet-500 px-3 py-2 text-sm font-medium text-zinc-50"
-                        : "border-b-2 border-transparent px-3 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-300"
-                    }
-                  >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div role="tabpanel" className="space-y-8">
+            <div className="space-y-8">
               <section>
                 <h2 className="text-sm font-semibold text-zinc-100">
                   Company info
@@ -305,14 +272,7 @@ export default async function AccountDetailPage({ params }: PageProps) {
                       {c.revenue != null ? formatGbp(c.revenue) : "—"}
                     </dd>
                   </div>
-                  <div className="sm:col-span-2">
-                    <dt className="text-xs uppercase tracking-wide text-zinc-500">
-                      Founded
-                    </dt>
-                    <dd className="mt-1 text-sm text-zinc-200">
-                      {c.founded ?? "—"}
-                    </dd>
-                  </div>
+                  {/* Founded removed — not actionable for sales */}
                 </dl>
               </section>
 
