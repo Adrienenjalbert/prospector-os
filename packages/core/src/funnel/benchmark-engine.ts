@@ -1,5 +1,4 @@
 import type { Opportunity, FunnelBenchmark, BenchmarkScope } from '../types/ontology'
-import type { FunnelConfig } from '../types/config'
 
 export interface BenchmarkInput {
   opportunities: Opportunity[]

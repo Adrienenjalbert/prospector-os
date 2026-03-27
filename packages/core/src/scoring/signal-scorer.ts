@@ -1,5 +1,5 @@
 import type { Signal } from '../types/ontology'
-import type { SignalConfig, SignalTypeConfig } from '../types/config'
+import type { SignalConfig } from '../types/config'
 import type { ScoringResult } from '../types/scoring'
 
 export interface SignalScorerInput {

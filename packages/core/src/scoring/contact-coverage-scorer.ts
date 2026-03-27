@@ -1,4 +1,4 @@
-import type { Contact, Seniority, ContactRole } from '../types/ontology'
+import type { Contact } from '../types/ontology'
 import type { ContactCoverageConfig } from '../types/config'
 import type { ScoringResult } from '../types/scoring'
 

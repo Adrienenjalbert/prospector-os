@@ -22,7 +22,7 @@ const suggestedPrompts = [
 export function ChatSidebar({ isOpen, onClose }: ChatSidebarProps) {
   const [input, setInput] = useState("");
 
-  const _agentChat = useAgentChat("stub-rep-id", "stub-tenant-id");
+  const _agentChat = useAgentChat();
   void _agentChat;
 
   function handleSend(e: React.FormEvent) {

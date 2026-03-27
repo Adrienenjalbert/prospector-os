@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
 export interface PriorityCardProps {
-  rank: number
   accountName: string
   accountId: string
   dealValue: number | null
@@ -16,7 +15,6 @@ export interface PriorityCardProps {
   contactPhone: string | null
   severity: 'critical' | 'high' | 'medium' | 'low'
   onDraftOutreach: () => void
-  onSnooze: () => void
   onComplete: () => void
   onFeedback: (type: 'positive' | 'negative') => void
 }

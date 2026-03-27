@@ -8,17 +8,11 @@ interface PageContext {
   dealId?: string
 }
 
-export function useAgentChat(
-  repId: string,
-  tenantId: string,
-  pageContext?: PageContext
-) {
+export function useAgentChat(pageContext?: PageContext) {
   const chat = useChat({
     api: '/api/agent',
     body: {
       context: {
-        repId,
-        tenantId,
         pageContext,
       },
     },

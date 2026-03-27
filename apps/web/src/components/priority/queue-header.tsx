@@ -1,9 +1,6 @@
 export interface QueueHeaderProps {
   repName: string
   actionCount: number
-  pipelineValue: number
-  signalCount: number
-  stallCount: number
 }
 
 export function QueueHeader({ repName, actionCount }: QueueHeaderProps) {

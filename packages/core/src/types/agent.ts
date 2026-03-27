@@ -1,7 +1,5 @@
 import type {
   Company,
-  Contact,
-  Signal,
   Opportunity,
   FunnelBenchmark,
   RepProfile,

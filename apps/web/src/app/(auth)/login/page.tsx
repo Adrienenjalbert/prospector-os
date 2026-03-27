@@ -38,7 +38,7 @@ export default function LoginPage() {
       setMessage(error.message);
       return;
     }
-    setMessage("Signed in. Redirect logic can be added next.");
+    window.location.href = '/inbox';
   }
 
   return (

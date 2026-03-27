@@ -187,7 +187,7 @@ export function createAgentTools(tenantId: string, repId: string) {
     execute: async ({ account_name, contact_name, outreach_type }) => {
       const { data: company } = await supabase
         .from('companies')
-        .select('name, industry, employee_count, hq_city, icp_tier, priority_reason')
+        .select('id, name, industry, employee_count, hq_city, icp_tier, priority_reason')
         .eq('tenant_id', tenantId)
         .ilike('name', `%${account_name}%`)
         .limit(1)
@@ -199,7 +199,7 @@ export function createAgentTools(tenantId: string, repId: string) {
         .from('signals')
         .select('signal_type, title')
         .eq('tenant_id', tenantId)
-        .eq('company_id', (company as Record<string, unknown>).id as string)
+        .eq('company_id', company.id)
         .order('detected_at', { ascending: false })
         .limit(3)
 

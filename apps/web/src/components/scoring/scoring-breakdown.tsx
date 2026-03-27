@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils"
+import { cn, formatGbp } from "@/lib/utils"
 
 export interface ScoringBreakdownProps {
   expectedRevenue: number
@@ -19,14 +19,6 @@ function scoreBarColor(score: number): string {
   return "bg-red-500"
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value)
-}
-
 export function ScoringBreakdown({
   expectedRevenue,
   dealValue,
@@ -43,7 +35,7 @@ export function ScoringBreakdown({
               Expected revenue
             </p>
             <p className="mt-1 font-mono text-3xl font-semibold tabular-nums tracking-tight text-zinc-50 sm:text-4xl">
-              {formatCurrency(expectedRevenue)}
+              {formatGbp(expectedRevenue)}
             </p>
           </div>
           <div>
@@ -60,7 +52,7 @@ export function ScoringBreakdown({
               Deal value
             </p>
             <p className="mt-1 font-mono text-3xl font-semibold tabular-nums tracking-tight text-zinc-50 sm:text-4xl">
-              {formatCurrency(dealValue)}
+              {formatGbp(dealValue)}
             </p>
           </div>
           <div className="rounded-lg border border-zinc-700/60 bg-zinc-900/50 px-3 py-2">

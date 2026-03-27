@@ -1,4 +1,4 @@
-import type { CRMActivity, ActivityType } from '../types/ontology'
+import type { CRMActivity } from '../types/ontology'
 import type { ScoringConfig } from '../types/config'
 import type { ScoringResult } from '../types/scoring'
 

@@ -1,4 +1,4 @@
-import type { CompanyLocation, Contact, Signal } from './ontology'
+import type { CompanyLocation } from './ontology'
 
 export interface EnrichmentProvider {
   name: string
