@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createSupabaseBrowser } from '@/lib/supabase/client'
 
 const STAGES = ['Lead', 'Qualified', 'Proposal', 'Negotiation']
 
@@ -9,6 +10,44 @@ export default function SettingsPage() {
   const [style, setStyle] = useState('brief')
   const [focusStage, setFocusStage] = useState('')
   const [briefingTime, setBriefingTime] = useState('08:30')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  async function handleSave() {
+    setSaving(true)
+    setSaved(false)
+
+    try {
+      const supabase = createSupabaseBrowser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) return
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('rep_profile_id')
+        .eq('id', user.id)
+        .single()
+
+      if (!profile?.rep_profile_id) return
+
+      await supabase
+        .from('rep_profiles')
+        .update({
+          alert_frequency: alertFreq,
+          comm_style: style,
+          focus_stage: focusStage || null,
+        })
+        .eq('id', profile.rep_profile_id)
+
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6">
@@ -78,10 +117,17 @@ export default function SettingsPage() {
         </Field>
       </div>
 
-      <div className="mt-8">
-        <button className="rounded-md bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500">
-          Save preferences
+      <div className="mt-8 flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="rounded-md bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : 'Save preferences'}
         </button>
+        {saved && (
+          <span className="text-sm text-emerald-400">Saved</span>
+        )}
       </div>
     </div>
   )

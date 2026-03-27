@@ -13,14 +13,14 @@ export interface ChatSidebarProps {
 }
 
 const suggestedPrompts = [
-  "Summarise my top accounts this week.",
-  "Which deals are stalling vs benchmark?",
-  "Draft a follow-up for my last meeting.",
-  "What signals should I prioritise today?",
+  "Who should I call first today?",
+  "What's happening with my stalled deals?",
+  "Why is Acme Corp flagged as high priority?",
+  "How's my pipeline compared to the team?",
 ] as const;
 
 const WELCOME_MESSAGE =
-  "Welcome to Prospector OS. Ask about accounts, funnel health, or outreach — your context loads from CRM.";
+  "Hi! I know your accounts, deals, and signals. Ask me anything — I'll give you specific names, numbers, and next steps.";
 
 export function ChatSidebar({ isOpen, onClose }: ChatSidebarProps) {
   const { messages, input, setInput, handleSubmit, append, isLoading, error } =

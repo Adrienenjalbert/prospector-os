@@ -61,9 +61,6 @@ export default function DashboardLayout({
               aria-label="Notifications"
             >
               <Bell className="size-5" />
-              <span className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-semibold text-white">
-                3
-              </span>
             </button>
             <button
               type="button"

@@ -49,7 +49,7 @@ export default async function InboxPage() {
 
   const repCrmId = repProfile?.crm_id
 
-  const [companiesResult, signalsResult, stalledResult] = await Promise.all([
+  const [companiesResult, signalsResult, stalledResult, contactsResult] = await Promise.all([
     supabase
       .from('companies')
       .select(
@@ -77,11 +77,25 @@ export default async function InboxPage() {
       .eq('owner_crm_id', repCrmId ?? '')
       .eq('is_stalled', true)
       .eq('is_closed', false),
+    supabase
+      .from('contacts')
+      .select('company_id, first_name, last_name, title, phone, email, is_decision_maker, relevance_score')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('is_decision_maker', true)
+      .order('relevance_score', { ascending: false }),
   ])
 
   const companies = companiesResult.data ?? []
   const signals = signalsResult.data ?? []
   const stalledDeals = stalledResult.data ?? []
+  const contacts = contactsResult.data ?? []
+
+  const contactsByCompany = new Map<string, (typeof contacts)[0]>()
+  for (const c of contacts) {
+    if (!contactsByCompany.has(c.company_id)) {
+      contactsByCompany.set(c.company_id, c)
+    }
+  }
 
   const signalsByCompany = new Map<string, typeof signals>()
   for (const s of signals) {
@@ -123,6 +137,11 @@ export default async function InboxPage() {
       nextAction = `Research ${c.name} and send intro outreach`
     }
 
+    const topContact = contactsByCompany.get(c.id)
+    const contactFullName = topContact
+      ? `${topContact.first_name} ${topContact.last_name}`
+      : null
+
     return {
       accountName: c.name,
       accountId: c.id,
@@ -130,9 +149,11 @@ export default async function InboxPage() {
       expectedRevenue: c.expected_revenue,
       triggerType,
       triggerDetail,
-      nextAction,
-      contactName: null,
-      contactPhone: null,
+      nextAction: topContact
+        ? `${nextAction} — contact ${contactFullName} (${topContact.title ?? 'Decision Maker'})`
+        : nextAction,
+      contactName: contactFullName,
+      contactPhone: topContact?.phone ?? null,
       severity,
     }
   })

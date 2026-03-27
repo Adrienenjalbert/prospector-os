@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { cn } from '@/lib/utils'
+import { cn, formatGbp } from '@/lib/utils'
 
 export interface PriorityCardProps {
   accountName: string
@@ -25,14 +25,6 @@ const SEVERITY = {
   medium: { border: 'border-l-emerald-500', emoji: '🟢', label: 'PROSPECT' },
   low: { border: 'border-l-blue-500', emoji: '🔵', label: 'PIPELINE' },
 } as const
-
-function formatGbp(value: number): string {
-  return new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: 'GBP',
-    maximumFractionDigits: 0,
-  }).format(value)
-}
 
 export function PriorityCard({
   accountName,
