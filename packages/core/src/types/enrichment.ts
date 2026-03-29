@@ -38,6 +38,12 @@ export interface ContactEnrichmentResult {
   phone: string | null
   linkedin_url: string | null
   apollo_id: string | null
+  photo_url: string | null
+  twitter_url: string | null
+  city: string | null
+  country: string | null
+  alma_mater: string | null
+  previous_companies: string[]
 }
 
 export interface ContactSearchFilters {
@@ -115,4 +121,10 @@ export interface ApolloPersonResponse {
   departments: string[]
   phone_numbers: { raw_number: string }[]
   linkedin_url: string
+  photo_url: string | null
+  twitter_url: string | null
+  city: string | null
+  country: string | null
+  employment_history: { organization_name: string }[]
+  education: { degree: string; school_name: string }[]
 }

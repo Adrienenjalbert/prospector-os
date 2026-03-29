@@ -144,6 +144,15 @@ export class ApolloAdapter implements EnrichmentProvider {
       phone: p.phone_numbers?.[0]?.raw_number ?? null,
       linkedin_url: p.linkedin_url ?? null,
       apollo_id: p.id ?? null,
+      photo_url: p.photo_url ?? null,
+      twitter_url: p.twitter_url ?? null,
+      city: p.city ?? null,
+      country: p.country ?? null,
+      alma_mater: p.education?.[0]?.school_name ?? null,
+      previous_companies: (p.employment_history ?? [])
+        .map((e) => e.organization_name)
+        .filter(Boolean)
+        .slice(0, 5),
     }))
   }
 

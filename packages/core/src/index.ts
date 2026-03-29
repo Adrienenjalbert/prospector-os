@@ -47,6 +47,10 @@ export { generateNextBestAction } from './prioritisation/action-generator'
 export { assembleDailyBriefing } from './prioritisation/briefing-assembler'
 export type { BriefingInput } from './prioritisation/briefing-assembler'
 
+// Relationship Intelligence
+export { detectRelationshipEvents } from './relationships/event-detector'
+export type { RelationshipEventInput } from './relationships/event-detector'
+
 // Notification Engine
 export { evaluateTriggers } from './notifications/trigger-engine'
 export type { TriggerEvaluationInput, TriggerConfig } from './notifications/trigger-engine'

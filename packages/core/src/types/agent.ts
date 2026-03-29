@@ -4,6 +4,8 @@ import type {
   FunnelBenchmark,
   RepProfile,
   PriorityTier,
+  RelationshipEvent,
+  RelationshipNote,
 } from './ontology'
 
 export interface WinningPattern {
@@ -21,6 +23,8 @@ export interface AgentContext {
   recent_signals: SignalSummary[]
   company_benchmarks: FunnelBenchmark[]
   winning_patterns?: WinningPattern[]
+  relationship_events?: RelationshipEvent[]
+  key_contact_notes?: { contact_name: string; notes: string[] }[]
 
   current_page: string | null
   current_account: Company | null

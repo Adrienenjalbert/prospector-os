@@ -14,6 +14,7 @@ export function buildSystemPrompt(ctx: AgentContext): string {
 
   const dataSections = [
     buildCurrentPage(ctx),
+    buildRelationshipContext(ctx),
     buildStalledDeals(ctx),
     buildSignals(ctx),
     buildPriorityAccounts(ctx),
@@ -85,6 +86,13 @@ function buildBehaviourRules(rep: AgentContext['rep_profile']): string {
 - Outreach tone: ${rep.outreach_tone}.
 - Focus stage: ${rep.focus_stage ?? 'all stages'} — extra coaching here when relevant.
 
+### Relationship Building
+- When personal context (birthday, interests, notes) is available, weave it naturally into outreach suggestions.
+- Before a call or meeting, mention any personal details the rep should reference.
+- If a contact's birthday or work anniversary is approaching, proactively suggest a personal touch.
+- Use relationship_notes to look up and log personal observations after meetings.
+- Genuine relationship building beats volume — quality of connection matters.
+
 ### Tool Usage Guide
 - **crm_lookup** — find accounts/contacts/deals by name
 - **account_research** — deep dive: signals, contacts, opportunities for one company
@@ -93,6 +101,7 @@ function buildBehaviourRules(rep: AgentContext['rep_profile']): string {
 - **deal_strategy** — specific deal health, contacts, close planning
 - **contact_finder** — find people at a company for multi-threading
 - **outreach_drafter** — fetch context for drafting emails (you write the email using the returned data)
+- **relationship_notes** — look up or save personal observations about contacts
 
 ### Limitations
 - You CANNOT update CRM records — direct the rep to CRM for that.
@@ -164,6 +173,29 @@ function buildCurrentPage(ctx: AgentContext): string {
     parts.push(`## Currently Viewing Deal: ${d.name}
 - Stage: ${d.stage} | Value: £${d.value?.toLocaleString() ?? 'N/A'} | Days at stage: ${d.days_in_stage}
 - ${d.is_stalled ? `STALLED — ${d.stall_reason ?? 'unknown reason'}` : 'On track'}`)
+  }
+
+  return parts.join('\n\n')
+}
+
+function buildRelationshipContext(ctx: AgentContext): string {
+  const parts: string[] = []
+
+  if (ctx.relationship_events?.length) {
+    const rows = ctx.relationship_events.slice(0, 5).map((e) => {
+      const timing = e.days_until === 0 ? 'TODAY' : `in ${e.days_until}d`
+      const ctx_note = e.personal_context ? ` (${e.personal_context})` : ''
+      return `- ${e.event_type.replace(/_/g, ' ').toUpperCase()} ${timing}: ${e.contact_name} at ${e.company_name}${ctx_note}\n  → ${e.suggested_action}`
+    })
+    parts.push(`## Relationship Events\n${rows.join('\n')}`)
+  }
+
+  if (ctx.key_contact_notes?.length) {
+    const rows = ctx.key_contact_notes.slice(0, 5).map((c) => {
+      const notes = c.notes.slice(0, 2).map((n) => `  - ${n}`).join('\n')
+      return `- **${c.contact_name}**:\n${notes}`
+    })
+    parts.push(`## Personal Context (from past conversations)\nUse these to personalise outreach and build rapport:\n${rows.join('\n')}`)
   }
 
   return parts.join('\n\n')

@@ -8,8 +8,9 @@ import {
   aggregateFeedback,
   shouldDisableTrigger,
   shouldRaiseThreshold,
+  detectRelationshipEvents,
 } from '@prospector/core'
-import type { TriggerType } from '@prospector/core'
+import type { TriggerType, RelationshipEvent } from '@prospector/core'
 import { SlackAdapter, SalesforceAdapter } from '@prospector/adapters'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 
@@ -312,6 +313,89 @@ export async function GET(req: Request) {
           }
         }
 
+        const { data: relNotes } = await supabase
+          .from('relationship_notes')
+          .select('contact_id, content')
+          .eq('tenant_id', tenant.id)
+          .eq('rep_crm_id', rep.crm_id)
+          .order('created_at', { ascending: false })
+          .limit(50)
+
+        const companyNameMap = new Map(companies.map((c) => [c.id, c.name]))
+
+        const relEvents = detectRelationshipEvents({
+          contacts,
+          companyNames: companyNameMap,
+          recentNotes: (relNotes ?? []).map((n) => ({
+            contact_id: n.contact_id ?? '',
+            content: n.content,
+          })),
+          lookAheadDays: 7,
+        })
+
+        for (const relEvent of relEvents) {
+          const relEntityId = `rel:${relEvent.contact_id}:${relEvent.event_type}`
+          const relCooldown = TRIGGER_COOLDOWNS.relationship_touch
+
+          if (!cooldowns.canFire('relationship_touch', relEntityId, rep.crm_id, relCooldown)) continue
+
+          const override = overrideMap.get('relationship_touch')
+          if (override?.override_action === 'disable') continue
+
+          const relNotifId = crypto.randomUUID()
+
+          await supabase.from('notifications').insert({
+            id: relNotifId,
+            tenant_id: tenant.id,
+            user_id: userProfile.id,
+            title: formatRelationshipTitle(relEvent),
+            body: formatRelationshipBody(relEvent),
+            severity: relEvent.days_until === 0 ? 'high' : 'medium',
+            channel: 'web_push',
+            account_id: relEvent.company_id,
+            action_url: `/accounts/${relEvent.company_id}`,
+          })
+
+          if (slack && rep.slack_user_id) {
+            try {
+              await slack.send(
+                {
+                  id: relNotifId,
+                  tenant_id: tenant.id,
+                  user_id: userProfile.id,
+                  trigger_event_id: null,
+                  title: formatRelationshipTitle(relEvent),
+                  body: formatRelationshipBody(relEvent),
+                  severity: relEvent.days_until === 0 ? 'high' : 'medium',
+                  channel: 'slack_dm',
+                  account_id: relEvent.company_id,
+                  opportunity_id: null,
+                  action_url: `/accounts/${relEvent.company_id}`,
+                  read: false,
+                  read_at: null,
+                  acted_on: false,
+                  created_at: new Date().toISOString(),
+                },
+                { user_id: userProfile.id, slack_user_id: rep.slack_user_id }
+              )
+            } catch (relSlackErr) {
+              console.error('[cron/notify] Relationship Slack send failed:', relSlackErr)
+            }
+          }
+
+          totalNotifications++
+          cooldowns.record('relationship_touch', relEntityId, rep.crm_id, relCooldown)
+
+          await supabase.from('alert_feedback').insert({
+            tenant_id: tenant.id,
+            rep_crm_id: rep.crm_id,
+            alert_type: 'relationship_touch',
+            company_id: relEvent.company_id,
+            reaction: null,
+            action_taken: false,
+          })
+        }
+
         const briefingEntityId = `briefing:${rep.crm_id}`
         const briefingCooldown = TRIGGER_COOLDOWNS.daily_briefing
 
@@ -450,4 +534,28 @@ function formatTriggerBody(event: { trigger_type: string; payload: Record<string
     default:
       return ''
   }
+}
+
+function formatRelationshipTitle(event: RelationshipEvent): string {
+  switch (event.event_type) {
+    case 'birthday':
+      return event.days_until === 0
+        ? `🎂 ${event.contact_name}'s Birthday Today`
+        : `🎂 ${event.contact_name}'s Birthday in ${event.days_until}d`
+    case 'work_anniversary':
+      return `🎉 ${event.contact_name} — Work Anniversary`
+    case 'no_contact_30d':
+      return `👋 Re-connect with ${event.contact_name}`
+    default:
+      return `Personal Touch — ${event.contact_name}`
+  }
+}
+
+function formatRelationshipBody(event: RelationshipEvent): string {
+  const parts = [event.suggested_action]
+  if (event.personal_context) {
+    parts.push(`\nContext: ${event.personal_context}`)
+  }
+  parts.push(`\nAccount: ${event.company_name}`)
+  return parts.join('')
 }

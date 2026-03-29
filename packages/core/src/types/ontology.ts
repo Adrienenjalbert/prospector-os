@@ -309,3 +309,46 @@ export type ActivityType =
   | 'email_reply_received'
   | 'email_opened_multiple'
   | 'email_opened_once'
+
+export type RelationshipNoteType =
+  | 'personal_detail'
+  | 'conversation_takeaway'
+  | 'follow_up_commitment'
+  | 'interest_hobby'
+  | 'family_mention'
+  | 'career_goal'
+  | 'pain_point'
+  | 'preference'
+  | 'general'
+
+export interface RelationshipNote {
+  id: string
+  tenant_id: string
+  contact_id: string | null
+  company_id: string
+  rep_crm_id: string
+  note_type: RelationshipNoteType
+  content: string
+  source: 'manual' | 'agent' | 'enrichment'
+  created_at: string
+}
+
+export type RelationshipEventType =
+  | 'birthday'
+  | 'work_anniversary'
+  | 'role_change'
+  | 'company_milestone'
+  | 'no_contact_30d'
+  | 'new_connection'
+
+export interface RelationshipEvent {
+  event_type: RelationshipEventType
+  contact_id: string
+  company_id: string
+  contact_name: string
+  company_name: string
+  event_date: string
+  days_until: number
+  suggested_action: string
+  personal_context: string | null
+}

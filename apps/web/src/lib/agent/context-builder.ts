@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { detectRelationshipEvents } from '@prospector/core'
 import type {
   AgentContext,
   PriorityAccountSummary,
@@ -211,6 +212,75 @@ export async function assembleAgentContext(
     }
   }
 
+  const { data: fullContacts } = await supabase
+    .from('contacts')
+    .select('id, company_id, first_name, last_name, title, birthday, work_anniversary, personal_interests, is_champion, is_decision_maker, last_activity_date')
+    .eq('tenant_id', tenantId)
+    .in('company_id', safeIds)
+    .or('is_champion.eq.true,is_decision_maker.eq.true')
+    .limit(30)
+
+  const { data: relNotes } = await supabase
+    .from('relationship_notes')
+    .select('contact_id, content, note_type')
+    .eq('tenant_id', tenantId)
+    .eq('rep_crm_id', repId)
+    .order('created_at', { ascending: false })
+    .limit(30)
+
+  const companyNameMap = new Map((accountsResult.data ?? []).map((a) => [a.id, a.name]))
+
+  const relationshipEvents = detectRelationshipEvents({
+    contacts: (fullContacts ?? []).map((c) => ({
+      ...c,
+      tenant_id: tenantId,
+      crm_id: null,
+      apollo_id: null,
+      email: null,
+      seniority: null,
+      department: null,
+      phone: null,
+      linkedin_url: null,
+      engagement_score: 0,
+      relevance_score: 0,
+      is_economic_buyer: false,
+      role_tag: null,
+      timezone: null,
+      location_city: null,
+      photo_url: null,
+      twitter_url: null,
+      personal_interests: c.personal_interests ?? [],
+      communication_preference: null,
+      preferred_contact_time: null,
+      alma_mater: null,
+      previous_companies: [],
+      years_in_role: null,
+      enriched_at: null,
+      created_at: '',
+    })),
+    companyNames: companyNameMap,
+    recentNotes: (relNotes ?? []).map((n) => ({
+      contact_id: n.contact_id ?? '',
+      content: n.content,
+    })),
+    lookAheadDays: 14,
+  })
+
+  const notesByContact = new Map<string, string[]>()
+  for (const n of relNotes ?? []) {
+    if (!n.contact_id) continue
+    const list = notesByContact.get(n.contact_id) ?? []
+    list.push(n.content)
+    notesByContact.set(n.contact_id, list)
+  }
+
+  const keyContactNotes = (fullContacts ?? [])
+    .filter((c) => notesByContact.has(c.id))
+    .map((c) => ({
+      contact_name: `${c.first_name} ${c.last_name}`,
+      notes: notesByContact.get(c.id)!.slice(0, 3),
+    }))
+
   let currentAccount = null
   let currentDeal = null
 
@@ -246,6 +316,8 @@ export async function assembleAgentContext(
       response_summary,
       feedback: 'positive',
     })),
+    relationship_events: relationshipEvents.slice(0, 5),
+    key_contact_notes: keyContactNotes.slice(0, 5),
     current_page: pageContext?.page ?? null,
     current_account: currentAccount,
     current_deal: currentDeal,

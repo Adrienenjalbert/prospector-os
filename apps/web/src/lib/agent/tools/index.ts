@@ -129,7 +129,7 @@ export function createAgentTools(tenantId: string, repId: string) {
 
       if (!company) return { error: `Company "${company_name}" not found` }
 
-      const [signalsRes, contactsRes, oppsRes] = await Promise.all([
+      const [signalsRes, contactsRes, oppsRes, notesRes] = await Promise.all([
         supabase
           .from('signals')
           .select('signal_type, title, description, urgency, relevance_score, detected_at')
@@ -139,7 +139,7 @@ export function createAgentTools(tenantId: string, repId: string) {
           .limit(10),
         supabase
           .from('contacts')
-          .select('first_name, last_name, title, email, phone, seniority, is_champion, is_decision_maker')
+          .select('id, first_name, last_name, title, email, phone, seniority, is_champion, is_decision_maker, birthday, work_anniversary, personal_interests, alma_mater')
           .eq('tenant_id', tenantId)
           .eq('company_id', company.id)
           .order('relevance_score', { ascending: false })
@@ -152,7 +152,37 @@ export function createAgentTools(tenantId: string, repId: string) {
           .eq('is_closed', false)
           .order('value', { ascending: false })
           .limit(5),
+        supabase
+          .from('relationship_notes')
+          .select('contact_id, note_type, content, created_at')
+          .eq('tenant_id', tenantId)
+          .eq('company_id', company.id)
+          .order('created_at', { ascending: false })
+          .limit(15),
       ])
+
+      const notesByContactId = new Map<string, { note_type: string; content: string }[]>()
+      for (const n of notesRes.data ?? []) {
+        if (!n.contact_id) continue
+        const list = notesByContactId.get(n.contact_id) ?? []
+        list.push({ note_type: n.note_type, content: n.content })
+        notesByContactId.set(n.contact_id, list)
+      }
+
+      const enrichedContacts = (contactsRes.data ?? []).map((c) => ({
+        first_name: c.first_name,
+        last_name: c.last_name,
+        title: c.title,
+        email: c.email,
+        phone: c.phone,
+        seniority: c.seniority,
+        is_champion: c.is_champion,
+        is_decision_maker: c.is_decision_maker,
+        birthday: c.birthday,
+        interests: c.personal_interests,
+        alma_mater: c.alma_mater,
+        relationship_notes: notesByContactId.get(c.id) ?? [],
+      }))
 
       return {
         company: {
@@ -168,7 +198,7 @@ export function createAgentTools(tenantId: string, repId: string) {
           priority_reason: company.priority_reason,
         },
         signals: signalsRes.data ?? [],
-        contacts: contactsRes.data ?? [],
+        contacts: enrichedContacts,
         open_deals: oppsRes.data ?? [],
       }
     },
@@ -372,6 +402,70 @@ export function createAgentTools(tenantId: string, repId: string) {
     },
   })
 
+  const relationshipNotes = tool({
+    description:
+      'Read or save personal notes about a contact. Use "read" to look up what the rep knows about someone (interests, family, career goals, past conversation takeaways). Use "write" to log a new personal observation after a meeting or call. This builds genuine relationship context over time.',
+    parameters: z.object({
+      action: z.enum(['read', 'write']).describe('Whether to read existing notes or write a new one'),
+      contact_name: z.string().describe('Contact first or last name'),
+      note_type: z.enum([
+        'personal_detail', 'conversation_takeaway', 'follow_up_commitment',
+        'interest_hobby', 'family_mention', 'career_goal', 'pain_point', 'preference', 'general',
+      ]).optional().describe('Type of note (required for write)'),
+      content: z.string().optional().describe('Note content (required for write)'),
+    }),
+    execute: async ({ action, contact_name, note_type, content }) => {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('id, first_name, last_name, company_id, title, birthday, work_anniversary, personal_interests, alma_mater, previous_companies')
+        .eq('tenant_id', tenantId)
+        .or(`first_name.ilike.%${contact_name}%,last_name.ilike.%${contact_name}%`)
+        .limit(1)
+        .single()
+
+      if (!contact) return { error: `Contact "${contact_name}" not found` }
+
+      if (action === 'read') {
+        const { data: notes } = await supabase
+          .from('relationship_notes')
+          .select('note_type, content, created_at')
+          .eq('tenant_id', tenantId)
+          .eq('contact_id', contact.id)
+          .order('created_at', { ascending: false })
+          .limit(10)
+
+        return {
+          contact: {
+            name: `${contact.first_name} ${contact.last_name}`,
+            title: contact.title,
+            birthday: contact.birthday,
+            work_anniversary: contact.work_anniversary,
+            interests: contact.personal_interests,
+            alma_mater: contact.alma_mater,
+            previous_companies: contact.previous_companies,
+          },
+          notes: notes ?? [],
+        }
+      }
+
+      if (!note_type || !content) {
+        return { error: 'note_type and content are required for write action' }
+      }
+
+      await supabase.from('relationship_notes').insert({
+        tenant_id: tenantId,
+        contact_id: contact.id,
+        company_id: contact.company_id,
+        rep_crm_id: repId,
+        note_type,
+        content,
+        source: 'agent',
+      })
+
+      return { saved: true, contact_name: `${contact.first_name} ${contact.last_name}`, note_type }
+    },
+  })
+
   return {
     priority_queue: priorityQueue,
     crm_lookup: crmLookup,
@@ -380,5 +474,6 @@ export function createAgentTools(tenantId: string, repId: string) {
     funnel_diagnosis: funnelDiagnosis,
     deal_strategy: dealStrategy,
     contact_finder: contactFinder,
+    relationship_notes: relationshipNotes,
   }
 }

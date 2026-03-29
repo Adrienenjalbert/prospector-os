@@ -50,4 +50,5 @@ export const TRIGGER_COOLDOWNS: Record<TriggerType, number> = {
   funnel_gap: 7,
   win_loss_insight: 0,
   daily_briefing: 1,
+  relationship_touch: 30,
 }

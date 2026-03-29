@@ -15,6 +15,7 @@ export type TriggerType =
   | 'funnel_gap'
   | 'win_loss_insight'
   | 'daily_briefing'
+  | 'relationship_touch'
 
 export interface TriggerCondition {
   field: string
@@ -42,6 +43,7 @@ export type TriggerPayload =
   | PriorityShiftPayload
   | FunnelGapPayload
   | DailyBriefingPayload
+  | RelationshipTouchPayload
 
 export interface StallTriggerPayload {
   type: 'deal_stall'
@@ -94,6 +96,17 @@ export interface BriefingAction {
   reason: string
   action: string
   severity: 'critical' | 'high' | 'medium' | 'low'
+}
+
+export interface RelationshipTouchPayload {
+  type: 'relationship_touch'
+  event_type: string
+  contact_name: string
+  company_name: string
+  event_date: string
+  days_until: number
+  suggested_action: string
+  personal_context: string | null
 }
 
 export interface NotificationRecord {
