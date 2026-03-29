@@ -1,4 +1,5 @@
 import { formatGbp } from "@/lib/utils";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
 type RepCard = {
   id: string;
@@ -9,8 +10,21 @@ type RepCard = {
   priorityStage: string;
 };
 
-/** Replace with session / role check from your auth provider. */
-const isManager = false;
+async function checkIsManager(): Promise<boolean> {
+  try {
+    const supabase = await createSupabaseServer();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+    return profile?.role === 'manager' || profile?.role === 'admin';
+  } catch {
+    return false;
+  }
+}
 
 const demoReps: RepCard[] = [
   {
@@ -39,7 +53,8 @@ const demoReps: RepCard[] = [
   },
 ];
 
-export default function TeamPerformancePage() {
+export default async function TeamPerformancePage() {
+  const isManager = await checkIsManager();
   const reps = isManager ? demoReps : [];
 
   return (

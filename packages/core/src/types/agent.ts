@@ -6,6 +6,12 @@ import type {
   PriorityTier,
 } from './ontology'
 
+export interface WinningPattern {
+  query_type: string
+  response_summary: string
+  feedback: string
+}
+
 export interface AgentContext {
   rep_profile: RepProfile
 
@@ -14,6 +20,7 @@ export interface AgentContext {
   stalled_deals: StalledDealSummary[]
   recent_signals: SignalSummary[]
   company_benchmarks: FunnelBenchmark[]
+  winning_patterns?: WinningPattern[]
 
   current_page: string | null
   current_account: Company | null
@@ -125,6 +132,8 @@ export interface DailyBriefing {
   rep_id: string
   date: string
   greeting: string
+  primary_action: BriefingItem | null
+  secondary_actions: BriefingItem[]
   top_actions: BriefingItem[]
   stalled_deals: StalledDealSummary[]
   new_signals: SignalSummary[]

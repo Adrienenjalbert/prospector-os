@@ -2,16 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, MessageSquare } from "lucide-react";
 import { ChatSidebar } from "@/components/agent/chat-sidebar";
+import { NotificationList } from "@/components/notifications/notification-list";
+import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { clsx } from "clsx";
 
-const navItems = [
+type NavItem = { href: string; label: string; roles?: string[] };
+
+const allNavItems: NavItem[] = [
   { href: "/inbox", label: "Inbox" },
+  { href: "/pipeline", label: "Pipeline", roles: ["manager", "admin"] },
+  { href: "/accounts", label: "Accounts", roles: ["manager", "admin"] },
   { href: "/analytics/my-funnel", label: "My Stats" },
+  { href: "/analytics/team", label: "Team", roles: ["manager", "admin"] },
   { href: "/settings", label: "Settings" },
-] as const;
+  { href: "/admin/config", label: "Admin", roles: ["admin"] },
+];
+
+function getNavForRole(role: string): NavItem[] {
+  return allNavItems.filter((item) => !item.roles || item.roles.includes(role));
+}
 
 export default function DashboardLayout({
   children,
@@ -21,6 +33,85 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatInitialPrompt, setChatInitialPrompt] = useState<string | null>(null);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [userRole, setUserRole] = useState<string>("rep");
+  const bellContainerRef = useRef<HTMLDivElement>(null);
+
+  const refreshUnreadCount = useCallback(async () => {
+    const supabase = createSupabaseBrowser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const { count, error } = await supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("read", false);
+
+    if (error) {
+      console.error("[layout] unread count", error);
+      return;
+    }
+    setUnreadCount(count ?? 0);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = createSupabaseBrowser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled) return;
+      if (!user) {
+        setUnreadCount(0);
+        return;
+      }
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .eq("read", false);
+      if (cancelled) return;
+      if (error) {
+        console.error("[layout] unread count", error);
+        return;
+      }
+      setUnreadCount(count ?? 0);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = createSupabaseBrowser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled || !user) return;
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+      if (cancelled) return;
+      if (profile?.role) setUserRole(profile.role);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const navItems = getNavForRole(userRole);
 
   useEffect(() => {
     function handleOpenChat(e: Event) {
@@ -30,8 +121,8 @@ export default function DashboardLayout({
       }
       setSidebarOpen(true);
     }
-    window.addEventListener('prospector:open-chat', handleOpenChat);
-    return () => window.removeEventListener('prospector:open-chat', handleOpenChat);
+    window.addEventListener("prospector:open-chat", handleOpenChat);
+    return () => window.removeEventListener("prospector:open-chat", handleOpenChat);
   }, []);
 
   return (
@@ -68,13 +159,31 @@ export default function DashboardLayout({
             </nav>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="relative rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-              aria-label="Notifications"
-            >
-              <Bell className="size-5" />
-            </button>
+            <div className="relative" ref={bellContainerRef}>
+              <button
+                type="button"
+                onClick={() => setNotificationOpen((o) => !o)}
+                className={clsx(
+                  "relative rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200",
+                  notificationOpen && "bg-zinc-800 text-zinc-100",
+                )}
+                aria-label="Notifications"
+                aria-expanded={notificationOpen}
+              >
+                <Bell className="size-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+              <NotificationList
+                isOpen={notificationOpen}
+                onClose={() => setNotificationOpen(false)}
+                onNotificationsChanged={() => void refreshUnreadCount()}
+                containerRef={bellContainerRef}
+              />
+            </div>
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}

@@ -21,7 +21,7 @@ export function assembleDailyBriefing(input: BriefingInput): DailyBriefing {
 
   const topActions = buildTopActions(sortedCompanies.slice(0, 8), opportunities, signals, contacts)
 
-  const stalledDeals = buildStalledDeals(opportunities, companies)
+  const stalledDeals = buildStalledDeals(opportunities, companies, companyBenchmarks)
 
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
   const recentSignals = buildSignalSummaries(
@@ -35,11 +35,17 @@ export function assembleDailyBriefing(input: BriefingInput): DailyBriefing {
   const totalValue = openOpps.reduce((s, o) => s + (o.value ?? 0), 0)
   const expectedValue = companies.reduce((s, c) => s + c.expected_revenue, 0)
 
+  const allActions = topActions.slice(0, 3)
+  const primaryAction = allActions[0] ?? null
+  const secondaryActions = allActions.slice(1)
+
   return {
     rep_id: rep.crm_id,
     date: new Date().toISOString().split('T')[0],
     greeting: buildGreeting(rep.name, rep.comm_style),
-    top_actions: topActions.slice(0, 3),
+    primary_action: primaryAction,
+    secondary_actions: secondaryActions,
+    top_actions: allActions,
     stalled_deals: stalledDeals,
     new_signals: recentSignals.slice(0, 5),
     funnel_snapshot: funnelSnapshot,
@@ -105,13 +111,15 @@ function determineTriggerType(
 
 function buildStalledDeals(
   opportunities: Opportunity[],
-  companies: Company[]
+  companies: Company[],
+  benchmarks: FunnelBenchmark[]
 ): StalledDealSummary[] {
   return opportunities
     .filter((o) => o.is_stalled && !o.is_closed)
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
     .map((o) => {
       const company = companies.find((c) => c.id === o.company_id)
+      const bench = benchmarks.find((b) => b.stage_name === o.stage)
       return {
         id: o.id,
         name: o.name,
@@ -120,7 +128,7 @@ function buildStalledDeals(
         stage: o.stage,
         value: o.value,
         days_in_stage: o.days_in_stage,
-        median_days: 14,
+        median_days: bench?.median_days_in_stage ?? 14,
         stall_reason: o.stall_reason,
         last_activity_date: company?.last_activity_date ?? null,
       }

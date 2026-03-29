@@ -101,12 +101,13 @@ export class SalesforceAdapter implements CRMAdapter {
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
     const limit = filters.limit ? ` LIMIT ${filters.limit}` : ''
 
-    const soql = `SELECT Id, Name, Amount, StageName, Probability, CloseDate, AccountId, OwnerId, IsClosed, IsWon, Days_In_Stage__c, Stage_Entered_At__c, Is_Stalled__c, Stall_Reason__c, Next_Best_Action__c, Win_Probability_AI__c FROM Opportunity${where} ORDER BY Amount DESC NULLS LAST${limit}`
+    const soql = `SELECT Id, Name, Amount, StageName, Probability, CloseDate, AccountId, OwnerId, IsClosed, IsWon, Days_In_Stage__c, Stage_Entered_At__c, Is_Stalled__c, Stall_Reason__c, Next_Best_Action__c, Win_Probability_AI__c, Lost_Reason__c FROM Opportunity${where} ORDER BY Amount DESC NULLS LAST${limit}`
 
     const records = await this.query(soql)
 
     return records.map((r: Record<string, unknown>) => ({
       crm_id: r.Id as string,
+      company_crm_id: r.AccountId as string,
       name: r.Name as string,
       value: r.Amount as number | null,
       stage: r.StageName as string,
@@ -114,6 +115,8 @@ export class SalesforceAdapter implements CRMAdapter {
       expected_close_date: r.CloseDate as string | null,
       is_closed: r.IsClosed as boolean,
       is_won: r.IsWon as boolean,
+      closed_at: r.IsClosed ? (r.CloseDate as string | null) : null,
+      lost_reason: r.Lost_Reason__c as string | null,
       days_in_stage: (r.Days_In_Stage__c as number) ?? 0,
       stage_entered_at: r.Stage_Entered_At__c as string | null,
       is_stalled: (r.Is_Stalled__c as boolean) ?? false,

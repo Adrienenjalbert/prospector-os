@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Send, X } from "lucide-react";
+import type { Message } from "@ai-sdk/react";
 
 import { useAgentChat } from "@/lib/hooks/use-agent-chat";
+import { createSupabaseBrowser } from "@/lib/supabase/client";
 
 import { ChatMessage } from "./chat-message";
 
@@ -24,9 +26,29 @@ const suggestedPrompts = [
 const WELCOME_MESSAGE =
   "Hi! I know your accounts, deals, and signals. Ask me anything — I'll give you specific names, numbers, and next steps.";
 
-export function ChatSidebar({ isOpen, onClose, initialPrompt, onPromptConsumed }: ChatSidebarProps) {
+type HistoryMsg = { id?: string; role: string; content: string };
+
+function mapHistoryToMessages(rows: HistoryMsg[]): Message[] {
+  return rows.map((m, i) => ({
+    id: m.id ?? `history-${i}-${crypto.randomUUID()}`,
+    role: m.role as Message["role"],
+    content: typeof m.content === "string" ? m.content : "",
+  }));
+}
+
+function ChatSidebarChat({
+  isOpen,
+  onClose,
+  initialPrompt,
+  onPromptConsumed,
+  initialMessages,
+  accessToken,
+}: ChatSidebarProps & {
+  initialMessages: Message[];
+  accessToken: string | null;
+}) {
   const { messages, input, setInput, handleSubmit, append, isLoading, error } =
-    useAgentChat();
+    useAgentChat({ initialMessages, initialAccessToken: accessToken });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const promptSentRef = useRef<string | null>(null);
@@ -34,7 +56,7 @@ export function ChatSidebar({ isOpen, onClose, initialPrompt, onPromptConsumed }
   useEffect(() => {
     if (initialPrompt && isOpen && initialPrompt !== promptSentRef.current) {
       promptSentRef.current = initialPrompt;
-      append({ role: 'user', content: initialPrompt });
+      append({ role: "user", content: initialPrompt });
       onPromptConsumed?.();
     }
   }, [initialPrompt, isOpen, append, onPromptConsumed]);
@@ -76,9 +98,15 @@ export function ChatSidebar({ isOpen, onClose, initialPrompt, onPromptConsumed }
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="flex flex-col gap-4">
-          <ChatMessage role="assistant" content={WELCOME_MESSAGE} />
+          {messages.length === 0 && (
+            <ChatMessage role="assistant" content={WELCOME_MESSAGE} />
+          )}
           {messages.map((m) => (
-            <ChatMessage key={m.id} role={m.role as "user" | "assistant"} content={m.content} />
+            <ChatMessage
+              key={m.id}
+              role={m.role as "user" | "assistant"}
+              content={m.content}
+            />
           ))}
           {isLoading && messages.at(-1)?.role === "user" && (
             <div className="flex items-center gap-2 px-1 text-sm text-zinc-500">
@@ -144,5 +172,121 @@ export function ChatSidebar({ isOpen, onClose, initialPrompt, onPromptConsumed }
         </button>
       </form>
     </div>
+  );
+}
+
+export function ChatSidebar({
+  isOpen,
+  onClose,
+  initialPrompt,
+  onPromptConsumed,
+}: ChatSidebarProps) {
+  const [historyReady, setHistoryReady] = useState(false);
+  const [initialMessages, setInitialMessages] = useState<Message[]>([]);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHistory() {
+      try {
+        const supabase = createSupabaseBrowser();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        const token = session?.access_token ?? null;
+        if (!token) {
+          if (!cancelled) {
+            setAccessToken(null);
+            setInitialMessages([]);
+            setHistoryReady(true);
+          }
+          return;
+        }
+
+        if (!cancelled) setAccessToken(token);
+
+        const res = await fetch("/api/agent/history", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          if (!cancelled) {
+            setInitialMessages([]);
+            setHistoryReady(true);
+          }
+          return;
+        }
+
+        const data = (await res.json()) as { messages?: HistoryMsg[] };
+        const rows = Array.isArray(data.messages) ? data.messages : [];
+        const normalized = rows.filter(
+          (m) =>
+            m &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.content === "string",
+        );
+
+        if (!cancelled) {
+          setInitialMessages(mapHistoryToMessages(normalized));
+          setHistoryReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setInitialMessages([]);
+          setHistoryReady(true);
+        }
+      }
+    }
+
+    void loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!historyReady) {
+    return (
+      <div
+        className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-300 ease-out ${
+          isOpen ? "translate-x-0" : "pointer-events-none translate-x-full"
+        }`}
+        aria-hidden={!isOpen}
+      >
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">
+            Prospector OS
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+            aria-label="Close chat"
+          >
+            <X className="size-5" />
+          </button>
+        </header>
+        <div className="flex flex-1 items-center justify-center px-4 py-8">
+          <div className="flex items-center gap-2 text-sm text-zinc-500">
+            <Loader2 className="size-5 animate-spin" />
+            Loading conversation…
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ChatSidebarChat
+      isOpen={isOpen}
+      onClose={onClose}
+      initialPrompt={initialPrompt}
+      onPromptConsumed={onPromptConsumed}
+      initialMessages={initialMessages}
+      accessToken={accessToken}
+    />
   );
 }

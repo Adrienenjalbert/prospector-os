@@ -27,7 +27,9 @@ export function computeForecast(input: ForecastInput): ForecastResult {
   for (const acc of accounts) {
     const rev = acc.expected_revenue ?? 0
     totalPipeline += rev
-    weightedPipeline += rev * (acc.propensity / 100)
+    // expected_revenue already includes propensity (deal_value * propensity/100)
+    // so weighted_pipeline is just the sum of expected_revenue values
+    weightedPipeline += rev
     totalPropensity += acc.propensity
 
     switch (acc.priority_tier) {

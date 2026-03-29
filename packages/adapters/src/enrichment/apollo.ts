@@ -12,6 +12,25 @@ import { normalizeIndustry } from './normalizers/industry-map'
 const APOLLO_BASE = 'https://api.apollo.io/api/v1'
 const RATE_LIMIT_MS = 600 // ~100 requests/minute
 
+const SENIORITY_MAP: Record<string, string> = {
+  c_suite: 'c_level',
+  owner: 'c_level',
+  founder: 'c_level',
+  partner: 'c_level',
+  vp: 'vp',
+  director: 'director',
+  senior: 'manager',
+  manager: 'manager',
+  entry: 'individual',
+  training: 'individual',
+  intern: 'individual',
+}
+
+function normalizeSeniority(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  return SENIORITY_MAP[raw.toLowerCase()] ?? raw.toLowerCase()
+}
+
 export class ApolloAdapter implements EnrichmentProvider {
   readonly name = 'apollo'
   private apiKey: string
@@ -120,7 +139,7 @@ export class ApolloAdapter implements EnrichmentProvider {
       first_name: p.first_name,
       last_name: p.last_name,
       title: p.title ?? null,
-      seniority: p.seniority ?? null,
+      seniority: normalizeSeniority(p.seniority),
       department: p.departments?.[0] ?? null,
       phone: p.phone_numbers?.[0]?.raw_number ?? null,
       linkedin_url: p.linkedin_url ?? null,

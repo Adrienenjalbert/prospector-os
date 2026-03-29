@@ -20,7 +20,7 @@ export function computeEngagementDepth(
 
   const volume = computeVolume(activities30d.length, tenant_median_activities_30d)
   const quality = computeQuality(activities30d, config.engagement_activity_points)
-  const trend = computeTrend(activities)
+  const trend = computeTrend(activities, config.engagement_activity_points)
   const recency = computeRecency(activities, config.engagement_recency)
 
   const score = Math.round(
@@ -62,7 +62,10 @@ function computeQuality(
   return Math.min(100, Math.round((totalPoints / normaliser) * 100))
 }
 
-function computeTrend(activities: CRMActivity[]): number {
+function computeTrend(
+  activities: CRMActivity[],
+  pointMap: Record<string, number>
+): number {
   const now = new Date()
 
   const last14 = activities.filter(
@@ -73,8 +76,8 @@ function computeTrend(activities: CRMActivity[]): number {
     return days > 14 && days <= 28
   })
 
-  const last14Score = last14.reduce((s, a) => s + activityWeight(a.type), 0)
-  const prior14Score = prior14.reduce((s, a) => s + activityWeight(a.type), 0)
+  const last14Score = last14.reduce((s, a) => s + (pointMap[a.type] ?? 1), 0)
+  const prior14Score = prior14.reduce((s, a) => s + (pointMap[a.type] ?? 1), 0)
 
   if (prior14Score === 0) return last14Score > 0 ? 75 : 55
 
@@ -108,16 +111,6 @@ function computeRecency(
     if (daysAgo <= tier.max_days) return tier.score
   }
   return 5
-}
-
-const DEFAULT_ACTIVITY_WEIGHTS: Record<string, number> = {
-  proposal_sent: 25, meeting_multi_party: 20, meeting_one_on_one: 15,
-  call_connected: 10, email_reply_received: 8, call_attempted: 3,
-  email_opened_multiple: 2, email_opened_once: 1,
-}
-
-function activityWeight(type: string): number {
-  return DEFAULT_ACTIVITY_WEIGHTS[type] ?? 1
 }
 
 function daysSince(dateStr: string, now: Date): number {

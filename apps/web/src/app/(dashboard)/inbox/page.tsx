@@ -1,5 +1,7 @@
+import { redirect } from 'next/navigation'
 import { QueueHeader } from '@/components/priority/queue-header'
 import { InboxList } from '@/components/priority/inbox-list'
+import { isDemoTenantSlug } from '@/lib/demo-tenant'
 
 interface PriorityItem {
   accountName: string
@@ -12,6 +14,10 @@ interface PriorityItem {
   contactName: string | null
   contactPhone: string | null
   severity: 'critical' | 'high' | 'medium' | 'low'
+  priorityTier: string | null
+  propensity: number | null
+  icpTier: string | null
+  priorityReason: string | null
 }
 
 const DEMO_ITEMS: PriorityItem[] = [
@@ -27,6 +33,10 @@ const DEMO_ITEMS: PriorityItem[] = [
     contactName: 'Sarah Chen',
     contactPhone: '+44 7700 900123',
     severity: 'critical',
+    priorityTier: 'HOT',
+    propensity: 87,
+    icpTier: 'A',
+    priorityReason: 'ICP fit (Tier A: logistics, 2000 employees) + stalled deal at Proposal',
   },
   {
     accountName: 'Beta Warehousing',
@@ -41,6 +51,10 @@ const DEMO_ITEMS: PriorityItem[] = [
     contactName: 'James Miller',
     contactPhone: '+44 7700 900456',
     severity: 'high',
+    priorityTier: 'HOT',
+    propensity: 79,
+    icpTier: 'A',
+    priorityReason: 'Fresh hiring surge signal + strong ICP fit',
   },
   {
     accountName: 'Gamma Manufacturing',
@@ -54,6 +68,10 @@ const DEMO_ITEMS: PriorityItem[] = [
     contactName: null,
     contactPhone: null,
     severity: 'medium',
+    priorityTier: 'WARM',
+    propensity: 63,
+    icpTier: 'A',
+    priorityReason: 'Strong ICP fit, no active deal — prospecting opportunity',
   },
 ]
 
@@ -72,6 +90,25 @@ async function fetchRealData(): Promise<{
       .select('tenant_id, full_name, rep_profile_id')
       .eq('id', user.id)
       .single()
+    if (!profile?.tenant_id) return null
+
+    const { count: companyCount, error: companyCountErr } = await supabase
+      .from('companies')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', profile.tenant_id)
+
+    if (!companyCountErr && (companyCount ?? 0) === 0) {
+      const { data: tenant, error: tenantErr } = await supabase
+        .from('tenants')
+        .select('slug')
+        .eq('id', profile.tenant_id)
+        .maybeSingle()
+
+      if (!tenantErr && tenant && !isDemoTenantSlug(tenant.slug)) {
+        redirect('/onboarding')
+      }
+    }
+
     if (!profile?.rep_profile_id) return null
 
     const { data: repProfile } = await supabase
@@ -176,6 +213,10 @@ async function fetchRealData(): Promise<{
         contactName,
         contactPhone: contact?.phone ?? null,
         severity,
+        priorityTier: c.priority_tier,
+        propensity: c.propensity,
+        icpTier: c.icp_tier,
+        priorityReason: c.priority_reason,
       }
     })
 

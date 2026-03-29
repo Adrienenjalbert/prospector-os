@@ -41,8 +41,34 @@ export default function AdminConfigPage() {
     );
   }
 
-  function handleSave() {
-    // POST config payload when API exists
+  async function handleSave() {
+    try {
+      const { createSupabaseBrowser } = await import('@/lib/supabase/client')
+      const supabase = createSupabaseBrowser()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) return
+
+      const configData = {
+        dimensions: dimensions.map((d) => ({ name: d.name, weight: d.weight })),
+        tier_thresholds: tiers,
+      }
+
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ config_type: tab, config_data: configData }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        console.error('[admin/config] save failed:', data.error)
+      }
+    } catch (e) {
+      console.error('[admin/config] save error:', e)
+    }
   }
 
   function handleReset() {

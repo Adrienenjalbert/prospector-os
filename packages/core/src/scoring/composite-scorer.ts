@@ -11,6 +11,13 @@ import { computeProfileWinRate } from './win-rate-scorer'
 import { computePropensity } from './propensity-scorer'
 import { computeExpectedRevenue, type ExpectedRevenueResult } from './expected-revenue'
 
+export interface HistoricalDealOutcome {
+  industry_group: string | null
+  employee_range: string | null
+  market: string | null
+  is_won: boolean
+}
+
 export interface CompositeScoreInput {
   company: Partial<Company>
   contacts: Contact[]
@@ -20,6 +27,7 @@ export interface CompositeScoreInput {
   benchmarks: FunnelBenchmark[]
   previousSignalScore: number | null
   companyWinRate: number
+  historicalDeals?: HistoricalDealOutcome[]
 }
 
 export interface CompositeScoreResult {
@@ -42,6 +50,7 @@ export interface CompositeScoreConfig {
   icpConfig: ICPConfig
   scoringConfig: ScoringConfig
   signalConfig: SignalConfig
+  activeStageCount?: number
 }
 
 export function computeCompositeScore(
@@ -70,13 +79,15 @@ export function computeCompositeScore(
   )
 
   const topOpportunity = pickTopOpportunity(opportunities)
-  const totalActiveStages = scoringConfig.velocity_ratio_tiers.length || 6
+  const totalActiveStages = config.activeStageCount ?? 4
   const velocityResult = computeStageVelocity(
     { opportunity: topOpportunity, benchmarks, total_active_stages: totalActiveStages },
     scoringConfig.velocity_ratio_tiers,
   )
 
-  const { similarWon, similarLost } = countSimilarOutcomes(opportunities)
+  const { similarWon, similarLost } = input.historicalDeals
+    ? countSimilarFromHistorical(input.historicalDeals, company)
+    : countSimilarOutcomes(opportunities)
   const winRateResult = computeProfileWinRate({
     similar_won: similarWon,
     similar_lost: similarLost,
@@ -137,6 +148,40 @@ function countSimilarOutcomes(opportunities: Opportunity[]): {
   return {
     similarWon: closed.filter((o) => o.is_won).length,
     similarLost: closed.filter((o) => !o.is_won).length,
+  }
+}
+
+function countSimilarFromHistorical(
+  historicalDeals: HistoricalDealOutcome[],
+  company: Partial<Company>
+): { similarWon: number; similarLost: number } {
+  const companyIndustry = (company as Record<string, unknown>).industry_group as string | null
+  const companyRange = (company as Record<string, unknown>).employee_range as string | null
+  const companyCountry = (company as Record<string, unknown>).hq_country as string | null
+
+  const similar = historicalDeals.filter((deal) => {
+    let matches = 0
+    let checked = 0
+
+    if (companyIndustry && deal.industry_group) {
+      checked++
+      if (deal.industry_group.toLowerCase() === companyIndustry.toLowerCase()) matches++
+    }
+    if (companyRange && deal.employee_range) {
+      checked++
+      if (deal.employee_range === companyRange) matches++
+    }
+    if (companyCountry && deal.market) {
+      checked++
+      if (deal.market.toLowerCase() === companyCountry.toLowerCase()) matches++
+    }
+
+    return checked > 0 && matches >= Math.max(1, checked - 1)
+  })
+
+  return {
+    similarWon: similar.filter((d) => d.is_won).length,
+    similarLost: similar.filter((d) => !d.is_won).length,
   }
 }
 

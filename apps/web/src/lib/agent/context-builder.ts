@@ -194,6 +194,23 @@ export async function assembleAgentContext(
     }
   })
 
+  const { data: winningPatterns } = await supabase
+    .from('agent_interaction_outcomes')
+    .select('query_type, response_summary')
+    .eq('tenant_id', tenantId)
+    .eq('rep_crm_id', repId)
+    .eq('feedback', 'positive')
+    .not('response_summary', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  const deduped = new Map<string, string>()
+  for (const p of winningPatterns ?? []) {
+    if (!deduped.has(p.query_type) && p.response_summary) {
+      deduped.set(p.query_type, p.response_summary)
+    }
+  }
+
   let currentAccount = null
   let currentDeal = null
 
@@ -224,6 +241,11 @@ export async function assembleAgentContext(
     stalled_deals: stalledDeals,
     recent_signals: recentSignals,
     company_benchmarks: companyBenchResult.data ?? [],
+    winning_patterns: Array.from(deduped.entries()).map(([query_type, response_summary]) => ({
+      query_type,
+      response_summary,
+      feedback: 'positive',
+    })),
     current_page: pageContext?.page ?? null,
     current_account: currentAccount,
     current_deal: currentDeal,

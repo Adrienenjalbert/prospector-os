@@ -14,7 +14,8 @@ export interface ImpactScoreResult {
 export function computeImpactScores(
   repBenchmarks: FunnelBenchmark[],
   companyBenchmarks: FunnelBenchmark[],
-  highDropThresholdPts: number = 5
+  highDropThresholdPts: number = 5,
+  activeRepCount: number = 1
 ): ImpactScoreResult[] {
   return repBenchmarks.map((rep) => {
     const company = companyBenchmarks.find((c) => c.stage_name === rep.stage_name)
@@ -23,8 +24,8 @@ export function computeImpactScores(
 
     const impactScore = Math.abs(deltaDrop) * rep.deal_count * rep.avg_deal_value
 
-    const medianDealCount = company?.deal_count ?? 1
-    const isHighVolume = rep.deal_count >= medianDealCount
+    const perRepMedian = (company?.deal_count ?? 1) / Math.max(1, activeRepCount)
+    const isHighVolume = rep.deal_count >= perRepMedian
     const isHighDrop = deltaDrop >= highDropThresholdPts
 
     let status: StageStatus

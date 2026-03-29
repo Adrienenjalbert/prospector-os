@@ -52,7 +52,7 @@ export function createAgentTools(tenantId: string, repId: string) {
         return { queue_type, accounts: data ?? [] }
       }
 
-      const query = supabase
+      let query = supabase
         .from('companies')
         .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier')
         .eq('tenant_id', tenantId)
@@ -61,7 +61,7 @@ export function createAgentTools(tenantId: string, repId: string) {
         .limit(limit)
 
       if (queue_type === 'today') {
-        query.in('priority_tier', ['HOT', 'WARM'])
+        query = query.in('priority_tier', ['HOT', 'WARM'])
       }
 
       const { data, error } = await query

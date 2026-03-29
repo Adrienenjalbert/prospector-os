@@ -1,87 +1,174 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Sparkles } from "lucide-react";
 import { formatGbp } from "@/lib/utils";
+import { createSupabaseServer } from "@/lib/supabase/server";
+import { AccountResearchButton } from "./research-button";
 
 type PageProps = {
   params: Promise<{ accountId: string }>;
 };
 
-const DEMO_ACCOUNTS: Record<string, typeof defaultViewModel> = {
-  'demo-001': {
-    displayName: 'Acme Logistics',
-    score: { expectedRevenue: 200_000, propensityPct: 25, icpTier: 'A', priorityTier: 'HOT', dealValue: 800_000 },
-    company: { industry: 'Logistics', size: '1,200 employees', hq: 'London, UK', revenue: 120_000_000, founded: '1998' },
-    scoringDimensions: [
-      { id: 'icp', label: 'ICP Fit', score: 85, weight: 0.15 },
-      { id: 'signal', label: 'Signals', score: 30, weight: 0.20 },
-      { id: 'engage', label: 'Engagement', score: 20, weight: 0.15 },
-      { id: 'contact', label: 'Contacts', score: 15, weight: 0.20 },
-    ],
-    signals: [
-      { id: 's1', title: 'Hiring Surge — 5 temp roles posted', detectedAt: '2 days ago' },
-      { id: 's2', title: 'New VP Operations appointed', detectedAt: '2 weeks ago' },
-    ],
-    contacts: [
-      { id: 'c1', name: 'Sarah Chen', title: 'VP Operations' },
-      { id: 'c2', name: 'James Miller', title: 'Dir. Facilities' },
-    ],
-  },
-  'demo-002': {
-    displayName: 'Beta Warehousing',
-    score: { expectedRevenue: 160_000, propensityPct: 80, icpTier: 'A', priorityTier: 'WARM', dealValue: 200_000 },
-    company: { industry: 'Warehousing', size: '800 employees', hq: 'Manchester, UK', revenue: 85_000_000, founded: '2005' },
-    scoringDimensions: [
-      { id: 'icp', label: 'ICP Fit', score: 90, weight: 0.15 },
-      { id: 'signal', label: 'Signals', score: 75, weight: 0.20 },
-      { id: 'engage', label: 'Engagement', score: 68, weight: 0.15 },
-    ],
-    signals: [
-      { id: 's1', title: 'Hiring Surge — 8 temp warehouse roles', detectedAt: '3 days ago' },
-    ],
-    contacts: [
-      { id: 'c1', name: 'James Miller', title: 'Dir. Facilities' },
-    ],
-  },
-  'demo-003': {
-    displayName: 'Gamma Manufacturing',
-    score: { expectedRevenue: 63_000, propensityPct: 35, icpTier: 'A', priorityTier: 'WARM', dealValue: null },
-    company: { industry: 'Light Industrial', size: '1,400 employees', hq: 'Birmingham, UK', revenue: 95_000_000, founded: '1992' },
-    scoringDimensions: [
-      { id: 'icp', label: 'ICP Fit', score: 92, weight: 0.15 },
-      { id: 'signal', label: 'Signals', score: 40, weight: 0.20 },
-    ],
-    signals: [
-      { id: 's1', title: 'New VP Operations started 2 months ago', detectedAt: '8 weeks ago' },
-    ],
-    contacts: [],
-  },
-};
-
-const defaultViewModel = {
-  displayName: null as string | null,
+type ViewModel = {
+  displayName: string | null;
   score: {
-    expectedRevenue: null as number | null,
-    propensityPct: null as number | null,
-    icpTier: null as "A" | "B" | "C" | "D" | null,
-    priorityTier: null as "HOT" | "WARM" | "COOL" | "MONITOR" | null,
-    dealValue: null as number | null,
-  },
+    expectedRevenue: number | null;
+    propensityPct: number | null;
+    icpTier: "A" | "B" | "C" | "D" | null;
+    priorityTier: "HOT" | "WARM" | "COOL" | "MONITOR" | null;
+    dealValue: number | null;
+  };
   company: {
-    industry: null as string | null,
-    size: null as string | null,
-    hq: null as string | null,
-    revenue: null as number | null,
-    founded: null as string | null,
-  },
-  scoringDimensions: [] as {
+    industry: string | null;
+    size: string | null;
+    hq: string | null;
+    revenue: number | null;
+    founded: string | null;
+  };
+  scoringDimensions: {
     id: string;
     label: string;
     score: number | null;
     weight: number | null;
-  }[],
-  signals: [] as { id: string; title: string; detectedAt: string }[],
-  contacts: [] as { id: string; name: string; title: string }[],
+  }[];
+  signals: { id: string; title: string; detectedAt: string }[];
+  contacts: { id: string; name: string; title: string }[];
 };
+
+const DIMENSION_LABELS: Record<string, string> = {
+  industry_vertical: "Industry Fit",
+  company_size: "Company Size",
+  geography: "Geography",
+  temp_flex_usage: "Temp/Flex Usage",
+  tech_ops_maturity: "Tech Maturity",
+};
+
+function formatRelativeDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const diffMs = Date.now() - d.getTime();
+  const days = Math.floor(diffMs / 86400000);
+  if (days < 1) return "Today";
+  if (days === 1) return "1 day ago";
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+async function fetchAccountData(accountId: string): Promise<ViewModel | null> {
+  try {
+    const supabase = await createSupabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    const { data: profile } = await supabase
+      .from("user_profiles")
+      .select("tenant_id")
+      .eq("id", user.id)
+      .single();
+    if (!profile?.tenant_id) return null;
+
+    const { data: company } = await supabase
+      .from("companies")
+      .select("*")
+      .eq("id", accountId)
+      .eq("tenant_id", profile.tenant_id)
+      .single();
+
+    if (!company) return null;
+
+    const [signalsRes, contactsRes, oppsRes] = await Promise.all([
+      supabase
+        .from("signals")
+        .select("id, title, signal_type, detected_at")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("company_id", accountId)
+        .order("detected_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("contacts")
+        .select("id, first_name, last_name, title")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("company_id", accountId)
+        .order("relevance_score", { ascending: false })
+        .limit(10),
+      supabase
+        .from("opportunities")
+        .select("value")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("company_id", accountId)
+        .eq("is_closed", false)
+        .order("value", { ascending: false })
+        .limit(1),
+    ]);
+
+    const dims = company.icp_dimensions as Record<
+      string,
+      { name: string; score: number; weight: number; label: string }
+    > | null;
+
+    const scoringDimensions: ViewModel["scoringDimensions"] = [];
+
+    if (dims && typeof dims === "object") {
+      for (const [key, dim] of Object.entries(dims)) {
+        if (dim && typeof dim.score === "number") {
+          scoringDimensions.push({
+            id: key,
+            label: DIMENSION_LABELS[key] ?? dim.name ?? key,
+            score: dim.score,
+            weight: dim.weight ?? null,
+          });
+        }
+      }
+    }
+
+    scoringDimensions.push(
+      { id: "signal", label: "Signal Momentum", score: company.signal_score ?? null, weight: 0.2 },
+      { id: "engage", label: "Engagement", score: company.engagement_score ?? null, weight: 0.15 },
+      { id: "contact", label: "Contact Coverage", score: company.contact_coverage_score ?? null, weight: 0.2 },
+      { id: "velocity", label: "Velocity", score: company.velocity_score ?? null, weight: 0.15 },
+    );
+
+    const empLabel = company.employee_count
+      ? `${Number(company.employee_count).toLocaleString()} employees`
+      : null;
+
+    const hqParts = [company.hq_city, company.hq_country].filter(Boolean);
+
+    return {
+      displayName: company.name,
+      score: {
+        expectedRevenue: company.expected_revenue != null ? Number(company.expected_revenue) : null,
+        propensityPct: company.propensity != null ? Number(company.propensity) : null,
+        icpTier: company.icp_tier as ViewModel["score"]["icpTier"],
+        priorityTier: company.priority_tier as ViewModel["score"]["priorityTier"],
+        dealValue: oppsRes.data?.[0]?.value != null ? Number(oppsRes.data[0].value) : null,
+      },
+      company: {
+        industry: company.industry,
+        size: empLabel,
+        hq: hqParts.length > 0 ? hqParts.join(", ") : null,
+        revenue: company.annual_revenue != null ? Number(company.annual_revenue) : null,
+        founded: company.founded_year ? String(company.founded_year) : null,
+      },
+      scoringDimensions,
+      signals: (signalsRes.data ?? []).map((s) => ({
+        id: s.id,
+        title: s.title,
+        detectedAt: formatRelativeDate(s.detected_at),
+      })),
+      contacts: (contactsRes.data ?? []).map((ct) => ({
+        id: ct.id,
+        name: `${ct.first_name} ${ct.last_name}`,
+        title: ct.title ?? "",
+      })),
+    };
+  } catch (e) {
+    console.error("[account detail]", e);
+    return null;
+  }
+}
 
 function TierBadge({
   label,
@@ -103,7 +190,7 @@ function TierBadge({
   );
 }
 
-function ScoringBreakdownPlaceholder({ rows }: { rows: { id: string; label: string; score: number | null; weight: number | null }[] }) {
+function ScoringBreakdown({ rows }: { rows: ViewModel["scoringDimensions"] }) {
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
       <h3 className="text-sm font-semibold text-zinc-100">Scoring breakdown</h3>
@@ -155,12 +242,20 @@ function ScoringBreakdownPlaceholder({ rows }: { rows: { id: string; label: stri
 
 export default async function AccountDetailPage({ params }: PageProps) {
   const { accountId } = await params;
-  const accountViewModel = DEMO_ACCOUNTS[accountId] ?? defaultViewModel;
-  const name = accountViewModel.displayName ?? accountId;
-  const s = accountViewModel.score;
-  const c = accountViewModel.company;
 
-  // All content shows in a single scroll — no tabs to confuse users
+  const fetched = await fetchAccountData(accountId);
+  const vm = fetched ?? {
+    displayName: null,
+    score: { expectedRevenue: null, propensityPct: null, icpTier: null, priorityTier: null, dealValue: null },
+    company: { industry: null, size: null, hq: null, revenue: null, founded: null },
+    scoringDimensions: [],
+    signals: [],
+    contacts: [],
+  };
+
+  const name = vm.displayName ?? accountId;
+  const s = vm.score;
+  const c = vm.company;
 
   return (
     <div className="mx-auto max-w-7xl p-6 sm:p-8">
@@ -185,8 +280,16 @@ export default async function AccountDetailPage({ params }: PageProps) {
               )}
             </div>
           </div>
-          {/* Research button will open AI chat with account context */}
+          <AccountResearchButton accountName={name} />
         </header>
+
+        {!fetched && (
+          <div className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
+            <p className="text-sm text-amber-300/80">
+              Could not load account data. Sign in and make sure this account exists.
+            </p>
+          </div>
+        )}
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
           <aside className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
@@ -272,23 +375,22 @@ export default async function AccountDetailPage({ params }: PageProps) {
                       {c.revenue != null ? formatGbp(c.revenue) : "—"}
                     </dd>
                   </div>
-                  {/* Founded removed — not actionable for sales */}
                 </dl>
               </section>
 
-              <ScoringBreakdownPlaceholder rows={accountViewModel.scoringDimensions} />
+              <ScoringBreakdown rows={vm.scoringDimensions} />
 
               <section>
                 <h2 className="text-sm font-semibold text-zinc-100">
                   Active signals
                 </h2>
                 <ul className="mt-3 space-y-2">
-                  {accountViewModel.signals.length === 0 ? (
+                  {vm.signals.length === 0 ? (
                     <li className="rounded-lg border border-dashed border-zinc-700 bg-zinc-950/30 px-3 py-4 text-sm text-zinc-500">
                       No signals linked to this account.
                     </li>
                   ) : (
-                    accountViewModel.signals.map((sig) => (
+                    vm.signals.map((sig) => (
                       <li
                         key={sig.id}
                         className="flex flex-col gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
@@ -310,12 +412,12 @@ export default async function AccountDetailPage({ params }: PageProps) {
                   Key contacts
                 </h2>
                 <ul className="mt-3 space-y-2">
-                  {accountViewModel.contacts.length === 0 ? (
+                  {vm.contacts.length === 0 ? (
                     <li className="rounded-lg border border-dashed border-zinc-700 bg-zinc-950/30 px-3 py-4 text-sm text-zinc-500">
                       No contacts synced.
                     </li>
                   ) : (
-                    accountViewModel.contacts.map((contact) => (
+                    vm.contacts.map((contact) => (
                       <li
                         key={contact.id}
                         className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2"

@@ -16,6 +16,10 @@ export interface PriorityCardProps {
   contactName: string | null
   contactPhone: string | null
   severity: 'critical' | 'high' | 'medium' | 'low'
+  priorityTier: string | null
+  propensity: number | null
+  icpTier: string | null
+  priorityReason: string | null
   onDraftOutreach: () => void
   onComplete: () => void
   onFeedback: (type: 'positive' | 'negative') => void
@@ -38,22 +42,32 @@ export function PriorityCard({
   contactName,
   contactPhone,
   severity,
+  priorityTier,
+  propensity,
+  icpTier,
+  priorityReason,
   onDraftOutreach,
   onComplete,
   onFeedback,
 }: PriorityCardProps) {
   const sev = SEVERITY[severity]
   const [completed, setCompleted] = useState(false)
-  const [feedbackGiven, setFeedbackGiven] = useState<'positive' | null>(null)
+  const [feedbackGiven, setFeedbackGiven] = useState<'positive' | 'negative' | null>(null)
+  const [showWhy, setShowWhy] = useState(false)
 
   function handleComplete() {
     setCompleted(true)
     onComplete()
   }
 
-  function handleFeedback() {
+  function handlePositiveFeedback() {
     setFeedbackGiven('positive')
     onFeedback('positive')
+  }
+
+  function handleNegativeFeedback() {
+    setFeedbackGiven('negative')
+    onFeedback('negative')
   }
 
   if (completed) {
@@ -116,6 +130,44 @@ export function PriorityCard({
           </p>
         </div>
 
+        {(priorityTier || propensity != null) && (
+          <div className="mt-3">
+            <button
+              onClick={() => setShowWhy((v) => !v)}
+              className="text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              {showWhy ? '▾ Hide scoring' : '▸ Why this?'}
+            </button>
+            {showWhy && (
+              <div className="mt-2 rounded-md border border-zinc-800/60 bg-zinc-950/50 px-3 py-2.5 text-xs text-zinc-400 space-y-1.5">
+                <div className="flex items-center gap-3">
+                  {priorityTier && (
+                    <span className={cn(
+                      'rounded px-1.5 py-0.5 font-semibold',
+                      priorityTier === 'HOT' ? 'bg-red-950/60 text-red-300' :
+                      priorityTier === 'WARM' ? 'bg-amber-950/60 text-amber-300' :
+                      'bg-zinc-800 text-zinc-300'
+                    )}>
+                      {priorityTier}
+                    </span>
+                  )}
+                  {propensity != null && (
+                    <span className="font-mono tabular-nums text-zinc-300">
+                      {Math.round(propensity)}% win likelihood
+                    </span>
+                  )}
+                  {icpTier && (
+                    <span className="text-zinc-500">ICP {icpTier}</span>
+                  )}
+                </div>
+                {priorityReason && (
+                  <p className="text-zinc-400 leading-relaxed">{priorityReason}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-4 flex items-center justify-between border-t border-zinc-800/60 pt-3">
           <button
             onClick={onDraftOutreach}
@@ -126,17 +178,32 @@ export function PriorityCard({
 
           <div className="flex items-center gap-1">
             <button
-              onClick={handleFeedback}
-              disabled={feedbackGiven === 'positive'}
+              onClick={handlePositiveFeedback}
+              disabled={feedbackGiven !== null}
               className={cn(
                 'rounded-md p-2 text-sm transition-colors',
                 feedbackGiven === 'positive'
                   ? 'text-emerald-400'
-                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
+                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+                feedbackGiven !== null && feedbackGiven !== 'positive' && 'opacity-30',
               )}
               aria-label="Helpful"
             >
-              {feedbackGiven === 'positive' ? '👍' : '👍'}
+              👍
+            </button>
+            <button
+              onClick={handleNegativeFeedback}
+              disabled={feedbackGiven !== null}
+              className={cn(
+                'rounded-md p-2 text-sm transition-colors',
+                feedbackGiven === 'negative'
+                  ? 'text-red-400'
+                  : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300',
+                feedbackGiven !== null && feedbackGiven !== 'negative' && 'opacity-30',
+              )}
+              aria-label="Not helpful"
+            >
+              👎
             </button>
             <button
               onClick={handleComplete}

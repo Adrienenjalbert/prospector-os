@@ -24,7 +24,11 @@ export { computePropensity } from './scoring/propensity-scorer'
 export { computeExpectedRevenue } from './scoring/expected-revenue'
 export type { ExpectedRevenueInput, ExpectedRevenueResult } from './scoring/expected-revenue'
 export { computeCompositeScore } from './scoring/composite-scorer'
-export type { CompositeScoreInput, CompositeScoreResult, CompositeScoreConfig } from './scoring/composite-scorer'
+export type { CompositeScoreInput, CompositeScoreResult, CompositeScoreConfig, HistoricalDealOutcome } from './scoring/composite-scorer'
+
+// Calibration / Learning
+export { analyzeCalibration, shouldAutoApply } from './scoring/calibration-analyzer'
+export type { CalibrationResult, DealOutcomeRecord, DimensionAnalysis } from './scoring/calibration-analyzer'
 
 // Funnel Engine
 export { computeBenchmarks } from './funnel/benchmark-engine'

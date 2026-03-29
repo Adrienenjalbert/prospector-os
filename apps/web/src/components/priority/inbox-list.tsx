@@ -1,6 +1,7 @@
 'use client'
 
 import { PriorityCard, type PriorityCardProps } from './priority-card'
+import { recordFeedback, markCompleted } from '@/app/actions/feedback'
 
 type PriorityItem = Omit<PriorityCardProps, 'onDraftOutreach' | 'onComplete' | 'onFeedback'>
 
@@ -15,6 +16,14 @@ export function InboxList({ items }: { items: PriorityItem[] }) {
     )
   }
 
+  function handleComplete(accountId: string) {
+    markCompleted(accountId).catch(() => {})
+  }
+
+  function handleFeedback(accountId: string, type: 'positive' | 'negative') {
+    recordFeedback(accountId, type).catch(() => {})
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {items.map((item) => (
@@ -24,8 +33,8 @@ export function InboxList({ items }: { items: PriorityItem[] }) {
           onDraftOutreach={() =>
             handleDraftOutreach(item.accountName, item.contactName)
           }
-          onComplete={() => {}}
-          onFeedback={() => {}}
+          onComplete={() => handleComplete(item.accountId)}
+          onFeedback={(type) => handleFeedback(item.accountId, type)}
         />
       ))}
     </div>

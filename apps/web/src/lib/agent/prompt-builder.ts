@@ -18,6 +18,7 @@ export function buildSystemPrompt(ctx: AgentContext): string {
     buildSignals(ctx),
     buildPriorityAccounts(ctx),
     buildFunnelComparison(ctx),
+    buildLearnings(ctx),
   ]
 
   const corePrompt = coreSections.filter(Boolean).join('\n\n')
@@ -166,6 +167,16 @@ function buildCurrentPage(ctx: AgentContext): string {
   }
 
   return parts.join('\n\n')
+}
+
+function buildLearnings(ctx: AgentContext): string {
+  if (!ctx.winning_patterns?.length) return ''
+
+  const examples = ctx.winning_patterns.slice(0, 3).map(
+    (p) => `- For "${p.query_type}" questions, an approach that worked well: "${p.response_summary}"`
+  )
+
+  return `## What Has Worked for ${ctx.rep_profile.name}\nThese response patterns received positive feedback — adopt this style:\n${examples.join('\n')}`
 }
 
 function truncateSections(sections: string[], maxChars: number): string {

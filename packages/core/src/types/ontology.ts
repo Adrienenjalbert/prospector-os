@@ -84,6 +84,19 @@ export interface Contact {
   is_economic_buyer: boolean
   role_tag: ContactRole | null
 
+  birthday: string | null
+  work_anniversary: string | null
+  timezone: string | null
+  location_city: string | null
+  photo_url: string | null
+  twitter_url: string | null
+  personal_interests: string[]
+  communication_preference: string | null
+  preferred_contact_time: string | null
+  alma_mater: string | null
+  previous_companies: string[]
+  years_in_role: number | null
+
   last_activity_date: string | null
   enriched_at: string | null
   created_at: string

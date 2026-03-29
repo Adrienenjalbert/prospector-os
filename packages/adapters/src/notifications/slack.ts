@@ -55,6 +55,13 @@ export class SlackAdapter implements NotificationAdapter {
       },
     ]
 
+    const meta = JSON.stringify({
+      tenant_id: notification.tenant_id,
+      company_id: notification.company_id,
+      alert_type: notification.alert_type,
+      notification_id: notification.id,
+    })
+
     const actions: SlackAction[] = []
 
     if (notification.action_url) {
@@ -63,6 +70,7 @@ export class SlackAdapter implements NotificationAdapter {
         text: { type: 'plain_text', text: '📋 View', emoji: true },
         url: notification.action_url,
         action_id: `view_${notification.id}`,
+        value: meta,
       })
     }
 
@@ -72,21 +80,25 @@ export class SlackAdapter implements NotificationAdapter {
         text: { type: 'plain_text', text: '✉️ Draft Outreach', emoji: true },
         action_id: `draft_${notification.id}`,
         style: 'primary',
+        value: meta,
       },
       {
         type: 'button',
         text: { type: 'plain_text', text: '⏰ Later', emoji: true },
         action_id: `snooze_${notification.id}`,
+        value: meta,
       },
       {
         type: 'button',
         text: { type: 'plain_text', text: '👍', emoji: true },
         action_id: `feedback_pos_${notification.id}`,
+        value: meta,
       },
       {
         type: 'button',
         text: { type: 'plain_text', text: '👎', emoji: true },
         action_id: `feedback_neg_${notification.id}`,
+        value: meta,
       },
     )
 

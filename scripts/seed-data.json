@@ -1,0 +1,144 @@
+{
+  "tenant": {
+    "name": "Indeed Flex",
+    "slug": "indeed-flex",
+    "domain": "indeedflex.com",
+    "crm_type": "salesforce"
+  },
+  "reps": [
+    {
+      "crm_id": "rep-001",
+      "name": "Sarah Johnson",
+      "email": "sarah.johnson@indeedflex.com",
+      "market": "uk",
+      "team": "UK Enterprise",
+      "comm_style": "brief",
+      "outreach_tone": "consultative",
+      "focus_stage": "Proposal",
+      "kpi_meetings_monthly": 20,
+      "kpi_proposals_monthly": 8,
+      "kpi_pipeline_value": 500000,
+      "kpi_win_rate": 15
+    },
+    {
+      "crm_id": "rep-002",
+      "name": "James Wright",
+      "email": "james.wright@indeedflex.com",
+      "market": "uk",
+      "team": "UK Mid-Market",
+      "comm_style": "casual",
+      "outreach_tone": "direct",
+      "focus_stage": "Qualified",
+      "kpi_meetings_monthly": 25,
+      "kpi_proposals_monthly": 10,
+      "kpi_pipeline_value": 400000,
+      "kpi_win_rate": 18
+    }
+  ],
+  "companies": [
+    {
+      "crm_id": "sf-acme-001", "name": "Acme Logistics", "domain": "acmelogistics.co.uk",
+      "industry": "Logistics", "industry_group": "Industrial", "employee_count": 1200, "employee_range": "1000-4999",
+      "annual_revenue": 120000000, "hq_city": "London", "hq_country": "United Kingdom", "location_count": 4,
+      "locations": [{"city":"London","country":"United Kingdom"},{"city":"Manchester","country":"United Kingdom"},{"city":"Birmingham","country":"United Kingdom"},{"city":"Leeds","country":"United Kingdom"}],
+      "tech_stack": ["Kronos", "SAP"], "owner_crm_id": "rep-001"
+    },
+    {
+      "crm_id": "sf-beta-002", "name": "Beta Warehousing", "domain": "betawarehousing.com",
+      "industry": "Warehousing", "industry_group": "Industrial", "employee_count": 800, "employee_range": "500-999",
+      "annual_revenue": 85000000, "hq_city": "Manchester", "hq_country": "United Kingdom", "location_count": 3,
+      "locations": [{"city":"Manchester","country":"United Kingdom"},{"city":"Liverpool","country":"United Kingdom"},{"city":"Leeds","country":"United Kingdom"}],
+      "tech_stack": ["Deputy", "Workday"], "owner_crm_id": "rep-001"
+    },
+    {
+      "crm_id": "sf-gamma-003", "name": "Gamma Manufacturing", "domain": "gammamanufacturing.co.uk",
+      "industry": "Light Industrial", "industry_group": "Industrial", "employee_count": 1400, "employee_range": "1000-4999",
+      "annual_revenue": 95000000, "hq_city": "Birmingham", "hq_country": "United Kingdom", "location_count": 3,
+      "locations": [{"city":"Birmingham","country":"United Kingdom"},{"city":"Coventry","country":"United Kingdom"},{"city":"Bristol","country":"United Kingdom"}],
+      "tech_stack": ["ADP"], "owner_crm_id": "rep-001"
+    },
+    {
+      "crm_id": "sf-delta-004", "name": "Delta Distribution", "domain": "deltadist.co.uk",
+      "industry": "Distribution", "industry_group": "Industrial", "employee_count": 600, "employee_range": "500-999",
+      "annual_revenue": 55000000, "hq_city": "Leeds", "hq_country": "United Kingdom", "location_count": 2,
+      "locations": [{"city":"Leeds","country":"United Kingdom"},{"city":"York","country":"United Kingdom"}],
+      "tech_stack": [], "owner_crm_id": "rep-001"
+    },
+    {
+      "crm_id": "sf-epsilon-005", "name": "Epsilon Hospitality Group", "domain": "epsilonhotels.com",
+      "industry": "Hospitality", "industry_group": "Services", "employee_count": 2200, "employee_range": "1000-4999",
+      "annual_revenue": 180000000, "hq_city": "London", "hq_country": "United Kingdom", "location_count": 8,
+      "locations": [{"city":"London","country":"United Kingdom"},{"city":"Edinburgh","country":"United Kingdom"},{"city":"Manchester","country":"United Kingdom"},{"city":"Brighton","country":"United Kingdom"}],
+      "tech_stack": ["When I Work", "Oracle HCM"], "owner_crm_id": "rep-001"
+    },
+    {
+      "crm_id": "sf-zeta-006", "name": "Zeta Facilities", "domain": "zetafm.co.uk",
+      "industry": "Facilities Management", "industry_group": "Services", "employee_count": 450, "employee_range": "250-499",
+      "annual_revenue": 38000000, "hq_city": "Bristol", "hq_country": "United Kingdom", "location_count": 2,
+      "locations": [{"city":"Bristol","country":"United Kingdom"},{"city":"Cardiff","country":"United Kingdom"}],
+      "tech_stack": ["BambooHR"], "owner_crm_id": "rep-002"
+    },
+    {
+      "crm_id": "sf-eta-007", "name": "Eta Food Services", "domain": "etafoods.co.uk",
+      "industry": "Food Service", "industry_group": "Services", "employee_count": 900, "employee_range": "500-999",
+      "annual_revenue": 72000000, "hq_city": "Glasgow", "hq_country": "United Kingdom", "location_count": 5,
+      "locations": [{"city":"Glasgow","country":"United Kingdom"},{"city":"Edinburgh","country":"United Kingdom"},{"city":"Manchester","country":"United Kingdom"}],
+      "tech_stack": ["Sling", "Gusto"], "owner_crm_id": "rep-002"
+    },
+    {
+      "crm_id": "sf-theta-008", "name": "Theta Retail Group", "domain": "thetaretail.co.uk",
+      "industry": "Retail", "industry_group": "Consumer", "employee_count": 3500, "employee_range": "1000-4999",
+      "annual_revenue": 250000000, "hq_city": "London", "hq_country": "United Kingdom", "location_count": 12,
+      "locations": [{"city":"London","country":"United Kingdom"},{"city":"Manchester","country":"United Kingdom"},{"city":"Birmingham","country":"United Kingdom"},{"city":"Glasgow","country":"United Kingdom"}],
+      "tech_stack": ["Workday", "Kronos"], "owner_crm_id": "rep-002"
+    },
+    {
+      "crm_id": "sf-iota-009", "name": "Iota Construction", "domain": "iotabuild.co.uk",
+      "industry": "Construction", "industry_group": "Other", "employee_count": 700, "employee_range": "500-999",
+      "annual_revenue": 62000000, "hq_city": "Manchester", "hq_country": "United Kingdom", "location_count": 3,
+      "locations": [{"city":"Manchester","country":"United Kingdom"},{"city":"Leeds","country":"United Kingdom"}],
+      "tech_stack": [], "owner_crm_id": "rep-002"
+    },
+    {
+      "crm_id": "sf-kappa-010", "name": "Kappa Wholesale", "domain": "kappawholesale.co.uk",
+      "industry": "Wholesale", "industry_group": "Industrial", "employee_count": 550, "employee_range": "500-999",
+      "annual_revenue": 48000000, "hq_city": "Liverpool", "hq_country": "United Kingdom", "location_count": 2,
+      "locations": [{"city":"Liverpool","country":"United Kingdom"},{"city":"Manchester","country":"United Kingdom"}],
+      "tech_stack": ["Paychex"], "owner_crm_id": "rep-002"
+    }
+  ],
+  "contacts": [
+    {"company_crm_id":"sf-acme-001","first_name":"Sarah","last_name":"Chen","title":"VP Operations","seniority":"vp","department":"Operations","email":"s.chen@acmelogistics.co.uk","phone":"+44 7700 900123","is_champion":true,"is_decision_maker":true},
+    {"company_crm_id":"sf-acme-001","first_name":"James","last_name":"Miller","title":"Dir. Facilities","seniority":"director","department":"Facilities","email":"j.miller@acmelogistics.co.uk","phone":"+44 7700 900456","is_champion":false,"is_decision_maker":true},
+    {"company_crm_id":"sf-acme-001","first_name":"Tom","last_name":"Wright","title":"Operations Manager","seniority":"manager","department":"Operations","email":"t.wright@acmelogistics.co.uk","phone":null,"is_champion":false,"is_decision_maker":false},
+    {"company_crm_id":"sf-beta-002","first_name":"James","last_name":"Miller","title":"Dir. Facilities","seniority":"director","department":"Facilities","email":"j.miller@betawarehousing.com","phone":"+44 7700 900789","is_champion":false,"is_decision_maker":true},
+    {"company_crm_id":"sf-beta-002","first_name":"Lisa","last_name":"Park","title":"HR Manager","seniority":"manager","department":"HR","email":"l.park@betawarehousing.com","phone":null,"is_champion":true,"is_decision_maker":false},
+    {"company_crm_id":"sf-gamma-003","first_name":"Robert","last_name":"Davies","title":"VP Operations","seniority":"vp","department":"Operations","email":"r.davies@gammamanufacturing.co.uk","phone":"+44 7700 900321","is_champion":false,"is_decision_maker":true},
+    {"company_crm_id":"sf-epsilon-005","first_name":"Emma","last_name":"Taylor","title":"COO","seniority":"c_level","department":"Operations","email":"e.taylor@epsilonhotels.com","phone":"+44 7700 900654","is_champion":true,"is_decision_maker":true},
+    {"company_crm_id":"sf-epsilon-005","first_name":"David","last_name":"Brown","title":"Head of Staffing","seniority":"director","department":"HR","email":"d.brown@epsilonhotels.com","phone":null,"is_champion":false,"is_decision_maker":true},
+    {"company_crm_id":"sf-zeta-006","first_name":"Helen","last_name":"Scott","title":"Managing Director","seniority":"c_level","department":"Management","email":"h.scott@zetafm.co.uk","phone":"+44 7700 900987","is_champion":false,"is_decision_maker":true},
+    {"company_crm_id":"sf-eta-007","first_name":"Mark","last_name":"Evans","title":"Operations Director","seniority":"director","department":"Operations","email":"m.evans@etafoods.co.uk","phone":"+44 7700 900111","is_champion":true,"is_decision_maker":true},
+    {"company_crm_id":"sf-theta-008","first_name":"Claire","last_name":"Hughes","title":"VP People","seniority":"vp","department":"HR","email":"c.hughes@thetaretail.co.uk","phone":"+44 7700 900222","is_champion":false,"is_decision_maker":true},
+    {"company_crm_id":"sf-kappa-010","first_name":"Paul","last_name":"Wilson","title":"Warehouse Manager","seniority":"manager","department":"Operations","email":"p.wilson@kappawholesale.co.uk","phone":null,"is_champion":false,"is_decision_maker":true}
+  ],
+  "opportunities": [
+    {"company_crm_id":"sf-acme-001","crm_id":"opp-001","name":"Acme Q2 Temp Staffing","value":800000,"stage":"Proposal","stage_order":3,"probability":40,"days_in_stage":22,"is_stalled":true,"stall_reason":"No contact activity in 14 days","owner_crm_id":"rep-001"},
+    {"company_crm_id":"sf-beta-002","crm_id":"opp-002","name":"Beta Manchester Warehouse","value":200000,"stage":"Proposal","stage_order":3,"probability":60,"days_in_stage":8,"is_stalled":false,"stall_reason":null,"owner_crm_id":"rep-001"},
+    {"company_crm_id":"sf-delta-004","crm_id":"opp-003","name":"Delta Multi-site Staffing","value":120000,"stage":"Qualified","stage_order":2,"probability":30,"days_in_stage":12,"is_stalled":false,"stall_reason":null,"owner_crm_id":"rep-001"},
+    {"company_crm_id":"sf-epsilon-005","crm_id":"opp-004","name":"Epsilon Hotels Seasonal","value":350000,"stage":"Negotiation","stage_order":4,"probability":75,"days_in_stage":5,"is_stalled":false,"stall_reason":null,"owner_crm_id":"rep-001"},
+    {"company_crm_id":"sf-zeta-006","crm_id":"opp-005","name":"Zeta FM Contract","value":95000,"stage":"Qualified","stage_order":2,"probability":35,"days_in_stage":18,"is_stalled":true,"stall_reason":"Decision delayed — budget review","owner_crm_id":"rep-002"},
+    {"company_crm_id":"sf-eta-007","crm_id":"opp-006","name":"Eta Catering Staff","value":150000,"stage":"Proposal","stage_order":3,"probability":50,"days_in_stage":6,"is_stalled":false,"stall_reason":null,"owner_crm_id":"rep-002"},
+    {"company_crm_id":"sf-theta-008","crm_id":"opp-007","name":"Theta Holiday Season","value":500000,"stage":"Lead","stage_order":1,"probability":15,"days_in_stage":3,"is_stalled":false,"stall_reason":null,"owner_crm_id":"rep-002"}
+  ],
+  "signals": [
+    {"company_crm_id":"sf-acme-001","signal_type":"hiring_surge","title":"5 temp warehouse roles posted","relevance_score":0.85,"urgency":"this_week","source":"apollo","recency_days":2},
+    {"company_crm_id":"sf-acme-001","signal_type":"leadership_change","title":"New VP Operations appointed","relevance_score":0.7,"urgency":"this_month","source":"apollo","recency_days":14},
+    {"company_crm_id":"sf-beta-002","signal_type":"temp_job_posting","title":"8 temp warehouse roles in Manchester","relevance_score":0.9,"urgency":"immediate","source":"apollo","recency_days":3},
+    {"company_crm_id":"sf-gamma-003","signal_type":"leadership_change","title":"New VP Operations started 2 months ago","relevance_score":0.6,"urgency":"this_month","source":"apollo","recency_days":56},
+    {"company_crm_id":"sf-epsilon-005","signal_type":"seasonal_peak","title":"Summer hospitality season approaching","relevance_score":0.75,"urgency":"this_month","source":"claude_research","recency_days":7},
+    {"company_crm_id":"sf-epsilon-005","signal_type":"expansion","title":"2 new hotel openings planned in Edinburgh","relevance_score":0.8,"urgency":"this_week","source":"claude_research","recency_days":5},
+    {"company_crm_id":"sf-eta-007","signal_type":"hiring_surge","title":"12 temp catering roles posted across Scotland","relevance_score":0.88,"urgency":"immediate","source":"apollo","recency_days":1},
+    {"company_crm_id":"sf-theta-008","signal_type":"temp_job_posting","title":"20+ seasonal retail positions","relevance_score":0.82,"urgency":"this_week","source":"apollo","recency_days":4},
+    {"company_crm_id":"sf-kappa-010","signal_type":"funding","title":"Series B funding round £15M","relevance_score":0.9,"urgency":"this_week","source":"apollo","recency_days":6}
+  ]
+}

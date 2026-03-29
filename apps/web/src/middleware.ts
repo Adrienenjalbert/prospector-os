@@ -15,6 +15,12 @@ export async function middleware(request: NextRequest) {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!url || !key || url.includes('placeholder')) {
+    if (process.env.NODE_ENV === 'production') {
+      const isLoginPage = request.nextUrl.pathname === '/login'
+      if (!isLoginPage) {
+        return NextResponse.redirect(new URL('/login', request.url))
+      }
+    }
     return NextResponse.next()
   }
 

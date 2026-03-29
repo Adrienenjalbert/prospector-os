@@ -1,5 +1,9 @@
 -- ============================================
--- PROSPECTOR OS — SUPABASE SCHEMA
+-- DEPRECATED — This is the v1 single-tenant schema.
+-- The canonical multi-tenant schema is at:
+--   packages/db/schema/schema.sql
+-- ============================================
+-- PROSPECTOR OS — SUPABASE SCHEMA (LEGACY)
 -- Intelligence layer that sits between CRM and AI agent
 -- ============================================
 

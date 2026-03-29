@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { formatGbp } from "@/lib/utils";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
 type PageProps = {
   params: Promise<{ dealId: string }>;
@@ -15,35 +16,126 @@ const stages = [
 
 type StageName = (typeof stages)[number];
 
-/** Replace with CRM-backed loader. */
-const dealViewModel = {
-  name: null as string | null,
-  value: null as number | null,
-  /** When set, progress highlights this stage; when null, indicators are neutral. */
-  currentStage: null as StageName | null,
-  daysAtStage: null as number | null,
-  medianDaysAtStage: null as number | null,
-  stalled: false as boolean,
+type DealViewModel = {
+  name: string | null;
+  value: number | null;
+  currentStage: StageName | null;
+  daysAtStage: number | null;
+  medianDaysAtStage: number | null;
+  stalled: boolean;
+  stallReason: string | null;
   leftPanel: {
-    winProbabilityPct: null as number | null,
-    health: null as "healthy" | "watch" | "at_risk" | null,
-    expectedRevenue: null as number | null,
-    contactCoveragePct: null as number | null,
-    velocityScore: null as number | null,
-  },
-  strategy: {
-    atRisk: null as string | null,
-    strengths: [] as string[],
-    risks: [] as string[],
-    recommendedActions: [] as string[],
-  },
+    winProbabilityPct: number | null;
+    health: "healthy" | "watch" | "at_risk" | null;
+    expectedRevenue: number | null;
+    contactCoveragePct: number | null;
+    velocityScore: number | null;
+  };
+  contacts: { id: string; name: string; title: string; isChampion: boolean; isEconomicBuyer: boolean }[];
 };
 
-function HealthPill({
-  health,
-}: {
-  health: NonNullable<typeof dealViewModel.leftPanel.health>;
-}) {
+function normalizeStage(raw: string | null): StageName | null {
+  if (!raw) return null;
+  for (const s of stages) {
+    if (raw.toLowerCase().includes(s.toLowerCase())) return s;
+  }
+  return null;
+}
+
+async function fetchDealData(dealId: string): Promise<DealViewModel | null> {
+  try {
+    const supabase = await createSupabaseServer();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    const { data: profile } = await supabase
+      .from("user_profiles")
+      .select("tenant_id")
+      .eq("id", user.id)
+      .single();
+    if (!profile?.tenant_id) return null;
+
+    const { data: deal } = await supabase
+      .from("opportunities")
+      .select("*")
+      .eq("id", dealId)
+      .eq("tenant_id", profile.tenant_id)
+      .single();
+
+    if (!deal) return null;
+
+    const [benchRes, contactsRes, companyRes] = await Promise.all([
+      supabase
+        .from("funnel_benchmarks")
+        .select("median_days_in_stage")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("scope", "company")
+        .eq("scope_id", "all")
+        .eq("stage_name", deal.stage)
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("contacts")
+        .select("id, first_name, last_name, title, is_champion, is_economic_buyer")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("company_id", deal.company_id)
+        .order("relevance_score", { ascending: false })
+        .limit(10),
+      supabase
+        .from("companies")
+        .select("propensity, expected_revenue, contact_coverage_score, velocity_score")
+        .eq("id", deal.company_id)
+        .single(),
+    ]);
+
+    const medianDays = benchRes.data?.median_days_in_stage
+      ? Number(benchRes.data.median_days_in_stage)
+      : null;
+    const stallThreshold = medianDays != null ? medianDays * 1.5 : null;
+    const daysInStage = deal.days_in_stage ?? 0;
+    const isStalled = deal.is_stalled || (stallThreshold != null && daysInStage > stallThreshold);
+
+    let health: DealViewModel["leftPanel"]["health"] = null;
+    if (isStalled) {
+      health = "at_risk";
+    } else if (stallThreshold != null && daysInStage > stallThreshold * 0.8) {
+      health = "watch";
+    } else if (medianDays != null) {
+      health = "healthy";
+    }
+
+    const propensity = companyRes.data?.propensity != null ? Number(companyRes.data.propensity) : null;
+
+    return {
+      name: deal.name,
+      value: deal.value != null ? Number(deal.value) : null,
+      currentStage: normalizeStage(deal.stage),
+      daysAtStage: daysInStage,
+      medianDaysAtStage: medianDays,
+      stalled: isStalled,
+      stallReason: deal.stall_reason,
+      leftPanel: {
+        winProbabilityPct: propensity,
+        health,
+        expectedRevenue: companyRes.data?.expected_revenue != null ? Number(companyRes.data.expected_revenue) : null,
+        contactCoveragePct: companyRes.data?.contact_coverage_score != null ? Number(companyRes.data.contact_coverage_score) : null,
+        velocityScore: companyRes.data?.velocity_score != null ? Number(companyRes.data.velocity_score) : null,
+      },
+      contacts: (contactsRes.data ?? []).map((c) => ({
+        id: c.id,
+        name: `${c.first_name} ${c.last_name}`,
+        title: c.title ?? "",
+        isChampion: c.is_champion,
+        isEconomicBuyer: c.is_economic_buyer,
+      })),
+    };
+  } catch (e) {
+    console.error("[deal detail]", e);
+    return null;
+  }
+}
+
+function HealthPill({ health }: { health: "healthy" | "watch" | "at_risk" }) {
   const map = {
     healthy: "border-emerald-500/40 bg-emerald-950/40 text-emerald-200",
     watch: "border-amber-500/40 bg-amber-950/40 text-amber-200",
@@ -64,15 +156,17 @@ function HealthPill({
 
 export default async function DealDetailPage({ params }: PageProps) {
   const { dealId } = await params;
-  const d = dealViewModel;
+  const fetched = await fetchDealData(dealId);
+
+  const d: DealViewModel = fetched ?? {
+    name: null, value: null, currentStage: null, daysAtStage: null,
+    medianDaysAtStage: null, stalled: false, stallReason: null,
+    leftPanel: { winProbabilityPct: null, health: null, expectedRevenue: null, contactCoveragePct: null, velocityScore: null },
+    contacts: [],
+  };
+
   const currentIndex =
     d.currentStage != null ? stages.indexOf(d.currentStage) : -1;
-
-  const tabs = [
-    { id: "strategy", label: "Strategy" },
-    { id: "contacts", label: "Contacts" },
-    { id: "activity", label: "Activity" },
-  ] as const;
 
   const showStalled =
     d.stalled &&
@@ -103,6 +197,14 @@ export default async function DealDetailPage({ params }: PageProps) {
             </div>
           </div>
         </header>
+
+        {!fetched && (
+          <div className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
+            <p className="text-sm text-amber-300/80">
+              Could not load deal data. Sign in and make sure this deal exists.
+            </p>
+          </div>
+        )}
 
         <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -163,13 +265,13 @@ export default async function DealDetailPage({ params }: PageProps) {
             <span>
               {d.daysAtStage != null && d.medianDaysAtStage != null ? (
                 <>
-                  {d.daysAtStage} days at Stage{" "}
+                  {d.daysAtStage} days at stage{" "}
                   <span className="text-zinc-500">
                     (median: {d.medianDaysAtStage})
                   </span>
                 </>
               ) : (
-                <>— days at Stage (median: —)</>
+                <>— days at stage (median: —)</>
               )}
             </span>
             {showStalled ? (
@@ -178,6 +280,9 @@ export default async function DealDetailPage({ params }: PageProps) {
               </span>
             ) : null}
           </div>
+          {d.stallReason && showStalled && (
+            <p className="text-sm text-red-300/80">{d.stallReason}</p>
+          )}
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
@@ -237,97 +342,42 @@ export default async function DealDetailPage({ params }: PageProps) {
           </aside>
 
           <div className="min-w-0 space-y-6">
-            <div
-              role="tablist"
-              aria-label="Deal sections"
-              className="flex flex-wrap gap-1 border-b border-zinc-800 pb-px"
-            >
-              {tabs.map((tab) => {
-                const selected = tab.id === "strategy";
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    className={
-                      selected
-                        ? "border-b-2 border-violet-500 px-3 py-2 text-sm font-medium text-zinc-50"
-                        : "border-b-2 border-transparent px-3 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-300"
-                    }
-                  >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div role="tabpanel" className="space-y-6">
-              <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-red-300">
-                  At risk
-                </h2>
-                <div className="mt-3 text-sm leading-relaxed text-zinc-300">
-                  {d.strategy.atRisk ? (
-                    d.strategy.atRisk
-                  ) : (
-                    <span className="text-zinc-500">
-                      No assessment loaded. Connect CRM and funnel benchmarks.
-                    </span>
-                  )}
-                </div>
-              </section>
-
-              <div className="grid gap-6 md:grid-cols-2">
-                <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <h2 className="text-sm font-semibold text-zinc-100">
-                    Strengths
-                  </h2>
-                  <ul className="mt-3 list-inside list-disc space-y-2 text-sm text-zinc-400">
-                    {d.strategy.strengths.length === 0 ? (
-                      <li className="list-none text-zinc-500">—</li>
-                    ) : (
-                      d.strategy.strengths.map((item) => (
-                        <li key={item} className="text-zinc-300">
-                          {item}
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                </section>
-                <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <h2 className="text-sm font-semibold text-zinc-100">Risks</h2>
-                  <ul className="mt-3 list-inside list-disc space-y-2 text-sm text-zinc-400">
-                    {d.strategy.risks.length === 0 ? (
-                      <li className="list-none text-zinc-500">—</li>
-                    ) : (
-                      d.strategy.risks.map((item) => (
-                        <li key={item} className="text-zinc-300">
-                          {item}
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                </section>
-              </div>
-
-              <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                <h2 className="text-sm font-semibold text-zinc-100">
-                  Recommended actions
-                </h2>
-                <ol className="mt-3 list-inside list-decimal space-y-2 text-sm text-zinc-400">
-                  {d.strategy.recommendedActions.length === 0 ? (
-                    <li className="list-none text-zinc-500">—</li>
-                  ) : (
-                    d.strategy.recommendedActions.map((item, idx) => (
-                      <li key={idx} className="text-zinc-300">
-                        {item}
-                      </li>
-                    ))
-                  )}
-                </ol>
-              </section>
-            </div>
+            <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+              <h2 className="text-sm font-semibold text-zinc-100">Key contacts</h2>
+              <ul className="mt-3 space-y-2">
+                {d.contacts.length === 0 ? (
+                  <li className="rounded-lg border border-dashed border-zinc-700 bg-zinc-950/30 px-3 py-4 text-sm text-zinc-500">
+                    No contacts synced for this account.
+                  </li>
+                ) : (
+                  d.contacts.map((contact) => (
+                    <li
+                      key={contact.id}
+                      className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-zinc-100">
+                          {contact.name}
+                        </p>
+                        <p className="text-xs text-zinc-500">{contact.title}</p>
+                      </div>
+                      <div className="flex gap-1">
+                        {contact.isChampion && (
+                          <span className="rounded-md border border-emerald-700/60 bg-emerald-950/50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                            Champion
+                          </span>
+                        )}
+                        {contact.isEconomicBuyer && (
+                          <span className="rounded-md border border-violet-700/60 bg-violet-950/50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                            Buyer
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </section>
           </div>
         </div>
       </div>

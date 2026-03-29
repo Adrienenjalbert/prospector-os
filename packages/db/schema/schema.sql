@@ -144,6 +144,19 @@ CREATE TABLE contacts (
   is_economic_buyer BOOLEAN DEFAULT FALSE,
   role_tag VARCHAR(50),
 
+  birthday DATE,
+  work_anniversary DATE,
+  timezone VARCHAR(50),
+  location_city VARCHAR(100),
+  photo_url VARCHAR(500),
+  twitter_url VARCHAR(500),
+  personal_interests JSONB DEFAULT '[]',
+  communication_preference VARCHAR(20),
+  preferred_contact_time VARCHAR(50),
+  alma_mater VARCHAR(255),
+  previous_companies JSONB DEFAULT '[]',
+  years_in_role INTEGER,
+
   last_activity_date TIMESTAMP WITH TIME ZONE,
   enriched_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -151,6 +164,34 @@ CREATE TABLE contacts (
 
 CREATE INDEX idx_contacts_tenant ON contacts(tenant_id);
 CREATE INDEX idx_contacts_company ON contacts(tenant_id, company_id);
+CREATE INDEX idx_contacts_birthday ON contacts(tenant_id, birthday)
+  WHERE birthday IS NOT NULL;
+CREATE INDEX idx_contacts_anniversary ON contacts(tenant_id, work_anniversary)
+  WHERE work_anniversary IS NOT NULL;
+
+-- ============================================
+-- RELATIONSHIP NOTES (rep-logged personal context)
+-- ============================================
+CREATE TABLE relationship_notes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES tenants(id) NOT NULL,
+  contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
+  company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
+  rep_crm_id VARCHAR(50) NOT NULL,
+
+  note_type VARCHAR(30) NOT NULL,
+  content TEXT NOT NULL,
+  source VARCHAR(20) DEFAULT 'manual',
+
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_rel_notes_contact ON relationship_notes(tenant_id, contact_id);
+CREATE INDEX idx_rel_notes_company ON relationship_notes(tenant_id, company_id);
+
+ALTER TABLE relationship_notes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON relationship_notes
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
 
 -- ============================================
 -- SIGNALS
@@ -173,6 +214,9 @@ CREATE TABLE signals (
 
   recommended_action TEXT,
   urgency VARCHAR(20) DEFAULT 'this_month',
+
+  led_to_action BOOLEAN DEFAULT FALSE,
+  led_to_deal_progress BOOLEAN DEFAULT FALSE,
 
   detected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE,
@@ -442,6 +486,65 @@ CREATE TABLE deal_outcomes (
 CREATE INDEX idx_outcomes_tenant ON deal_outcomes(tenant_id);
 
 -- ============================================
+-- TRIGGER OVERRIDES (learning loop — feedback-driven)
+-- ============================================
+CREATE TABLE trigger_overrides (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES tenants(id) NOT NULL,
+  rep_crm_id VARCHAR(50),
+  trigger_type VARCHAR(50) NOT NULL,
+  override_action VARCHAR(20) NOT NULL,
+  threshold_adjustment JSONB,
+  reason TEXT,
+  feedback_summary JSONB,
+  active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE,
+  UNIQUE(tenant_id, COALESCE(rep_crm_id, '__tenant__'), trigger_type)
+);
+
+CREATE INDEX idx_trigger_overrides_tenant ON trigger_overrides(tenant_id, active);
+
+-- ============================================
+-- CALIBRATION PROPOSALS (offline recalibration)
+-- ============================================
+CREATE TABLE calibration_proposals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES tenants(id) NOT NULL,
+  config_type VARCHAR(20) NOT NULL,
+  current_config JSONB NOT NULL,
+  proposed_config JSONB NOT NULL,
+  analysis JSONB NOT NULL,
+  status VARCHAR(20) DEFAULT 'pending',
+  reviewed_by UUID,
+  reviewed_at TIMESTAMP WITH TIME ZONE,
+  applied_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_calibration_proposals_tenant ON calibration_proposals(tenant_id, status);
+
+-- ============================================
+-- AGENT INTERACTION OUTCOMES (agent learning)
+-- ============================================
+CREATE TABLE agent_interaction_outcomes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES tenants(id) NOT NULL,
+  conversation_id UUID REFERENCES ai_conversations(id) ON DELETE SET NULL,
+  rep_crm_id VARCHAR(50) NOT NULL,
+  query_type VARCHAR(30) NOT NULL,
+  query_summary TEXT,
+  response_summary TEXT,
+  feedback VARCHAR(10),
+  downstream_outcome VARCHAR(30),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_outcomes_tenant ON agent_interaction_outcomes(tenant_id, rep_crm_id);
+CREATE INDEX idx_agent_outcomes_feedback ON agent_interaction_outcomes(tenant_id, feedback)
+  WHERE feedback IS NOT NULL;
+
+-- ============================================
 -- TRIGGERS: auto-update updated_at
 -- ============================================
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -462,6 +565,21 @@ CREATE TRIGGER tenants_updated_at BEFORE UPDATE ON tenants
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER conversations_updated_at BEFORE UPDATE ON ai_conversations
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================
+-- CRON RUNS (observability)
+-- ============================================
+CREATE TABLE cron_runs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  route VARCHAR(100) NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  duration_ms INTEGER,
+  records_processed INTEGER DEFAULT 0,
+  error TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_cron_runs_route ON cron_runs(route, created_at DESC);
 
 -- ============================================
 -- ROW LEVEL SECURITY
@@ -502,6 +620,40 @@ CREATE POLICY "tenant_isolation" ON enrichment_jobs
 CREATE POLICY "tenant_isolation" ON alert_feedback
   FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
 CREATE POLICY "tenant_isolation" ON deal_outcomes
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
+
+ALTER TABLE trigger_overrides ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON trigger_overrides
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
+
+ALTER TABLE calibration_proposals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON calibration_proposals
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
+
+ALTER TABLE agent_interaction_outcomes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON agent_interaction_outcomes
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
+
+-- ============================================
+-- TABLE: Adoption metrics (leading adoption indicator)
+-- ============================================
+CREATE TABLE adoption_metrics (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  rep_crm_id VARCHAR(255) NOT NULL,
+  date DATE NOT NULL,
+  briefing_opened BOOLEAN DEFAULT FALSE,
+  briefing_responded BOOLEAN DEFAULT FALSE,
+  agent_queries INTEGER DEFAULT 0,
+  alerts_sent INTEGER DEFAULT 0,
+  alerts_responded INTEGER DEFAULT 0,
+  pull_to_push_ratio DECIMAL(5,2) DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (tenant_id, rep_crm_id, date)
+);
+
+ALTER TABLE adoption_metrics ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON adoption_metrics
   FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
 
 -- ============================================
