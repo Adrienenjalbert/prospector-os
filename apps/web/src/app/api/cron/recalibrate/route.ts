@@ -30,6 +30,24 @@ export async function GET(req: Request) {
       const recalibration = scoringConfig.recalibration
       const minDeals = recalibration?.min_closed_deals ?? recalibration?.min_sample_size ?? 30
 
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+
+      const { data: pulseResponses } = await supabase
+        .from('weekly_pulse_responses')
+        .select('priority_accuracy')
+        .eq('tenant_id', tenant.id)
+        .gte('week_start', thirtyDaysAgo)
+
+      const pulseTotal = pulseResponses?.length ?? 0
+      const needsWorkCount = (pulseResponses ?? []).filter(
+        (p) => p.priority_accuracy === 'needs_work'
+      ).length
+      const needsWorkRate = pulseTotal > 0 ? needsWorkCount / pulseTotal : 0
+
+      const pulseUrgent = pulseTotal >= 3 && needsWorkRate >= 0.5
+
+      const effectiveMinDeals = pulseUrgent ? Math.max(10, Math.floor(minDeals / 2)) : minDeals
+
       const { data: outcomes } = await supabase
         .from('deal_outcomes')
         .select('icp_score_at_entry, signal_score_at_entry, engagement_score_at_entry, contact_coverage_at_entry, velocity_at_entry, win_rate_at_entry, propensity_at_entry, outcome')
@@ -45,7 +63,7 @@ export async function GET(req: Request) {
       const result = analyzeCalibration(
         typedOutcomes,
         scoringConfig.propensity_weights,
-        minDeals
+        effectiveMinDeals
       )
 
       if (!result) continue
@@ -54,12 +72,20 @@ export async function GET(req: Request) {
 
       const status = autoApply ? 'auto_applied' : 'pending'
 
+      const pulseSummary = {
+        responses: pulseTotal,
+        needs_work_count: needsWorkCount,
+        needs_work_rate: Math.round(needsWorkRate * 100),
+        pulse_urgent: pulseUrgent,
+        min_deals_adjusted: pulseUrgent,
+      }
+
       await supabase.from('calibration_proposals').insert({
         tenant_id: tenant.id,
         config_type: 'scoring',
         current_config: scoringConfig.propensity_weights,
         proposed_config: result.proposed_weights,
-        analysis: result,
+        analysis: { ...result, pulse_summary: pulseSummary },
         status,
         applied_at: autoApply ? new Date().toISOString() : null,
       })

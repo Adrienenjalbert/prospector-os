@@ -455,10 +455,50 @@ CREATE TABLE alert_feedback (
   reaction VARCHAR(10),
   feedback_reason VARCHAR(100),
   action_taken BOOLEAN DEFAULT FALSE,
+  outcome_action VARCHAR(20),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX idx_feedback_tenant ON alert_feedback(tenant_id);
+
+-- ============================================
+-- IMPLICIT SIGNALS (zero-disruption tracking)
+-- ============================================
+CREATE TABLE implicit_signals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES tenants(id) NOT NULL,
+  rep_crm_id VARCHAR(50) NOT NULL,
+  signal_type VARCHAR(30) NOT NULL,
+  entity_type VARCHAR(20),
+  entity_id VARCHAR(100),
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_implicit_signals_tenant ON implicit_signals(tenant_id, rep_crm_id, created_at DESC);
+
+ALTER TABLE implicit_signals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON implicit_signals
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
+
+-- ============================================
+-- WEEKLY PULSE RESPONSES (power-user feedback)
+-- ============================================
+CREATE TABLE weekly_pulse_responses (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  rep_crm_id VARCHAR(50) NOT NULL,
+  week_start DATE NOT NULL,
+  top_account_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+  account_outcome VARCHAR(20),
+  priority_accuracy VARCHAR(20),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(tenant_id, rep_crm_id, week_start)
+);
+
+ALTER TABLE weekly_pulse_responses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "tenant_isolation" ON weekly_pulse_responses
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM user_profiles WHERE id = auth.uid()));
 
 -- ============================================
 -- DEAL OUTCOMES (for recalibration)

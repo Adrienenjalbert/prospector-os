@@ -47,7 +47,7 @@ function ChatSidebarChat({
   initialMessages: Message[];
   accessToken: string | null;
 }) {
-  const { messages, input, setInput, handleSubmit, append, isLoading, error } =
+  const { messages, input, setInput, handleSubmit, append, isLoading, error, interactionId } =
     useAgentChat({ initialMessages, initialAccessToken: accessToken });
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -101,13 +101,19 @@ function ChatSidebarChat({
           {messages.length === 0 && (
             <ChatMessage role="assistant" content={WELCOME_MESSAGE} />
           )}
-          {messages.map((m) => (
-            <ChatMessage
-              key={m.id}
-              role={m.role as "user" | "assistant"}
-              content={m.content}
-            />
-          ))}
+          {messages.map((m, idx) => {
+            const isLast = idx === messages.length - 1;
+            return (
+              <ChatMessage
+                key={m.id}
+                role={m.role as "user" | "assistant"}
+                content={m.content}
+                isLatest={isLast && m.role === "assistant"}
+                interactionId={isLast && m.role === "assistant" ? interactionId : undefined}
+                isStreaming={isLast && isLoading}
+              />
+            );
+          })}
           {isLoading && messages.at(-1)?.role === "user" && (
             <div className="flex items-center gap-2 px-1 text-sm text-zinc-500">
               <Loader2 className="size-4 animate-spin" />

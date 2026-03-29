@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import Link from 'next/link'
 import { Phone } from 'lucide-react'
 import { cn, formatGbp } from '@/lib/utils'
+import { OutcomeCapture } from './outcome-capture'
 
 export interface PriorityCardProps {
   accountName: string
@@ -20,9 +21,11 @@ export interface PriorityCardProps {
   propensity: number | null
   icpTier: string | null
   priorityReason: string | null
+  showOutcomeCapture?: boolean
   onDraftOutreach: () => void
   onComplete: () => void
   onFeedback: (type: 'positive' | 'negative') => void
+  onWhyExpanded?: () => void
 }
 
 const SEVERITY = {
@@ -46,14 +49,19 @@ export function PriorityCard({
   propensity,
   icpTier,
   priorityReason,
+  showOutcomeCapture,
   onDraftOutreach,
   onComplete,
   onFeedback,
+  onWhyExpanded,
 }: PriorityCardProps) {
   const sev = SEVERITY[severity]
   const [completed, setCompleted] = useState(false)
+  const [outcomeDismissed, setOutcomeDismissed] = useState(false)
   const [feedbackGiven, setFeedbackGiven] = useState<'positive' | 'negative' | null>(null)
   const [showWhy, setShowWhy] = useState(false)
+
+  const handleOutcomeDismiss = useCallback(() => setOutcomeDismissed(true), [])
 
   function handleComplete() {
     setCompleted(true)
@@ -71,13 +79,23 @@ export function PriorityCard({
   }
 
   if (completed) {
+    if (showOutcomeCapture && !outcomeDismissed) {
+      return (
+        <OutcomeCapture
+          accountId={accountId}
+          accountName={accountName}
+          onDismiss={handleOutcomeDismiss}
+        />
+      )
+    }
+
     return (
       <div className="rounded-lg border border-zinc-800/50 bg-zinc-900/30 p-4 text-center">
         <p className="text-sm text-zinc-500">
-          <span className="mr-1.5">✓</span>
+          <span className="mr-1.5">&#10003;</span>
           {accountName} marked done.{' '}
           <button
-            onClick={() => setCompleted(false)}
+            onClick={() => { setCompleted(false); setOutcomeDismissed(false) }}
             className="text-zinc-400 underline hover:text-zinc-200"
           >
             Undo
@@ -133,7 +151,11 @@ export function PriorityCard({
         {(priorityTier || propensity != null) && (
           <div className="mt-3">
             <button
-              onClick={() => setShowWhy((v) => !v)}
+              onClick={() => {
+                const wasHidden = !showWhy
+                setShowWhy((v) => !v)
+                if (wasHidden) onWhyExpanded?.()
+              }}
               className="text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               {showWhy ? '▾ Hide scoring' : '▸ Why this?'}

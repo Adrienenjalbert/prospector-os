@@ -158,6 +158,23 @@ export async function POST(req: Request) {
     const lastUserMessage = messages.filter((m) => m.role === 'user').pop()?.content ?? ''
     const queryType = classifyQueryType(lastUserMessage)
 
+    const interactionId = crypto.randomUUID()
+    try {
+      await supabase.from('agent_interaction_outcomes').insert({
+        id: interactionId,
+        tenant_id: tenantId,
+        conversation_id: null,
+        rep_crm_id: repId,
+        query_type: queryType,
+        query_summary: lastUserMessage.slice(0, 200),
+        response_summary: null,
+        feedback: null,
+        downstream_outcome: null,
+      })
+    } catch {
+      // Non-blocking
+    }
+
     const result = streamText({
       model: anthropic(modelId),
       system: systemPrompt,
@@ -257,16 +274,13 @@ export async function POST(req: Request) {
           const conversationId = existing?.id ?? null
 
           try {
-            await supabase.from('agent_interaction_outcomes').insert({
-              tenant_id: tenantId,
-              conversation_id: conversationId,
-              rep_crm_id: repId,
-              query_type: queryType,
-              query_summary: lastUserMessage.slice(0, 200),
-              response_summary: assistantText.slice(0, 500),
-              feedback: null,
-              downstream_outcome: null,
-            })
+            await supabase
+              .from('agent_interaction_outcomes')
+              .update({
+                conversation_id: conversationId,
+                response_summary: assistantText.slice(0, 500),
+              })
+              .eq('id', interactionId)
           } catch (trackErr) {
             console.error('[agent] interaction tracking:', trackErr)
           }
@@ -276,7 +290,11 @@ export async function POST(req: Request) {
       },
     })
 
-    return result.toDataStreamResponse()
+    return result.toDataStreamResponse({
+      headers: {
+        'X-Interaction-Id': interactionId,
+      },
+    })
   } catch (err) {
     console.error('[agent] Error:', err)
     return new Response(

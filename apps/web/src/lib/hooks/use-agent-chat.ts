@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useChat } from '@ai-sdk/react'
 import type { Message } from '@ai-sdk/react'
 import { createSupabaseBrowser } from '@/lib/supabase/client'
@@ -14,7 +14,6 @@ interface PageContext {
 export type UseAgentChatOptions = {
   pageContext?: PageContext
   initialMessages?: Message[]
-  /** When known (e.g. after history fetch), avoids a frame without Authorization */
   initialAccessToken?: string | null
 }
 
@@ -28,6 +27,8 @@ export function useAgentChat(options?: UseAgentChatOptions) {
       ? { Authorization: `Bearer ${initialAccessToken}` }
       : {},
   )
+
+  const [interactionId, setInteractionId] = useState<string | null>(null)
 
   useEffect(() => {
     const supabase = createSupabaseBrowser()
@@ -51,6 +52,11 @@ export function useAgentChat(options?: UseAgentChatOptions) {
     return () => subscription.unsubscribe()
   }, [])
 
+  const onResponse = useCallback((response: Response) => {
+    const id = response.headers.get('x-interaction-id')
+    setInteractionId(id)
+  }, [])
+
   const chat = useChat({
     api: '/api/agent',
     body: {
@@ -61,7 +67,8 @@ export function useAgentChat(options?: UseAgentChatOptions) {
     id: pageContext?.accountId ?? pageContext?.dealId ?? 'general',
     initialMessages: initialMessages ?? [],
     headers: authHeaders,
+    onResponse,
   })
 
-  return chat
+  return { ...chat, interactionId }
 }

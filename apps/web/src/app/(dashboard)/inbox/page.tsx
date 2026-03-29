@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { QueueHeader } from '@/components/priority/queue-header'
 import { InboxList } from '@/components/priority/inbox-list'
+import { WeeklyPulse } from '@/components/priority/weekly-pulse'
 import { isDemoTenantSlug } from '@/lib/demo-tenant'
 
 interface PriorityItem {
@@ -220,7 +221,55 @@ async function fetchRealData(): Promise<{
       }
     })
 
-    return { items, repName: profile.full_name }
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+
+    const { data: completedToday } = await supabase
+      .from('alert_feedback')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', profile.tenant_id)
+      .eq('rep_crm_id', repCrmId)
+      .eq('action_taken', true)
+      .gte('created_at', todayStart.toISOString())
+
+    const completedTodayCount = completedToday ?? 0
+
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0]
+    const { data: adoptionRows } = await supabase
+      .from('adoption_metrics')
+      .select('date')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('rep_crm_id', repCrmId)
+      .gte('date', fourteenDaysAgo)
+
+    const activeDays = adoptionRows?.length ?? 0
+    const isMonday = new Date().getDay() === 1
+    const showWeeklyPulse = activeDays >= 10 && isMonday
+
+    const topAccountForPulse = items[0] ?? null
+
+    const dayOfWeek = new Date().getDay()
+    const weekStart = new Date()
+    weekStart.setDate(weekStart.getDate() - ((dayOfWeek + 6) % 7))
+    const weekStartStr = weekStart.toISOString().split('T')[0]
+
+    const { data: existingPulse } = await supabase
+      .from('weekly_pulse_responses')
+      .select('id')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('rep_crm_id', repCrmId)
+      .eq('week_start', weekStartStr)
+      .maybeSingle()
+
+    const pulseAlreadySubmitted = !!existingPulse
+
+    return {
+      items,
+      repName: profile.full_name,
+      completedTodayCount: typeof completedTodayCount === 'number' ? completedTodayCount : 0,
+      showWeeklyPulse: showWeeklyPulse && !pulseAlreadySubmitted,
+      topAccountForPulse,
+    }
   } catch {
     return null
   }
@@ -231,10 +280,22 @@ export default async function InboxPage() {
   const useDemoData = !realData || realData.items.length === 0
   const displayItems = useDemoData ? DEMO_ITEMS : realData!.items
   const repName = realData?.repName ?? 'there'
+  const completedTodayCount = realData?.completedTodayCount ?? 0
+  const showWeeklyPulse = realData?.showWeeklyPulse ?? false
+  const topAccountForPulse = realData?.topAccountForPulse ?? null
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <QueueHeader repName={repName} actionCount={displayItems.length} />
+
+      {showWeeklyPulse && topAccountForPulse && (
+        <div className="mt-4">
+          <WeeklyPulse
+            topAccountName={topAccountForPulse.accountName}
+            topAccountId={topAccountForPulse.accountId}
+          />
+        </div>
+      )}
 
       {useDemoData && (
         <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
@@ -245,7 +306,7 @@ export default async function InboxPage() {
       )}
 
       <div className="mt-6">
-        <InboxList items={displayItems} />
+        <InboxList items={displayItems} completedTodayCount={completedTodayCount} />
       </div>
 
       {!useDemoData && displayItems.length > 0 && (
