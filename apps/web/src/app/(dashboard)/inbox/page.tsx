@@ -1,8 +1,16 @@
 import { redirect } from 'next/navigation'
-import { QueueHeader } from '@/components/priority/queue-header'
+import { QueueHeader, type PipelineStage } from '@/components/priority/queue-header'
 import { InboxList } from '@/components/priority/inbox-list'
 import { WeeklyPulse } from '@/components/priority/weekly-pulse'
 import { isDemoTenantSlug } from '@/lib/demo-tenant'
+
+interface SubScore {
+  name: string
+  score: number
+  weight: number
+  weightedScore: number
+  tier: string
+}
 
 interface PriorityItem {
   accountName: string
@@ -19,6 +27,9 @@ interface PriorityItem {
   propensity: number | null
   icpTier: string | null
   priorityReason: string | null
+  subScores?: SubScore[]
+  signalCount?: number
+  topSignal?: string | null
 }
 
 const DEMO_ITEMS: PriorityItem[] = [
@@ -38,6 +49,16 @@ const DEMO_ITEMS: PriorityItem[] = [
     propensity: 87,
     icpTier: 'A',
     priorityReason: 'ICP fit (Tier A: logistics, 2000 employees) + stalled deal at Proposal',
+    subScores: [
+      { name: 'ICP Fit', score: 92, weight: 0.15, weightedScore: 13.8, tier: 'Logistics, Enterprise' },
+      { name: 'Signal', score: 78, weight: 0.20, weightedScore: 15.6, tier: 'Hiring surge' },
+      { name: 'Engagement', score: 65, weight: 0.15, weightedScore: 9.8, tier: '2 meetings' },
+      { name: 'Contacts', score: 85, weight: 0.20, weightedScore: 17.0, tier: 'Champion ID' },
+      { name: 'Velocity', score: 40, weight: 0.15, weightedScore: 6.0, tier: '22d (avg 14)' },
+      { name: 'Win Rate', score: 72, weight: 0.15, weightedScore: 10.8, tier: '68% similar' },
+    ],
+    signalCount: 3,
+    topSignal: 'Peak season hiring surge — 45 warehouse roles',
   },
   {
     accountName: 'Beta Warehousing',
@@ -56,6 +77,16 @@ const DEMO_ITEMS: PriorityItem[] = [
     propensity: 79,
     icpTier: 'A',
     priorityReason: 'Fresh hiring surge signal + strong ICP fit',
+    subScores: [
+      { name: 'ICP Fit', score: 88, weight: 0.15, weightedScore: 13.2, tier: 'Warehousing' },
+      { name: 'Signal', score: 85, weight: 0.20, weightedScore: 17.0, tier: 'Hiring surge' },
+      { name: 'Engagement', score: 72, weight: 0.15, weightedScore: 10.8, tier: 'Email opened 3x' },
+      { name: 'Contacts', score: 60, weight: 0.20, weightedScore: 12.0, tier: 'Developing' },
+      { name: 'Velocity', score: 70, weight: 0.15, weightedScore: 10.5, tier: 'On pace' },
+      { name: 'Win Rate', score: 65, weight: 0.15, weightedScore: 9.8, tier: '60% similar' },
+    ],
+    signalCount: 1,
+    topSignal: '8 temp warehouse roles posted in Manchester',
   },
   {
     accountName: 'Gamma Manufacturing',
@@ -73,6 +104,16 @@ const DEMO_ITEMS: PriorityItem[] = [
     propensity: 63,
     icpTier: 'A',
     priorityReason: 'Strong ICP fit, no active deal — prospecting opportunity',
+    subScores: [
+      { name: 'ICP Fit', score: 90, weight: 0.15, weightedScore: 13.5, tier: 'Light Industrial' },
+      { name: 'Signal', score: 45, weight: 0.20, weightedScore: 9.0, tier: 'No recent' },
+      { name: 'Engagement', score: 30, weight: 0.15, weightedScore: 4.5, tier: 'No activity' },
+      { name: 'Contacts', score: 15, weight: 0.20, weightedScore: 3.0, tier: 'Single-threaded' },
+      { name: 'Velocity', score: 0, weight: 0.15, weightedScore: 0, tier: 'No deal' },
+      { name: 'Win Rate', score: 55, weight: 0.15, weightedScore: 8.3, tier: 'Average' },
+    ],
+    signalCount: 0,
+    topSignal: null,
   },
 ]
 
@@ -284,9 +325,24 @@ export default async function InboxPage() {
   const showWeeklyPulse = realData?.showWeeklyPulse ?? false
   const topAccountForPulse = realData?.topAccountForPulse ?? null
 
+  const demoPipelineStages: PipelineStage[] = [
+    { name: 'Lead', count: 12, value: 280_000, stallCount: 0 },
+    { name: 'Qualified', count: 8, value: 340_000, stallCount: 0 },
+    { name: 'Proposal', count: 4, value: 180_000, stallCount: 2 },
+    { name: 'Negotiation', count: 2, value: 90_000, stallCount: 0 },
+    { name: 'Won', count: 1, value: 45_000, stallCount: 0 },
+  ]
+  const totalPipelineValue = demoPipelineStages.reduce((s, st) => s + st.value, 0)
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-      <QueueHeader repName={repName} actionCount={displayItems.length} />
+      <QueueHeader
+        repName={repName}
+        actionCount={displayItems.length}
+        pipelineStages={demoPipelineStages}
+        totalPipelineValue={totalPipelineValue}
+        targetValue={1_200_000}
+      />
 
       {showWeeklyPulse && topAccountForPulse && (
         <div className="mt-4">

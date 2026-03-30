@@ -6,6 +6,14 @@ import { Phone } from 'lucide-react'
 import { cn, formatGbp } from '@/lib/utils'
 import { OutcomeCapture } from './outcome-capture'
 
+export interface SubScore {
+  name: string
+  score: number
+  weight: number
+  weightedScore: number
+  tier: string
+}
+
 export interface PriorityCardProps {
   accountName: string
   accountId: string
@@ -16,11 +24,15 @@ export interface PriorityCardProps {
   nextAction: string
   contactName: string | null
   contactPhone: string | null
+  contactEmail?: string | null
   severity: 'critical' | 'high' | 'medium' | 'low'
   priorityTier: string | null
   propensity: number | null
   icpTier: string | null
   priorityReason: string | null
+  subScores?: SubScore[]
+  signalCount?: number
+  topSignal?: string | null
   showOutcomeCapture?: boolean
   onDraftOutreach: () => void
   onComplete: () => void
@@ -44,11 +56,15 @@ export function PriorityCard({
   nextAction,
   contactName,
   contactPhone,
+  contactEmail,
   severity,
   priorityTier,
   propensity,
   icpTier,
   priorityReason,
+  subScores,
+  signalCount,
+  topSignal,
   showOutcomeCapture,
   onDraftOutreach,
   onComplete,
@@ -161,13 +177,14 @@ export function PriorityCard({
               {showWhy ? '▾ Hide scoring' : '▸ Why this?'}
             </button>
             {showWhy && (
-              <div className="mt-2 rounded-md border border-zinc-800/60 bg-zinc-950/50 px-3 py-2.5 text-xs text-zinc-400 space-y-1.5">
+              <div className="mt-2 rounded-md border border-zinc-800/60 bg-zinc-950/50 px-3 py-3 text-xs text-zinc-400 space-y-2.5">
                 <div className="flex items-center gap-3">
                   {priorityTier && (
                     <span className={cn(
                       'rounded px-1.5 py-0.5 font-semibold',
                       priorityTier === 'HOT' ? 'bg-red-950/60 text-red-300' :
                       priorityTier === 'WARM' ? 'bg-amber-950/60 text-amber-300' :
+                      priorityTier === 'COOL' ? 'bg-sky-950/60 text-sky-300' :
                       'bg-zinc-800 text-zinc-300'
                     )}>
                       {priorityTier}
@@ -175,15 +192,59 @@ export function PriorityCard({
                   )}
                   {propensity != null && (
                     <span className="font-mono tabular-nums text-zinc-300">
-                      {Math.round(propensity)}% win likelihood
+                      {Math.round(propensity)}% propensity
                     </span>
                   )}
                   {icpTier && (
-                    <span className="text-zinc-500">ICP {icpTier}</span>
+                    <span className={cn(
+                      'rounded px-1.5 py-0.5 font-medium',
+                      icpTier === 'A' ? 'bg-emerald-950/60 text-emerald-300' :
+                      icpTier === 'B' ? 'bg-teal-950/60 text-teal-300' :
+                      'bg-zinc-800 text-zinc-400'
+                    )}>
+                      ICP {icpTier}
+                    </span>
                   )}
                 </div>
+
+                {subScores && subScores.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    {subScores.map((s) => (
+                      <div key={s.name} className="flex items-center gap-2">
+                        <span className="w-28 truncate text-zinc-500">{s.name}</span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
+                          <div
+                            className={cn(
+                              'h-full rounded-full transition-all',
+                              s.score >= 80 ? 'bg-emerald-500' :
+                              s.score >= 60 ? 'bg-sky-500' :
+                              s.score >= 40 ? 'bg-amber-500' :
+                              'bg-red-500'
+                            )}
+                            style={{ width: `${Math.min(s.score, 100)}%` }}
+                          />
+                        </div>
+                        <span className="w-7 text-right font-mono tabular-nums text-zinc-400">
+                          {Math.round(s.score)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {priorityReason && (
-                  <p className="text-zinc-400 leading-relaxed">{priorityReason}</p>
+                  <p className="text-zinc-400 leading-relaxed pt-1 border-t border-zinc-800/40">
+                    {priorityReason}
+                  </p>
+                )}
+
+                {topSignal && (
+                  <p className="text-zinc-500">
+                    Top signal: <span className="text-zinc-300">{topSignal}</span>
+                    {signalCount != null && signalCount > 1 && (
+                      <span className="text-zinc-600"> (+{signalCount - 1} more)</span>
+                    )}
+                  </p>
                 )}
               </div>
             )}

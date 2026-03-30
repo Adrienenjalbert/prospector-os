@@ -13,12 +13,14 @@ type NavItem = { href: string; label: string; roles?: string[] };
 
 const allNavItems: NavItem[] = [
   { href: "/inbox", label: "Inbox" },
-  { href: "/pipeline", label: "Pipeline", roles: ["manager", "admin"] },
-  { href: "/accounts", label: "Accounts", roles: ["manager", "admin"] },
-  { href: "/analytics/my-funnel", label: "My Stats" },
-  { href: "/analytics/team", label: "Team", roles: ["manager", "admin"] },
+  { href: "/pipeline", label: "Pipeline" },
+  { href: "/accounts", label: "Accounts" },
+  { href: "/signals", label: "Signals" },
+  { href: "/analytics/my-funnel", label: "My Funnel" },
+  { href: "/analytics/team", label: "Team", roles: ["manager", "admin", "revops"] },
+  { href: "/analytics/forecast", label: "Forecast", roles: ["manager", "admin", "revops"] },
   { href: "/settings", label: "Settings" },
-  { href: "/admin/config", label: "Admin", roles: ["admin"] },
+  { href: "/admin/config", label: "Admin", roles: ["admin", "revops"] },
 ];
 
 function getNavForRole(role: string): NavItem[] {
