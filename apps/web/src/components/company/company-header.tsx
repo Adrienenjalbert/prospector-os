@@ -117,6 +117,7 @@ export function CompanyHeader({
             <button
               onClick={() => setShowScores((v) => !v)}
               className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              aria-expanded={showScores}
             >
               {showScores ? '▾ Hide scores' : '▸ Score breakdown'}
             </button>

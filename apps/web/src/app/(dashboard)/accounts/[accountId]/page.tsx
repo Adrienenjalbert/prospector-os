@@ -1,5 +1,4 @@
 import { createSupabaseServer } from '@/lib/supabase/server'
-import { formatGbp } from '@/lib/utils'
 import { AccountDetailClient } from './account-detail-client'
 
 type PageProps = {

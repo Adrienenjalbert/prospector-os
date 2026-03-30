@@ -184,12 +184,35 @@ export default async function PipelinePage({ searchParams }: PageProps) {
 
   const filtered = sorted.filter((d) => d.stage === activeStage)
 
+  const boardDeals = allDeals.map((d) => ({
+    id: d.id,
+    name: d.name,
+    companyName: d.companyName,
+    companyId: d.accountId,
+    value: d.value,
+    stage: d.stage,
+    daysInStage: d.daysInStage ?? 0,
+    medianDays: 14,
+    isStalled: d.isStalled,
+    stallReason: null as string | null,
+    probability: null as number | null,
+    priorityScore: null as number | null,
+    priorityTier: null as string | null,
+    contactName: null as string | null,
+    expectedRevenue: d.value ?? 0,
+  }))
+
   return (
     <div className="mx-auto max-w-7xl p-6 sm:p-8">
       <div className="flex flex-col gap-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
-          Pipeline
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
+            Pipeline
+          </h1>
+          <p className="text-sm text-zinc-500">
+            {allDeals.length} deals · {formatGbp(allDeals.reduce((s, d) => s + (d.value ?? 0), 0))} total
+          </p>
+        </div>
 
         {useDemo && (
           <div className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">

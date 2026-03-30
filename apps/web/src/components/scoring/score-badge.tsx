@@ -7,7 +7,6 @@ interface ScoreBadgeProps {
   tier?: string | null
   icpTier?: string | null
   size?: 'sm' | 'md'
-  showTooltip?: boolean
   tooltipText?: string
 }
 

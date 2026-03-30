@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Loader2, Send, X } from "lucide-react";
 import type { Message } from "@ai-sdk/react";
 
@@ -8,6 +9,7 @@ import { useAgentChat } from "@/lib/hooks/use-agent-chat";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 
 import { ChatMessage } from "./chat-message";
+import { SuggestedPrompts } from "./suggested-prompts";
 
 export interface ChatSidebarProps {
   isOpen: boolean;
@@ -16,7 +18,7 @@ export interface ChatSidebarProps {
   onPromptConsumed?: () => void;
 }
 
-const suggestedPrompts = [
+const fallbackPrompts = [
   "Who should I call first today?",
   "What's happening with my stalled deals?",
   "Why is Acme Corp flagged as high priority?",
@@ -25,6 +27,16 @@ const suggestedPrompts = [
 
 const WELCOME_MESSAGE =
   "Hi! I know your accounts, deals, and signals. Ask me anything — I'll give you specific names, numbers, and next steps.";
+
+function ContextualSuggestions({ onSelect }: { onSelect: (prompt: string) => void }) {
+  const pathname = usePathname();
+  return (
+    <SuggestedPrompts
+      currentPage={pathname}
+      onSelectPrompt={onSelect}
+    />
+  );
+}
 
 type HistoryMsg = { id?: string; role: string; content: string };
 
@@ -130,21 +142,7 @@ function ChatSidebarChat({
 
       {showSuggestions && (
         <div className="shrink-0 border-t border-zinc-800 px-4 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Suggested
-          </p>
-          <div className="mt-2 flex flex-col gap-2">
-            {suggestedPrompts.map((prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                onClick={() => handleSuggestedPrompt(prompt)}
-                className="rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-left text-xs leading-snug text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-900 hover:text-zinc-100"
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
+          <ContextualSuggestions onSelect={handleSuggestedPrompt} />
         </div>
       )}
 

@@ -221,7 +221,7 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
                     onClick={() => setSelectedContactId(contact.id)}
                     role="button"
                     tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') setSelectedContactId(contact.id) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedContactId(contact.id) } }}
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex size-10 items-center justify-center rounded-full bg-zinc-800 text-xs font-semibold text-zinc-300">

@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
 interface CoachingCardProps {
@@ -8,8 +9,7 @@ interface CoachingCardProps {
   severity: 'critical' | 'high' | 'medium'
   metric?: string
   benchmark?: string
-  onViewPipeline?: () => void
-  onScheduleOneOnOne?: () => void
+  pipelineLink?: string
 }
 
 const SEVERITY_STYLES: Record<string, { border: string; icon: string }> = {
@@ -26,8 +26,7 @@ export function CoachingCard({
   severity,
   metric,
   benchmark,
-  onViewPipeline,
-  onScheduleOneOnOne,
+  pipelineLink,
 }: CoachingCardProps) {
   const style = SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.medium
 
@@ -56,22 +55,12 @@ export function CoachingCard({
           </div>
 
           <div className="mt-3 flex items-center gap-2">
-            {onViewPipeline && (
-              <button
-                onClick={onViewPipeline}
-                className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
-              >
-                View Pipeline
-              </button>
-            )}
-            {onScheduleOneOnOne && (
-              <button
-                onClick={onScheduleOneOnOne}
-                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
-              >
-                Schedule 1:1
-              </button>
-            )}
+            <Link
+              href={pipelineLink ?? '/pipeline'}
+              className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
+            >
+              View Pipeline
+            </Link>
           </div>
         </div>
       </div>

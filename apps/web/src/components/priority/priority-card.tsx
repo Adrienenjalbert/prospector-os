@@ -139,9 +139,16 @@ export function PriorityCard({
               {accountName}
             </Link>
           </div>
-          <span className="shrink-0 text-sm font-medium text-zinc-200">
-            {formatGbp(expectedRevenue)}
-          </span>
+          <div className="shrink-0 text-right">
+            <span className="text-sm font-medium font-mono tabular-nums text-zinc-200">
+              {formatGbp(expectedRevenue)}
+            </span>
+            {dealValue != null && dealValue !== expectedRevenue && (
+              <p className="text-xs text-zinc-500 font-mono tabular-nums">
+                Deal: {formatGbp(dealValue)}
+              </p>
+            )}
+          </div>
         </div>
 
         <p className="mt-2 text-sm leading-relaxed text-zinc-400">

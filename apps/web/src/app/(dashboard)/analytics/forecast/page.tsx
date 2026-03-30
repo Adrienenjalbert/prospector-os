@@ -27,10 +27,20 @@ export default async function ForecastPage() {
     if (user) {
       const { data: profile } = await supabase
         .from('user_profiles')
-        .select('role')
+        .select('role, tenant_id')
         .eq('id', user.id)
         .single()
       userRole = profile?.role ?? 'rep'
+
+      if (profile?.tenant_id) {
+        const { count } = await supabase
+          .from('companies')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', profile.tenant_id)
+        if (count && count > 0) {
+          isDemo = false
+        }
+      }
     }
   } catch {
     // fall back
@@ -97,15 +107,39 @@ export default async function ForecastPage() {
         </div>
 
         <div className="mt-6">
-          <div className="h-3 w-full overflow-hidden rounded-full bg-zinc-800">
+          <div className="relative h-3 w-full overflow-hidden rounded-full bg-zinc-800">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-600 via-emerald-500 to-sky-500 transition-all"
+              className="absolute inset-y-0 left-0 rounded-full bg-zinc-600/40 transition-all"
+              style={{ width: `${Math.min(bestCasePct, 100)}%` }}
+              title={`Best case: ${bestCasePct}%`}
+            />
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-sky-600/60 transition-all"
+              style={{ width: `${Math.min(committedPct, 100)}%` }}
+              title={`Committed: ${committedPct}%`}
+            />
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 transition-all"
               style={{ width: `${Math.min(closedPct, 100)}%` }}
+              title={`Closed: ${closedPct}%`}
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-xs text-zinc-500">
             <span>0%</span>
-            <span className="text-emerald-400 font-medium">{closedPct}% closed</span>
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-emerald-400">Closed {closedPct}%</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2 w-2 rounded-full bg-sky-600" />
+                <span className="text-sky-400">Committed {committedPct}%</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2 w-2 rounded-full bg-zinc-600" />
+                <span>Best Case {bestCasePct}%</span>
+              </span>
+            </div>
             <span>100%</span>
           </div>
         </div>

@@ -52,9 +52,10 @@ export function OverviewTab({ company, expectedRevenue, dealValue, propensity, s
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[
           { label: 'Expected Revenue', value: formatGbp(expectedRevenue), color: 'text-emerald-400' },
+          { label: 'Propensity', value: `${Math.round(propensity)}%`, color: propensity >= 70 ? 'text-red-400' : propensity >= 50 ? 'text-amber-400' : 'text-sky-400' },
           { label: 'Deal Value', value: dealValue ? formatGbp(dealValue) : '—', color: 'text-zinc-200' },
           { label: 'Contacts', value: `${contactCount}`, color: contactCount > 3 ? 'text-sky-400' : 'text-amber-400' },
           { label: 'Signals', value: `${signals.length}`, color: signals.length > 0 ? 'text-violet-400' : 'text-zinc-400' },
