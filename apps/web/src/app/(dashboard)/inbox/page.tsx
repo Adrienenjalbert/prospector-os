@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { QueueHeader, type PipelineStage } from '@/components/priority/queue-header'
 import { InboxList } from '@/components/priority/inbox-list'
 import { WeeklyPulse } from '@/components/priority/weekly-pulse'
+import { InboxDashboard } from '@/components/priority/inbox-dashboard'
 import { isDemoTenantSlug } from '@/lib/demo-tenant'
 
 interface SubScore {
@@ -120,6 +121,11 @@ const DEMO_ITEMS: PriorityItem[] = [
 async function fetchRealData(): Promise<{
   items: PriorityItem[]
   repName: string
+  completedTodayCount?: number
+  showWeeklyPulse?: boolean
+  topAccountForPulse?: PriorityItem | null
+  pipelineStages?: PipelineStage[]
+  totalPipelineValue?: number
 } | null> {
   try {
     const { createSupabaseServer } = await import('@/lib/supabase/server')
@@ -380,14 +386,68 @@ export default async function InboxPage() {
   const showPipelineStages = useDemoData ? demoPipelineStages : (livePipelineStages ?? undefined)
   const showPipelineTotal = useDemoData ? demoPipelineStages.reduce((s, st) => s + st.value, 0) : (liveTotalPipeline ?? undefined)
 
+  const inboxIds = new Set(displayItems.map((i) => i.accountId))
+
+  const demoMatrixAccounts = DEMO_ITEMS.map((item) => ({
+    accountName: item.accountName,
+    accountId: item.accountId,
+    icpScore: item.subScores?.find((s) => s.name === 'ICP Fit')?.score ?? 60,
+    signalEngagement: Math.round(
+      ((item.subScores?.find((s) => s.name === 'Signal')?.score ?? 50) +
+        (item.subScores?.find((s) => s.name === 'Engagement')?.score ?? 50)) / 2,
+    ),
+    revenue: item.expectedRevenue,
+    tier: item.priorityTier ?? 'WARM',
+    isInbox: true,
+  }))
+
+  const matrixAccounts = useDemoData
+    ? demoMatrixAccounts
+    : displayItems.map((item) => ({
+        accountName: item.accountName,
+        accountId: item.accountId,
+        icpScore: item.subScores?.find((s) => s.name === 'ICP Fit')?.score ?? 60,
+        signalEngagement: Math.round(
+          ((item.subScores?.find((s) => s.name === 'Signal')?.score ?? 50) +
+            (item.subScores?.find((s) => s.name === 'Engagement')?.score ?? 50)) / 2,
+        ),
+        revenue: item.expectedRevenue,
+        tier: item.priorityTier ?? 'WARM',
+        isInbox: inboxIds.has(item.accountId),
+      }))
+
+  const signalsThisWeek = displayItems.reduce((s, i) => s + (i.signalCount ?? 0), 0)
+  const hotCount = displayItems.filter((i) => i.priorityTier === 'HOT').length
+
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
       <QueueHeader
         repName={repName}
         actionCount={displayItems.length}
         pipelineStages={showPipelineStages}
         totalPipelineValue={showPipelineTotal}
       />
+
+      {/* KPI Strip */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {[
+          { label: 'Pipeline', value: showPipelineTotal != null ? `£${Math.round(showPipelineTotal / 1000)}K` : '—', color: 'text-zinc-100' },
+          { label: 'HOT Accounts', value: `${hotCount}`, color: 'text-red-400' },
+          { label: 'Signals (wk)', value: `${signalsThisWeek}`, color: 'text-violet-400' },
+          { label: 'Stalls', value: `${showPipelineStages?.reduce((s: number, st: PipelineStage) => s + st.stallCount, 0) ?? 0}`, color: 'text-amber-400' },
+          { label: 'Done Today', value: `${completedTodayCount}/${displayItems.length}`, color: 'text-emerald-400' },
+        ].map((m) => (
+          <div key={m.label} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-center">
+            <p className="text-xs text-zinc-500">{m.label}</p>
+            <p className={`mt-1 text-xl font-bold font-mono tabular-nums ${m.color}`}>{m.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Priority Matrix */}
+      <div className="mt-4">
+        <InboxDashboard accounts={matrixAccounts} />
+      </div>
 
       {showWeeklyPulse && topAccountForPulse && (
         <div className="mt-4">

@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils'
 import { CompanyHeader } from '@/components/company/company-header'
 import { OverviewTab } from '@/components/company/overview-tab'
 import { ContactPanel } from '@/components/company/contact-panel'
+import { OrgChart } from '@/components/company/org-chart'
+import { CoverageMatrix } from '@/components/company/coverage-matrix'
 import { Building2, Users, Target, MapPin, Zap, Brain } from 'lucide-react'
 
 interface AccountData {
@@ -193,11 +195,12 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
             signals={signals}
             contactCount={contacts.length}
             opportunityCount={activeOpps.length}
+            subScores={subScores}
           />
         )}
 
         {activeTab === 'people' && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <h2 className="text-lg font-semibold text-zinc-100">
               People <span className="text-zinc-500 font-normal text-sm">({contacts.length} contacts)</span>
             </h2>
@@ -213,6 +216,14 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
                 </button>
               </div>
             ) : (
+              <>
+              {/* Org Chart */}
+              <OrgChart contacts={contacts} onContactClick={setSelectedContactId} />
+
+              {/* Coverage Matrix */}
+              <CoverageMatrix contacts={contacts} />
+
+              {/* Contact Cards */}
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {contacts.map((contact) => (
                   <div
@@ -271,6 +282,7 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
                   </div>
                 ))}
               </div>
+              </>
             )}
           </div>
         )}

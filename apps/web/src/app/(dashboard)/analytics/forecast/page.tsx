@@ -1,5 +1,6 @@
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { formatGbp } from '@/lib/utils'
+import { ForecastDashboard } from './forecast-dashboard'
 
 const DEMO_FORECAST = {
   target: 5_000_000,
@@ -143,6 +144,11 @@ export default async function ForecastPage() {
             <span>100%</span>
           </div>
         </div>
+      </div>
+
+      {/* Trajectory + Risk Charts */}
+      <div className="mt-6">
+        <ForecastDashboard forecast={forecast} />
       </div>
 
       {/* Key Metrics */}

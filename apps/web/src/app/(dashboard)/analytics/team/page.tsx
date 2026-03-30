@@ -2,6 +2,7 @@ import { createSupabaseServer } from '@/lib/supabase/server'
 import { formatGbp } from '@/lib/utils'
 import { RepLeaderboard } from '@/components/analytics/rep-leaderboard'
 import { CoachingCard } from '@/components/analytics/coaching-card'
+import { TeamCharts } from './team-charts'
 
 const DEMO_REPS = [
   { id: 'r1', name: 'Sarah Johnson', closedRevenue: 485_000, pipelineValue: 890_000, targetValue: 500_000, winRate: 68, stallCount: 1, dealCount: 8 },
@@ -118,6 +119,11 @@ export default async function TeamPage() {
             <p className={`mt-1 text-xl font-bold font-mono tabular-nums ${m.color}`}>{m.value}</p>
           </div>
         ))}
+      </div>
+
+      {/* Rep Radar + Pipeline by Rep */}
+      <div className="mt-6">
+        <TeamCharts reps={DEMO_REPS} />
       </div>
 
       {/* Rep Leaderboard */}

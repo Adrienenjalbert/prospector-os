@@ -6,25 +6,34 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, MessageSquare } from "lucide-react";
 import { ChatSidebar } from "@/components/agent/chat-sidebar";
 import { NotificationList } from "@/components/notifications/notification-list";
+import { NavDropdown } from "@/components/nav/nav-dropdown";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { clsx } from "clsx";
 
 type NavItem = { href: string; label: string; roles?: string[] };
+type NavDropdownDef = { label: string; items: { href: string; label: string }[]; roles?: string[] };
+type NavEntry = (NavItem & { type: 'link' }) | (NavDropdownDef & { type: 'dropdown' });
 
-const allNavItems: NavItem[] = [
-  { href: "/inbox", label: "Inbox" },
-  { href: "/pipeline", label: "Pipeline" },
-  { href: "/accounts", label: "Accounts" },
-  { href: "/signals", label: "Signals" },
-  { href: "/analytics/my-funnel", label: "My Funnel" },
-  { href: "/analytics/team", label: "Team", roles: ["manager", "admin", "revops"] },
-  { href: "/analytics/forecast", label: "Forecast", roles: ["manager", "admin", "revops"] },
-  { href: "/settings", label: "Settings" },
-  { href: "/admin/config", label: "Admin", roles: ["admin", "revops"] },
+const allNavEntries: NavEntry[] = [
+  { type: 'link', href: "/inbox", label: "Inbox" },
+  { type: 'link', href: "/pipeline", label: "Pipeline" },
+  { type: 'link', href: "/accounts", label: "Accounts" },
+  { type: 'link', href: "/signals", label: "Signals" },
+  {
+    type: 'dropdown',
+    label: 'Analytics',
+    roles: ["manager", "admin", "revops"],
+    items: [
+      { href: "/analytics/team", label: "Team Performance" },
+      { href: "/analytics/forecast", label: "Forecast" },
+    ],
+  },
+  { type: 'link', href: "/settings", label: "Settings" },
+  { type: 'link', href: "/admin/config", label: "Admin", roles: ["admin", "revops"] },
 ];
 
-function getNavForRole(role: string): NavItem[] {
-  return allNavItems.filter((item) => !item.roles || item.roles.includes(role));
+function getNavForRole(role: string): NavEntry[] {
+  return allNavEntries.filter((entry) => !entry.roles || entry.roles.includes(role));
 }
 
 export default function DashboardLayout({
@@ -113,7 +122,7 @@ export default function DashboardLayout({
     };
   }, []);
 
-  const navItems = getNavForRole(userRole);
+  const navEntries = getNavForRole(userRole);
 
   useEffect(() => {
     function handleOpenChat(e: Event) {
@@ -140,14 +149,27 @@ export default function DashboardLayout({
               <span className="ml-2 hidden text-xs text-zinc-600 sm:inline">Today&apos;s priorities</span>
             </Link>
             <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-0.5 md:pb-0">
-              {navItems.map((item) => {
+              {navEntries.map((entry) => {
+                if (entry.type === 'dropdown') {
+                  const isActive = entry.items.some(
+                    (i) => pathname === i.href || pathname.startsWith(`${i.href}/`),
+                  );
+                  return (
+                    <NavDropdown
+                      key={entry.label}
+                      label={entry.label}
+                      items={entry.items}
+                      isActive={isActive}
+                    />
+                  );
+                }
                 const active =
-                  pathname === item.href ||
-                  pathname.startsWith(`${item.href}/`);
+                  pathname === entry.href ||
+                  pathname.startsWith(`${entry.href}/`);
                 return (
                   <Link
-                    key={item.href}
-                    href={item.href}
+                    key={entry.href}
+                    href={entry.href}
                     className={clsx(
                       "rounded-md px-3 py-2 text-sm font-medium transition-colors",
                       active
@@ -155,7 +177,7 @@ export default function DashboardLayout({
                         : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
                     )}
                   >
-                    {item.label}
+                    {entry.label}
                   </Link>
                 );
               })}

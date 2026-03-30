@@ -12,6 +12,9 @@ export type AccountRow = {
   priority_tier: string | null
   expected_revenue: number | null
   industry: string | null
+  propensity?: number | null
+  hq_city?: string | null
+  hq_country?: string | null
 }
 
 const ICP_TIERS = ['A', 'B', 'C', 'D'] as const

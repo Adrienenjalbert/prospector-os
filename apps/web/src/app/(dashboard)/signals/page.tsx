@@ -142,14 +142,16 @@ export default async function SignalsPage() {
   const { signals, isDemo } = await fetchSignals()
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
-          Signals
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Buying signals across your portfolio — sorted by recency.
-        </p>
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
+            Signal Intelligence
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            Buying signals across your portfolio
+          </p>
+        </div>
       </div>
 
       {isDemo && (

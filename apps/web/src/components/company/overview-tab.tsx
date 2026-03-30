@@ -1,5 +1,6 @@
 import { formatGbp } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import { ScoreRadar } from '@/components/scoring/score-radar'
 
 interface OverviewTabProps {
   company: {
@@ -32,6 +33,7 @@ interface OverviewTabProps {
   }[]
   contactCount: number
   opportunityCount: number
+  subScores?: { name: string; score: number; tier?: string }[]
 }
 
 const SIGNAL_ICONS: Record<string, string> = {
@@ -45,7 +47,7 @@ const SIGNAL_ICONS: Record<string, string> = {
   negative_news: '⚠️',
 }
 
-export function OverviewTab({ company, expectedRevenue, dealValue, propensity, signals, contactCount, opportunityCount }: OverviewTabProps) {
+export function OverviewTab({ company, expectedRevenue, dealValue, propensity, signals, contactCount, opportunityCount, subScores }: OverviewTabProps) {
   const mspData = company.enrichment_data?.mspData as Record<string, unknown> | undefined
   const recentSignals = signals.slice(0, 3)
 
@@ -67,7 +69,12 @@ export function OverviewTab({ company, expectedRevenue, dealValue, propensity, s
         ))}
       </div>
 
-      {/* Company Info */}
+      {/* Scoring Radar + Company Info */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {subScores && subScores.length > 0 && (
+          <ScoreRadar scores={subScores} />
+        )}
+
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
         <h3 className="text-sm font-semibold text-zinc-200">Company Information</h3>
         <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
@@ -104,6 +111,7 @@ export function OverviewTab({ company, expectedRevenue, dealValue, propensity, s
             Enriched {new Date(company.enriched_at).toLocaleDateString()} via {company.enrichment_source ?? 'Apollo'}
           </p>
         )}
+      </div>
       </div>
 
       {/* MSP Intelligence */}

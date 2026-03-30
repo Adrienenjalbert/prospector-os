@@ -10,21 +10,22 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@prospector/core": "*",
-    "@prospector/adapters": "*",
-    "@prospector/db": "*",
-    "@supabase/supabase-js": "^2",
-    "@supabase/ssr": "^0.6",
-    "ai": "^4",
     "@ai-sdk/anthropic": "^1",
     "@ai-sdk/react": "^1",
+    "@prospector/adapters": "*",
+    "@prospector/core": "*",
+    "@prospector/db": "*",
+    "@supabase/ssr": "^0.6",
+    "@supabase/supabase-js": "^2",
+    "ai": "^4",
+    "clsx": "^2",
+    "lucide-react": "^0.475",
     "next": "16.2.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "zod": "^3.24",
-    "lucide-react": "^0.475",
-    "clsx": "^2",
-    "tailwind-merge": "^3"
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3",
+    "zod": "^3.24"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
