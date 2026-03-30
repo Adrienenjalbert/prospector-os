@@ -184,24 +184,6 @@ export default async function PipelinePage({ searchParams }: PageProps) {
 
   const filtered = sorted.filter((d) => d.stage === activeStage)
 
-  const boardDeals = allDeals.map((d) => ({
-    id: d.id,
-    name: d.name,
-    companyName: d.companyName,
-    companyId: d.accountId,
-    value: d.value,
-    stage: d.stage,
-    daysInStage: d.daysInStage ?? 0,
-    medianDays: 14,
-    isStalled: d.isStalled,
-    stallReason: null as string | null,
-    probability: null as number | null,
-    priorityScore: null as number | null,
-    priorityTier: null as string | null,
-    contactName: null as string | null,
-    expectedRevenue: d.value ?? 0,
-  }))
-
   return (
     <div className="mx-auto max-w-7xl p-6 sm:p-8">
       <div className="flex flex-col gap-8">
@@ -279,9 +261,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
             </div>
           ) : (
             filtered.map((deal) => {
-              const href = deal.accountId
-                ? `/accounts/${deal.accountId}`
-                : `/pipeline?stage=${encodeURIComponent(activeStage)}`
+              const href = `/pipeline/${deal.id}`
               return (
                 <Link
                   key={deal.id}

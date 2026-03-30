@@ -111,7 +111,7 @@ export function SignalCard({
           </button>
         )}
         <span className="ml-auto text-xs text-zinc-600">
-          {source} · Relevance: {Math.round(relevanceScore * 100)}%
+          {source} · Signal strength: {Math.round(relevanceScore * 100)}%
         </span>
       </div>
     </div>

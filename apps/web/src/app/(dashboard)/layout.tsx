@@ -134,9 +134,10 @@ export default function DashboardLayout({
           <div className="flex min-w-0 flex-1 items-center gap-8">
             <Link
               href="/inbox"
-              className="shrink-0 text-sm font-semibold tracking-tight text-zinc-100"
+              className="shrink-0"
             >
-              Prospector OS
+              <span className="text-sm font-semibold tracking-tight text-zinc-100">Prospector OS</span>
+              <span className="ml-2 hidden text-xs text-zinc-600 sm:inline">Today&apos;s priorities</span>
             </Link>
             <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-0.5 md:pb-0">
               {navItems.map((item) => {

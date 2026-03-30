@@ -66,10 +66,10 @@ export function QueueHeader({
       )}
 
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-600">
-        <span>🔴 Stalled deal</span>
-        <span>🟡 New signal</span>
-        <span>🟢 New prospect</span>
-        <span>🔵 Active deal</span>
+        <span><span aria-hidden>🔴</span> Stalled deal</span>
+        <span><span aria-hidden>🟡</span> Signal detected</span>
+        <span><span aria-hidden>🟢</span> Prospecting target</span>
+        <span><span aria-hidden>🔵</span> Pipeline deal</span>
       </div>
     </div>
   )

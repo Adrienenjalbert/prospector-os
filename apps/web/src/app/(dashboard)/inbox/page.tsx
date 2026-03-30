@@ -161,11 +161,11 @@ async function fetchRealData(): Promise<{
     const repCrmId = repProfile?.crm_id
     if (!repCrmId) return null
 
-    const [companiesRes, signalsRes, stalledRes, contactsRes] =
+    const [companiesRes, signalsRes, stalledRes, contactsRes, allOppsRes] =
       await Promise.all([
         supabase
           .from('companies')
-          .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier')
+          .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier, icp_score, signal_score, engagement_score, contact_coverage_score, velocity_score, win_rate_score')
           .eq('tenant_id', profile.tenant_id)
           .eq('owner_crm_id', repCrmId)
           .in('priority_tier', ['HOT', 'WARM'])
@@ -191,6 +191,12 @@ async function fetchRealData(): Promise<{
           .eq('tenant_id', profile.tenant_id)
           .eq('is_decision_maker', true)
           .order('relevance_score', { ascending: false }),
+        supabase
+          .from('opportunities')
+          .select('stage, value, is_stalled')
+          .eq('tenant_id', profile.tenant_id)
+          .eq('owner_crm_id', repCrmId)
+          .eq('is_closed', false),
       ])
 
     const companies = companiesRes.data ?? []
@@ -199,6 +205,29 @@ async function fetchRealData(): Promise<{
     const signals = signalsRes.data ?? []
     const stalls = stalledRes.data ?? []
     const contacts = contactsRes.data ?? []
+    const allOpps = allOppsRes.data ?? []
+
+    const stageAgg = new Map<string, { count: number; value: number; stallCount: number }>()
+    for (const o of allOpps) {
+      const stage = o.stage ?? 'Unknown'
+      const curr = stageAgg.get(stage) ?? { count: 0, value: 0, stallCount: 0 }
+      curr.count += 1
+      curr.value += o.value != null ? Number(o.value) : 0
+      if (o.is_stalled) curr.stallCount += 1
+      stageAgg.set(stage, curr)
+    }
+    const pipelineStages = ['Lead', 'Qualified', 'Proposal', 'Negotiation'].map((name) => {
+      const found = Array.from(stageAgg.entries()).find(([k]) =>
+        k.toLowerCase().includes(name.toLowerCase())
+      )
+      return {
+        name,
+        count: found?.[1].count ?? 0,
+        value: found?.[1].value ?? 0,
+        stallCount: found?.[1].stallCount ?? 0,
+      }
+    })
+    const totalPipelineValue = pipelineStages.reduce((s, st) => s + st.value, 0)
 
     const contactMap = new Map<string, (typeof contacts)[0]>()
     for (const c of contacts) {
@@ -244,6 +273,15 @@ async function fetchRealData(): Promise<{
         nextAction += ` — contact ${contactName} (${contact!.title ?? 'Decision Maker'})`
       }
 
+      const liveSubScores: SubScore[] = [
+        { name: 'ICP Fit', score: c.icp_score ?? 0, weight: 0.15, weightedScore: (c.icp_score ?? 0) * 0.15, tier: '' },
+        { name: 'Signal', score: c.signal_score ?? 0, weight: 0.20, weightedScore: (c.signal_score ?? 0) * 0.20, tier: signal?.title ?? '' },
+        { name: 'Engagement', score: c.engagement_score ?? 0, weight: 0.15, weightedScore: (c.engagement_score ?? 0) * 0.15, tier: '' },
+        { name: 'Contacts', score: c.contact_coverage_score ?? 0, weight: 0.20, weightedScore: (c.contact_coverage_score ?? 0) * 0.20, tier: '' },
+        { name: 'Velocity', score: c.velocity_score ?? 0, weight: 0.15, weightedScore: (c.velocity_score ?? 0) * 0.15, tier: '' },
+        { name: 'Win Rate', score: c.win_rate_score ?? 0, weight: 0.15, weightedScore: (c.win_rate_score ?? 0) * 0.15, tier: '' },
+      ]
+
       return {
         accountName: c.name,
         accountId: c.id,
@@ -259,6 +297,9 @@ async function fetchRealData(): Promise<{
         propensity: c.propensity,
         icpTier: c.icp_tier,
         priorityReason: c.priority_reason,
+        subScores: liveSubScores,
+        signalCount: signals.filter(s => s.company_id === c.id).length,
+        topSignal: signal?.title ?? null,
       }
     })
 
@@ -310,6 +351,8 @@ async function fetchRealData(): Promise<{
       completedTodayCount: typeof completedTodayCount === 'number' ? completedTodayCount : 0,
       showWeeklyPulse: showWeeklyPulse && !pulseAlreadySubmitted,
       topAccountForPulse,
+      pipelineStages,
+      totalPipelineValue,
     }
   } catch {
     return null
@@ -330,18 +373,20 @@ export default async function InboxPage() {
     { name: 'Qualified', count: 8, value: 340_000, stallCount: 0 },
     { name: 'Proposal', count: 4, value: 180_000, stallCount: 2 },
     { name: 'Negotiation', count: 2, value: 90_000, stallCount: 0 },
-    { name: 'Won', count: 1, value: 45_000, stallCount: 0 },
   ]
-  const totalPipelineValue = demoPipelineStages.reduce((s, st) => s + st.value, 0)
+
+  const livePipelineStages = realData?.pipelineStages
+  const liveTotalPipeline = realData?.totalPipelineValue
+  const showPipelineStages = useDemoData ? demoPipelineStages : (livePipelineStages ?? undefined)
+  const showPipelineTotal = useDemoData ? demoPipelineStages.reduce((s, st) => s + st.value, 0) : (liveTotalPipeline ?? undefined)
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <QueueHeader
         repName={repName}
         actionCount={displayItems.length}
-        pipelineStages={demoPipelineStages}
-        totalPipelineValue={totalPipelineValue}
-        targetValue={1_200_000}
+        pipelineStages={showPipelineStages}
+        totalPipelineValue={showPipelineTotal}
       />
 
       {showWeeklyPulse && topAccountForPulse && (

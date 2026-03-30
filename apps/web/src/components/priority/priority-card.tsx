@@ -199,7 +199,7 @@ export function PriorityCard({
                   )}
                   {propensity != null && (
                     <span className="font-mono tabular-nums text-zinc-300">
-                      {Math.round(propensity)}% propensity
+                      {Math.round(propensity)}% priority
                     </span>
                   )}
                   {icpTier && (

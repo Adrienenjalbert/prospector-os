@@ -97,18 +97,29 @@ export function CompanyHeader({
                 <ExternalLink className="size-4" />
               </a>
             )}
-            <button
-              onClick={handleEnrich}
-              disabled={enriching}
-              className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
-            >
-              {enriching ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
+            {onEnrichAll ? (
+              <button
+                onClick={handleEnrich}
+                disabled={enriching}
+                className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-50"
+              >
+                {enriching ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="size-3.5" />
+                )}
+                {enriching ? 'Enriching...' : 'Enrich All'}
+              </button>
+            ) : enrichedAt ? (
+              <span className="text-xs text-zinc-600" title={`Enriched ${new Date(enrichedAt).toLocaleDateString()}`}>
+                Enriched ✓
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800/50 px-3 py-1.5 text-xs text-zinc-500">
                 <Sparkles className="size-3.5" />
-              )}
-              {enriching ? 'Enriching...' : 'Enrich All'}
-            </button>
+                Enrichment available
+              </span>
+            )}
           </div>
         </div>
 

@@ -288,8 +288,8 @@ export default async function DealDetailPage({ params }: PageProps) {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
           <aside className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
             <div>
-              <p className="text-xs uppercase tracking-wide text-zinc-500">
-                Win probability
+              <p className="text-xs uppercase tracking-wide text-zinc-500" title="Composite priority score combining ICP fit, signals, engagement, contacts, velocity, and win rate">
+                Priority score
               </p>
               <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-zinc-50">
                 {d.leftPanel.winProbabilityPct != null

@@ -286,10 +286,13 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
             ) : (
               <div className="space-y-3">
                 {opportunities.map((opp) => (
-                  <div key={opp.id} className={cn(
-                    'rounded-lg border bg-zinc-900 p-5',
-                    opp.isStalled ? 'border-red-900/40' : 'border-zinc-800'
-                  )}>
+                  <a
+                    key={opp.id}
+                    href={`/pipeline/${opp.id}`}
+                    className={cn(
+                      'block rounded-lg border bg-zinc-900 p-5 transition-colors hover:border-zinc-600',
+                      opp.isStalled ? 'border-red-900/40' : 'border-zinc-800'
+                    )}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-medium text-zinc-200">{opp.name}</p>
@@ -328,7 +331,7 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
                         Expected close: {new Date(opp.expectedCloseDate).toLocaleDateString()}
                       </p>
                     )}
-                  </div>
+                  </a>
                 ))}
               </div>
             )}

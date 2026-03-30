@@ -335,32 +335,7 @@ export default async function MyFunnelPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
             My Funnel Health
           </h1>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-zinc-400">
-              <span className="text-zinc-300">Period</span>
-              <select
-                name="period"
-                defaultValue="90d"
-                className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-zinc-600 focus:border-zinc-600 focus:ring-2 focus:ring-zinc-600/40"
-              >
-                <option value="90d">Last 90 Days</option>
-                <option value="30d">Last 30 Days</option>
-                <option value="ytd">Year to date</option>
-              </select>
-            </label>
-            <label className="flex items-center gap-2 text-sm text-zinc-400">
-              <span className="text-zinc-300">Market</span>
-              <select
-                name="market"
-                defaultValue="all"
-                className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-zinc-600 focus:border-zinc-600 focus:ring-2 focus:ring-zinc-600/40"
-              >
-                <option value="all">All</option>
-                <option value="uk">UK</option>
-                <option value="us">US</option>
-              </select>
-            </label>
-          </div>
+          <p className="text-sm text-zinc-500">Last 90 days · All markets</p>
         </div>
 
         <section className="grid gap-4 sm:grid-cols-3">
