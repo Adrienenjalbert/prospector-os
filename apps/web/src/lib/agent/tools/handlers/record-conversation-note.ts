@@ -111,6 +111,34 @@ export const recordConversationNoteHandler: ToolHandler = {
       } satisfies RecordResult
     }
 
+    // Per-conversation note cap. Without this, an agent that learns to
+    // write a note per turn produces N rows per N turns; only the last
+    // 5 are ever shown by the conversation-memory slice but every row
+    // sits in `ai_conversation_notes` indefinitely. A long thread (50
+    // turns) writes 50 rows of which 45 are dead weight — pure DB bloat
+    // with zero prompt-window benefit.
+    //
+    // The cap is generous (50) so legitimate conversations with many
+    // observations still work; the actual constraint is "don't blow
+    // the table up". Hitting the cap returns a non-error skip
+    // (`awaiting_conversation: false, capped: true`) so the agent
+    // simply stops calling the tool — it never sees a hard failure
+    // that would make it retry.
+    const { count: existingCount } = await toolCtx.supabase
+      .from('ai_conversation_notes')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', toolCtx.tenantId)
+      .eq('conversation_id', conversationId)
+
+    const NOTES_PER_CONVERSATION_CAP = 50
+    if ((existingCount ?? 0) >= NOTES_PER_CONVERSATION_CAP) {
+      return {
+        data: null,
+        error: `Conversation note cap (${NOTES_PER_CONVERSATION_CAP}) reached — older notes still in memory; new ones rejected to prevent table bloat.`,
+        citations: [],
+      } satisfies RecordResult
+    }
+
     const { data, error } = await toolCtx.supabase
       .from('ai_conversation_notes')
       .insert({

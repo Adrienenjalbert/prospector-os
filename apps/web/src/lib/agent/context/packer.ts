@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { emitAgentEvent, parseUrn } from '@prospector/core'
+import { emitAgentEvents, parseUrn, type AgentEventInput } from '@prospector/core'
 import type {
   ActiveObjectType,
   AgentRole,
@@ -115,19 +115,45 @@ async function withSliceTimeout<T>(
  * Resolve the active object's id from URN + page context. We accept both
  * because Slack inbound and the chat sidebar pass page context, while the
  * action-panel passes URN.
+ *
+ * Async because deal-first navigation (URN = `:deal:`) used to leave
+ * `activeCompanyId` null — every slice that requires `activeCompanyId`
+ * (transcript-summaries, key-contact-notes, champion-map) silently no-op'd
+ * with "needs an active company id" warnings. The rep on a deal page got
+ * a thinner pack than the rep on the company page, even though the deal
+ * row owns a `company_id`. We now follow the FK once during resolution
+ * and cache the answer for the rest of the turn.
+ *
+ * The lookup is tenant-scoped — even if `parsed.id` came from a hostile
+ * URN, the join to `opportunities` returns null when the deal belongs to
+ * a different tenant, so the slice load gracefully degrades.
  */
-function resolveActive(opts: PackContextOptions): {
+async function resolveActive(opts: PackContextOptions): Promise<{
   activeObject: ActiveObjectType
   activeCompanyId: string | null
   activeDealId: string | null
-} {
+}> {
   const parsed = opts.activeUrn ? parseUrn(opts.activeUrn) : null
   if (parsed) {
     if (parsed.type === 'company') {
       return { activeObject: 'company', activeCompanyId: parsed.id, activeDealId: null }
     }
     if (parsed.type === 'deal' || parsed.type === 'opportunity') {
-      return { activeObject: 'deal', activeCompanyId: null, activeDealId: parsed.id }
+      // Follow the deal -> company FK so transcript / contact / champion
+      // slices have something to filter on. Only one extra single-row
+      // query; failure (deal not found, deleted, wrong tenant) returns
+      // null and the slice's own no-context warning kicks in.
+      const { data } = await opts.supabase
+        .from('opportunities')
+        .select('company_id')
+        .eq('id', parsed.id)
+        .eq('tenant_id', opts.tenantId)
+        .maybeSingle()
+      return {
+        activeObject: 'deal',
+        activeCompanyId: (data?.company_id as string | null) ?? null,
+        activeDealId: parsed.id,
+      }
     }
     if (parsed.type === 'contact') {
       return { activeObject: 'contact', activeCompanyId: null, activeDealId: null }
@@ -137,7 +163,18 @@ function resolveActive(opts: PackContextOptions): {
     }
   }
   if (opts.pageContext?.dealId) {
-    return { activeObject: 'deal', activeCompanyId: null, activeDealId: opts.pageContext.dealId }
+    // Same FK follow-through for the page-context-only path (no URN).
+    const { data } = await opts.supabase
+      .from('opportunities')
+      .select('company_id')
+      .eq('id', opts.pageContext.dealId)
+      .eq('tenant_id', opts.tenantId)
+      .maybeSingle()
+    return {
+      activeObject: 'deal',
+      activeCompanyId: (data?.company_id as string | null) ?? null,
+      activeDealId: opts.pageContext.dealId,
+    }
   }
   if (opts.pageContext?.accountId) {
     return { activeObject: 'company', activeCompanyId: opts.pageContext.accountId, activeDealId: null }
@@ -215,7 +252,7 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
   const latencyBudgetMs = opts.latencyBudgetMs ?? 5000
   const deadlineMs = startedAt + latencyBudgetMs
 
-  const active = resolveActive(opts)
+  const active = await resolveActive(opts)
 
   // Load per-tenant slice priors in parallel with selector setup. Cheap
   // (<5ms typical) and tolerated to fail — bandit adjustment falls back
@@ -322,7 +359,38 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
   }
 
   const sections = orderSections(selection.slugs, packedBySlug, active.activeObject)
-  const tokens_used = sections.reduce((sum, s) => sum + s.tokens, 0)
+
+  // Real budget enforcement. The selector picks slices by *declared*
+  // `slice.token_budget`, but `formatForPrompt` can return more — a slice
+  // declaring 400 tokens that emits 5 transcript bodies at 240 chars each
+  // realises ~6× the budget. Pre-this-change, `tokens_used` could blow
+  // 50% past the global cap, pushing the behaviour-rules block (which
+  // sits AFTER `sections` in the system prompt) further from the
+  // high-attention end. The model then drops citation discipline,
+  // formats sloppily, ignores the next-step contract.
+  //
+  // Strategy:
+  //   1. If we're under budget, do nothing.
+  //   2. Otherwise drop sections from the END (lowest priority by
+  //      lost-in-the-middle ordering — meta/health categories) until
+  //      we're under cap. Active-object slices and high-score slices
+  //      live at the front and survive.
+  //   3. Always keep at least one section so the agent has SOMETHING
+  //      to ground in.
+  //
+  // The dropped sections still appear in `failed[]` (with reason
+  // `over_budget_after_format`) so the bandit can punish chronic
+  // over-realisers and the next turn picks differently.
+  let tokens_used = sections.reduce((sum, s) => sum + s.tokens, 0)
+  while (tokens_used > tokenBudget && sections.length > 1) {
+    const dropped = sections.pop()
+    if (!dropped) break
+    failed.push({
+      slug: dropped.slug,
+      reason: `over_budget_after_format: dropped to keep tokens_used <= ${tokenBudget}`,
+    })
+    tokens_used -= dropped.tokens
+  }
 
   // Always-on coverage notes from slice warnings — gives the agent the
   // honest "I notice X is empty" surface (UX#9 honest-error states).
@@ -369,10 +437,21 @@ async function emitTelemetry(
   packed: Map<string, PackedSection>,
   failed: { slug: string; reason: string }[],
 ): Promise<void> {
+  // Pre-this-change this fired N sequential `emitAgentEvent` inserts
+  // (one round-trip per slice per turn). 12 slices × ~30ms = ~360ms of
+  // wall-clock cost on every chat turn, all of it after the response was
+  // already streaming. Multiply by 100 reps × 100 tenants × 100 turns/day
+  // and the `agent_events` table grew with maximum write contention.
+  //
+  // We now batch every event into a single `emitAgentEvents` call —
+  // one INSERT per turn, ~30ms total. The `void` at the call site keeps
+  // the fire-and-forget contract: telemetry never blocks the response.
   const scoredBySlug = new Map(scored.map((s) => [s.slug, s]))
 
+  const events: AgentEventInput[] = []
+
   for (const [slug, section] of packed.entries()) {
-    await emitAgentEvent(opts.supabase, {
+    events.push({
       tenant_id: opts.tenantId,
       interaction_id: opts.interactionId ?? null,
       user_id: opts.userId,
@@ -392,7 +471,7 @@ async function emitTelemetry(
   }
 
   for (const f of failed) {
-    await emitAgentEvent(opts.supabase, {
+    events.push({
       tenant_id: opts.tenantId,
       interaction_id: opts.interactionId ?? null,
       user_id: opts.userId,
@@ -404,6 +483,13 @@ async function emitTelemetry(
         intent_class: opts.intentClass,
       },
     })
+  }
+
+  // Single batch insert. `emitAgentEvents` swallows errors internally so
+  // a transient `agent_events` write failure can't surface as a turn
+  // failure here.
+  if (events.length > 0) {
+    await emitAgentEvents(opts.supabase, events)
   }
 }
 

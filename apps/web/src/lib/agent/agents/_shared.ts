@@ -59,6 +59,20 @@ export async function loadBusinessProfile(
     overlaid.agent_mission = skills.agent_personality.agent_mission
     overlaid.brand_voice = skills.agent_personality.brand_voice
   }
+  // Objection handlers — previously the `business_skills` table held them
+  // but the prompt never received them. A tenant who'd taken the time to
+  // codify their objection responses still saw the agent guess at price /
+  // budget objections. We coerce the unknown[] payload into the expected
+  // shape; bad rows fall through as empty (no crash).
+  if (skills.objection_handlers && Array.isArray(skills.objection_handlers.items)) {
+    const items = skills.objection_handlers.items as Array<{
+      objection?: string
+      response?: string
+    }>
+    overlaid.objection_handlers = items
+      .filter((i) => typeof i.objection === 'string' && typeof i.response === 'string')
+      .map((i) => ({ objection: i.objection!, response: i.response! }))
+  }
 
   return overlaid
 }
@@ -125,6 +139,15 @@ export function formatBusinessContext(profile: BusinessProfile | null): string {
   }
   if (profile.industry_context) {
     parts.push(`- **Industry context:** ${profile.industry_context}`)
+  }
+  // Objection playbook — render only when present + populated. We cap at
+  // 6 entries so a tenant with a verbose playbook can't blow the static
+  // prefix budget; the model will reach for the most-applicable one
+  // (selection bias from frequency in real conversations is expected).
+  if (profile.objection_handlers && profile.objection_handlers.length > 0) {
+    const top = profile.objection_handlers.slice(0, 6)
+    const lines = top.map((o) => `  - **${o.objection}** → ${o.response}`)
+    parts.push(`- **Objection playbook:**\n${lines.join('\n')}`)
   }
 
   return parts.join('\n')

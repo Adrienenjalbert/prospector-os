@@ -141,7 +141,25 @@ function scoreOne(
 }
 
 export function scoreSlices(input: ContextSelectorInput): ScoredSlice[] {
-  return Object.values(SLICES)
+  // `tenant_overrides.allow` is documented as a HARD whitelist: when set,
+  // the selector ignores any slug not in `allow ∪ pinned`. Previously the
+  // selector only awarded a +1 score bump, so tenants who set
+  // `allow: ['priority-accounts']` still saw every other matching slice
+  // load — the override was advisory, not authoritative. That's a
+  // correctness BLOCKER: a tenant on a strict context-strategy bundle
+  // (e.g. `team_centric` with 4 slices) was actually getting all 14.
+  //
+  // Pinned slugs survive because they are explicit "always include"
+  // markers; an allow-list that excluded pinned would be self-contradictory.
+  const allow = input.tenant_overrides?.allow
+  const pinned = input.tenant_overrides?.pinned ?? []
+  const candidates = allow
+    ? Object.values(SLICES).filter(
+        (s) => allow.includes(s.slug) || pinned.includes(s.slug),
+      )
+    : Object.values(SLICES)
+
+  return candidates
     .map((slice) => scoreOne(slice, input))
     .sort((a, b) => b.score - a.score)
 }

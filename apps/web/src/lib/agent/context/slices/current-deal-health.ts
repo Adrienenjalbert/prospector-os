@@ -23,6 +23,11 @@ interface DealHealthRow {
   crm_id: string | null
   name: string
   value: number | null
+  /**
+   * ISO 4217 code from the opportunity row. Plumbed through to `fmtMoney`
+   * so the prompt's deal value renders in the right symbol per tenant.
+   */
+  currency: string | null
   stage: string
   days_in_stage: number
   median_days: number
@@ -89,7 +94,7 @@ export const currentDealHealthSlice: ContextSlice<DealHealthRow> = {
     const { data: deal, error } = await ctx.supabase
       .from('opportunities')
       .select(
-        'id, crm_id, name, company_id, value, stage, days_in_stage, is_stalled, stall_reason, expected_close_date, is_won, is_closed',
+        'id, crm_id, name, company_id, value, currency, stage, days_in_stage, is_stalled, stall_reason, expected_close_date, is_won, is_closed',
       )
       .eq('tenant_id', ctx.tenantId)
       .eq('id', ctx.activeDealId)
@@ -150,6 +155,7 @@ export const currentDealHealthSlice: ContextSlice<DealHealthRow> = {
       crm_id: deal.crm_id,
       name: deal.name,
       value: deal.value,
+      currency: (deal as { currency?: string | null }).currency ?? null,
       stage: deal.stage,
       days_in_stage: deal.days_in_stage ?? 0,
       median_days: median,
@@ -216,7 +222,7 @@ export const currentDealHealthSlice: ContextSlice<DealHealthRow> = {
       ? `\n- Company: ${r.company.name} ${urnInline(tenantId, 'company', r.company.id)} (${r.company.industry ?? '—'}, ICP ${r.company.icp_tier ?? '—'})`
       : ''
     return `### Current deal health
-- ${r.name} ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value)} [${r.health.toUpperCase()}]${stallPart}${flagPart}
+- ${r.name} ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value, r.currency)} [${r.health.toUpperCase()}]${stallPart}${flagPart}
 - Stakeholders: ${cov.total_contacts} total${companyLine}`
   },
 

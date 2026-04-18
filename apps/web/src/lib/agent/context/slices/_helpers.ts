@@ -103,15 +103,67 @@ export function citeTranscript(row: { id: string; title?: string | null; summary
 }
 
 /**
- * Format a number as compact GBP (or pass-through "—" when null).
+ * Format a number as a compact currency string for the prompt.
  * Slices use this to keep prompt formatting consistent across reps and
  * tenants.
+ *
+ * Pre-this-change the default symbol was a hardcoded `£`, so a US tenant
+ * looking at a USD opportunity got `£200k` rendered into the prompt —
+ * the model would then quote that back to the rep, eroding trust.
+ *
+ * Now `currency` accepts a 3-letter ISO code (`'USD'`, `'GBP'`, `'EUR'`,
+ * etc.) AND we look up the symbol via `Intl.NumberFormat` so any code
+ * the tenant uses on the opportunity row renders correctly. Default
+ * is `'USD'` (largest tenant market), but slices that have access to a
+ * deal row should always pass `row.currency` explicitly.
+ *
+ * Backwards-compat: callers that passed a literal symbol like `'£'` or
+ * `'$'` are detected (length !== 3) and the legacy compact form is
+ * rendered, so no slice that hasn't been updated regresses.
  */
-export function fmtMoney(value: number | null | undefined, currency = '£'): string {
+const COMPACT_FORMATTER_CACHE = new Map<string, Intl.NumberFormat>()
+
+function getCompactFormatter(isoCurrency: string): Intl.NumberFormat | null {
+  // Only cache valid ISO 4217 codes (Intl throws on bad input).
+  try {
+    let fmt = COMPACT_FORMATTER_CACHE.get(isoCurrency)
+    if (!fmt) {
+      fmt = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: isoCurrency,
+        notation: 'compact',
+        maximumFractionDigits: 1,
+      })
+      COMPACT_FORMATTER_CACHE.set(isoCurrency, fmt)
+    }
+    return fmt
+  } catch {
+    return null
+  }
+}
+
+export function fmtMoney(
+  value: number | null | undefined,
+  currency: string | null | undefined = 'USD',
+): string {
   if (value == null || Number.isNaN(value)) return '—'
-  if (value >= 1_000_000) return `${currency}${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `${currency}${Math.round(value / 1_000)}k`
-  return `${currency}${Math.round(value)}`
+
+  const code = (currency ?? 'USD').toString().toUpperCase()
+
+  // ISO code path — preferred. Intl handles symbol + locale-correct
+  // grouping + compact notation in one call.
+  if (code.length === 3) {
+    const fmt = getCompactFormatter(code)
+    if (fmt) return fmt.format(value)
+  }
+
+  // Legacy symbol path — preserves any caller still passing `'£'` etc.
+  // Same compact buckets as before so existing tests + prompts keep
+  // identical shape.
+  const symbol = code
+  if (value >= 1_000_000) return `${symbol}${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `${symbol}${Math.round(value / 1_000)}k`
+  return `${symbol}${Math.round(value)}`
 }
 
 export function fmtAge(timestamp: string | null | undefined, now = Date.now()): string {

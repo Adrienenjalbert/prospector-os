@@ -204,8 +204,25 @@ export async function compactConversation(opts: {
     // Persist for the next turn's cache hit. Hashing for completeness;
     // the count-based cache check above is sufficient for identification.
     void hashMessages(toSummarise)
-    if (supabase && conversationId) {
+    if (supabase && conversationId && summary) {
       await persistSummary(supabase, conversationId, summary, toSummarise.length)
+    }
+  }
+
+  // Empty-summary safety net. If Haiku returned an empty string (rare
+  // but possible: rate-limit downgrade, content filter, prompt
+  // misclassification), the previous code prepended an empty
+  // `{ role: 'system', content: '' }` message — Anthropic accepts it
+  // but it pollutes the prompt with a phantom system role and confuses
+  // the cache-hit path next turn. Fall back to the rolling-slice
+  // behaviour explicitly so the turn still lands without phantom
+  // metadata.
+  if (!summary) {
+    return {
+      messages: messages.slice(-20),
+      summary: null,
+      summary_covers: 0,
+      used_cache: false,
     }
   }
 

@@ -26,6 +26,12 @@ interface StalledDealRow {
   company_name: string
   stage: string
   value: number | null
+  /**
+   * ISO 4217 currency from the opportunity row (e.g. 'USD', 'GBP', 'EUR').
+   * Forwarded into `fmtMoney` so a US tenant's $200K opportunity doesn't
+   * render as £200K — the prior default was a hardcoded GBP symbol.
+   */
+  currency: string | null
   days_in_stage: number
   median_days: number
   stall_reason: string | null
@@ -57,7 +63,7 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
     const { data: deals, error } = await ctx.supabase
       .from('opportunities')
       .select(
-        'id, crm_id, name, company_id, stage, value, days_in_stage, stall_reason, expected_close_date',
+        'id, crm_id, name, company_id, stage, value, currency, days_in_stage, stall_reason, expected_close_date',
       )
       .eq('tenant_id', ctx.tenantId)
       .eq('owner_crm_id', ctx.repId)
@@ -120,6 +126,7 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
       company_name: companyName.get(d.company_id) ?? 'Unknown',
       stage: d.stage,
       value: d.value,
+      currency: (d as { currency?: string | null }).currency ?? null,
       days_in_stage: d.days_in_stage ?? 0,
       median_days: medianByStage.get(d.stage) ?? 14,
       stall_reason: d.stall_reason,
@@ -149,7 +156,7 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
     const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 6).map((r) => {
       const reason = r.stall_reason ? ` — ${r.stall_reason}` : ''
-      return `- ${r.company_name} "${r.name}" ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value)}${reason}`
+      return `- ${r.company_name} "${r.name}" ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value, r.currency)}${reason}`
     })
     return `### Stalled deals (${rows.length})\n${lines.join('\n')}`
   },

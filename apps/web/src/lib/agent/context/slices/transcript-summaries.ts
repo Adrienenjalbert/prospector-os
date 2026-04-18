@@ -63,6 +63,27 @@ export const transcriptSummariesSlice: ContextSlice<TranscriptRow> = {
       }
     }
 
+    // Cooperative deadline check. The packer assigns each turn a hard
+    // wall-clock deadline (`SliceLoadCtx.deadlineMs`) so 12 parallel
+    // slice loads can't blow the route's 30s budget. This is the
+    // heaviest slice (joins + ranks transcripts), so we honour the
+    // contract here even though the packer's per-slice timeout would
+    // catch a runaway query — the cooperative bail returns "no
+    // transcripts available" rather than a timeout warning, which
+    // reads as honest rather than broken in the agent's response.
+    if (Date.now() > ctx.deadlineMs) {
+      return {
+        rows: [],
+        citations: [],
+        provenance: {
+          fetched_at: new Date().toISOString(),
+          source: 'db',
+          duration_ms: Date.now() - startedAt,
+        },
+        warnings: ['transcript-summaries: turn budget exceeded before fetch.'],
+      }
+    }
+
     const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()
 
     const { data, error } = await ctx.supabase

@@ -105,6 +105,17 @@ export interface BusinessProfile {
   value_propositions: ValueProposition[]
   operating_regions: OperatingRegion[]
 
+  /**
+   * Common buyer objections + the recommended counter for each. Sourced
+   * from the `business_skills.objection_handlers` row when present and
+   * overlaid by `loadBusinessProfile`. Surfaced in the system prompt so
+   * the agent can quote the tenant's actual playbook ("when prospect
+   * says price, lead with X") instead of generic objection handling.
+   * Optional for backwards compatibility — tenants who haven't set them
+   * up just get no section.
+   */
+  objection_handlers?: Array<{ objection: string; response: string }>
+
   agent_name: string
   agent_mission: string | null
   brand_voice: string | null

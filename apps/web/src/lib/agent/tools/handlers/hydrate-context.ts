@@ -124,7 +124,14 @@ export const hydrateContextHandler: ToolHandler = {
       } satisfies HydrateContextResult
     }
 
-    const rendered = slice.formatForPrompt(result.rows)
+    // Pass `tenantId` so slices that emit URNs via `urnInline()` produce
+    // canonical `urn:rev:{tenantId}:{type}:{id}` strings. Without this the
+    // helper falls back to an empty tenant segment, which breaks the
+    // citation pill regex in `extractUrnsFromText` and orphans the
+    // `context_slice_consumed` event payload the bandit reads from.
+    const rendered = slice.formatForPrompt(result.rows, {
+      tenantId: toolCtx.tenantId,
+    })
 
     return {
       data: {
