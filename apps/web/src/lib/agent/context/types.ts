@@ -272,6 +272,20 @@ export interface ContextSelectorInput {
    * `context_slices_allow|deny|pinned` for explicit per-tenant control.
    */
   tenant_overrides?: TenantContextOverrides
+
+  /**
+   * Optional Phase-3 bandit input. When present, the selector applies a
+   * Thompson-sampling adjustment per slice on top of the heuristic score.
+   * When absent (or below the MIN_SAMPLES_FOR_BANDIT threshold per slice),
+   * the bandit contributes 0 and the heuristic remains in charge.
+   * Loaded by the packer via `loadSlicePriors()`.
+   */
+  bandit_priors?: BanditPriorsInput
+}
+
+export interface BanditPriorsInput {
+  /** Map of priorKey(intent, role, slug) -> sampled adjustment. */
+  adjustment: (slug: string) => number
 }
 
 export interface TenantContextOverrides {

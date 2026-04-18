@@ -6,7 +6,7 @@ import {
   assembleContextPack,
   pickContextStrategy,
 } from '@/lib/agent/context-strategies'
-import type { IntentClass } from '@/lib/agent/context'
+import { consumedSlicesFromResponse, type IntentClass } from '@/lib/agent/context'
 import {
   AGENT_TYPES,
   buildSystemPromptForAgent,
@@ -514,6 +514,33 @@ export async function POST(req: Request) {
             console.error('[agent] citation flush:', citationErr)
           }
 
+          // Per-slice "consumed" telemetry. This is what makes the bandit
+          // learn — without it we only know which slices were *loaded*,
+          // not which ones the response actually leaned on. Fires one
+          // event per slice whose URN tokens appeared in the assistant
+          // text. Non-cited slices stay silent (treated as neutral by
+          // the bandit, not negative).
+          if (packed) {
+            const consumed = consumedSlicesFromResponse(packed, assistantText)
+            if (consumed.length > 0) {
+              const consumedEvents = consumed.map((c) => ({
+                tenant_id: tenantId,
+                interaction_id: interactionId,
+                user_id: user.id,
+                role: userRole,
+                event_type: 'context_slice_consumed' as const,
+                subject_urn: subjectUrn,
+                payload: {
+                  slug: c.slug,
+                  urns_referenced: c.urns_referenced,
+                  intent_class: intentClass,
+                  query_type: agentType,
+                },
+              }))
+              void emitAgentEvents(supabase, consumedEvents)
+            }
+          }
+
           // response_finished is the "label anchor" for attribution + eval growth.
           // Carries the summary metrics the optimiser will key off nightly.
           await emitAgentEvent(supabase, {
@@ -532,6 +559,12 @@ export async function POST(req: Request) {
               citation_count: citations.getCitations().length,
               tokens_total: usageTotal,
               response_length: assistantText.length,
+              slices_loaded: packed?.hydrated ?? [],
+              slices_consumed: packed
+                ? consumedSlicesFromResponse(packed, assistantText).map(
+                    (c) => c.slug,
+                  )
+                : [],
             },
           })
         } catch (persistErr) {

@@ -15,6 +15,12 @@ import type {
 import { SLICES } from './slices'
 import { selectSlices, buildSelectorInput, stageBucketFromString } from './selector'
 import { estimateTokens } from './slices/_helpers'
+import {
+  loadSlicePriors,
+  priorKey,
+  thompsonAdjustment,
+  type SlicePriorsTable,
+} from './bandit'
 
 /**
  * Packer — turns a ContextSelectorInput into a PackedContext by:
@@ -211,6 +217,31 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
 
   const active = resolveActive(opts)
 
+  // Load per-tenant slice priors in parallel with selector setup. Cheap
+  // (<5ms typical) and tolerated to fail — bandit adjustment falls back
+  // to 0 when the table is empty or the migration isn't applied.
+  let priorsTable: SlicePriorsTable | null = null
+  try {
+    priorsTable = await loadSlicePriors(
+      opts.supabase,
+      opts.tenantId,
+      opts.intentClass,
+      opts.role,
+    )
+  } catch (err) {
+    console.warn('[packer] slice priors load failed, heuristic only:', err)
+  }
+
+  const banditAdjustments = new Map<string, number>()
+  if (priorsTable && priorsTable.size > 0) {
+    for (const [, prior] of priorsTable) {
+      const adj = thompsonAdjustment(prior)
+      if (adj !== 0) {
+        banditAdjustments.set(prior.slice_slug, adj)
+      }
+    }
+  }
+
   const selectorInput = buildSelectorInput({
     role: opts.role,
     activeObject: active.activeObject,
@@ -221,6 +252,9 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
     signalTypes: opts.signalTypes,
     tokenBudget,
     tenantOverrides: opts.tenantOverrides,
+    banditPriors: {
+      adjustment: (slug: string) => banditAdjustments.get(slug) ?? 0,
+    },
   })
 
   const selection = selectSlices(selectorInput)
@@ -378,6 +412,72 @@ async function emitTelemetry(
 export function renderPackedSections(packed: PackedContext): string {
   if (packed.sections.length === 0) return ''
   return packed.sections.map((s) => s.markdown).join('\n\n')
+}
+
+/**
+ * Parse a body of assistant text for `urn:rev:...` references and return
+ * the unique URN strings it mentions.
+ *
+ * The regex is intentionally permissive: matches the URN structure
+ * (`urn:rev:{tenantId}:{type}:{id}`) but tolerates trailing punctuation,
+ * surrounding backticks/parens, and case variations on `rev`. Used by
+ * the route's onFinish to emit `context_slice_consumed` events — without
+ * which the bandit can only learn "which slices were loaded" not "which
+ * slices the agent actually leaned on".
+ */
+export function extractUrnsFromText(text: string): string[] {
+  if (!text) return []
+  const urns = new Set<string>()
+  const re = /urn:rev:[a-z]+:[A-Za-z0-9_-]+/gi
+  for (const match of text.matchAll(re)) {
+    urns.add(match[0])
+  }
+  return Array.from(urns)
+}
+
+/**
+ * Given the assistant text and a PackedContext, return per-slice
+ * "consumption" stats: which slices the response actually referenced via
+ * URN tokens, and which URNs from each slice landed in the response.
+ *
+ * Emits one `context_slice_consumed` event per slice that contributed at
+ * least one URN. Non-cited slices stay silent — the bandit treats those
+ * as neutral, not negative (the agent may have used the slice's framing
+ * without quoting a row URN).
+ */
+export interface ConsumedSlice {
+  slug: string
+  urns_referenced: string[]
+}
+
+export function consumedSlicesFromResponse(
+  packed: PackedContext,
+  assistantText: string,
+): ConsumedSlice[] {
+  const referencedUrns = new Set(extractUrnsFromText(assistantText))
+  if (referencedUrns.size === 0) return []
+
+  // Build a map: slug -> set of URNs that slice produced. We re-derive
+  // this from the per-section citations the packer collected, falling
+  // back to scanning the section markdown for inline URN tokens (the
+  // citations array doesn't always carry URNs verbatim — for slices that
+  // emit just `source_id`, the URN lives in the formatted markdown).
+  const sliceToUrns = new Map<string, Set<string>>()
+  for (const section of packed.sections) {
+    if (section.slug.startsWith('_')) continue // skip the meta coverage section
+    const urnsInSection = new Set(extractUrnsFromText(section.markdown))
+    if (urnsInSection.size > 0) sliceToUrns.set(section.slug, urnsInSection)
+  }
+
+  const consumed: ConsumedSlice[] = []
+  for (const [slug, urnsInSlice] of sliceToUrns.entries()) {
+    const overlap: string[] = []
+    for (const urn of urnsInSlice) {
+      if (referencedUrns.has(urn)) overlap.push(urn)
+    }
+    if (overlap.length > 0) consumed.push({ slug, urns_referenced: overlap })
+  }
+  return consumed
 }
 
 /**

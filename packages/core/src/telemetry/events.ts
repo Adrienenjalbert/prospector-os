@@ -32,6 +32,12 @@ export type AgentEventType =
   // and into the nightly self_improve workflow's failure clusters.
   | 'context_slice_loaded'
   | 'context_slice_failed'
+  // Context Pack (Phase 3): emitted post-response when the assistant text
+  // references a URN that came from a specific slice's citations. Without
+  // this event the bandit can only learn "which slices were loaded", not
+  // "which slices were actually useful". Carries { slug, urns_referenced,
+  // intent_class, role } and fires once per slice the response touched.
+  | 'context_slice_consumed'
   | 'error'
 
 /**

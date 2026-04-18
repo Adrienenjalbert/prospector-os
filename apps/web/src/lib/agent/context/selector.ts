@@ -126,6 +126,17 @@ function scoreOne(
     }
   }
 
+  // Bandit adjustment — Phase 3. Reads per-tenant priors that the
+  // calibration workflow updates from feedback. Adjustment is in
+  // ±2 range (see bandit.ts#thompsonAdjustment) so it nudges without
+  // dominating the heuristic. Returns 0 when priors haven't accumulated
+  // enough samples — backwards-compatible with no-bandit selectors.
+  const banditAdj = input.bandit_priors?.adjustment(slice.slug) ?? 0
+  if (banditAdj !== 0) {
+    score += banditAdj
+    reasons.push(`bandit:${banditAdj > 0 ? '+' : ''}${banditAdj}`)
+  }
+
   return { slug: slice.slug, score, reasons }
 }
 
@@ -264,6 +275,7 @@ export function buildSelectorInput(opts: {
   signalTypes?: string[]
   tokenBudget?: number
   tenantOverrides?: TenantContextOverrides
+  banditPriors?: ContextSelectorInput['bandit_priors']
 }): ContextSelectorInput {
   return {
     role: opts.role,
@@ -275,5 +287,6 @@ export function buildSelectorInput(opts: {
     intentClass: opts.intentClass,
     token_budget: opts.tokenBudget ?? 2000,
     tenant_overrides: opts.tenantOverrides,
+    bandit_priors: opts.banditPriors,
   }
 }

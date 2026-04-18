@@ -36,7 +36,10 @@ export {
 export {
   packContext,
   renderPackedSections,
+  extractUrnsFromText,
+  consumedSlicesFromResponse,
   type PackContextOptions,
+  type ConsumedSlice,
 } from './packer'
 
 export {
@@ -52,3 +55,12 @@ export {
 } from './facade'
 
 export { SLICES, SLICE_SLUGS, STRATEGY_BUNDLES, getSlice } from './slices'
+
+export {
+  loadSlicePriors,
+  priorKey,
+  thompsonAdjustment,
+  MIN_SAMPLES_FOR_BANDIT,
+  type SlicePrior,
+  type SlicePriorsTable,
+} from './bandit'
