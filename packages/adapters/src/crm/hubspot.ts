@@ -324,6 +324,71 @@ export class HubSpotAdapter implements CRMAdapter, ConnectorInterface {
     return body.results.map(mapCompany)
   }
 
+  /**
+   * Batch lookup of parent-company associations for a list of HubSpot
+   * company crm_ids. Returns a Map<crmId, parentCrmId> for the
+   * companies that have a parent association (rows without a parent
+   * are absent from the map).
+   *
+   * Uses HubSpot's v4 batch associations API: one POST per call, up to
+   * 100 ids per batch. The route's cron/sync caller batches in 100s.
+   *
+   * Used by the Phase-3.10 account hierarchy work — without this method,
+   * subsidiaries and parents stay invisible to each other in our
+   * canonical store and the agent can't reason about land-and-expand.
+   */
+  async getCompanyParentMap(
+    crmIds: string[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    if (crmIds.length === 0) return out
+
+    // v4 batch associations: POST /crm/v4/associations/{fromObjectType}/{toObjectType}/batch/read
+    // For company-to-company, both fromObjectType and toObjectType are "companies".
+    // We request the "child_to_parent_company" associationTypeId implicitly —
+    // HubSpot returns ALL company-to-company associations, and we filter by
+    // the well-known typeId in the response. Per HubSpot docs:
+    //   typeId 14 = child_to_parent_company (the one we want)
+    //   typeId 15 = parent_to_child_company (the inverse)
+    const CHILD_TO_PARENT_TYPE_ID = 14
+
+    const batchSize = 100
+    for (let i = 0; i < crmIds.length; i += batchSize) {
+      const batch = crmIds.slice(i, i + batchSize)
+      try {
+        const body = await this.post<{
+          results: Array<{
+            from: { id: string }
+            to: Array<{ toObjectId: string; associationTypes: Array<{ typeId: number; label: string | null }> }>
+          }>
+        }>(
+          `/crm/v4/associations/companies/companies/batch/read`,
+          { inputs: batch.map((id) => ({ id })) },
+        )
+
+        for (const row of body.results ?? []) {
+          // Pick the first association whose typeId matches the
+          // child_to_parent direction. HubSpot only allows ONE parent
+          // per company so first-match is safe.
+          const parentEntry = (row.to ?? []).find((t) =>
+            (t.associationTypes ?? []).some(
+              (at) => at.typeId === CHILD_TO_PARENT_TYPE_ID,
+            ),
+          )
+          if (parentEntry) {
+            out.set(row.from.id, parentEntry.toObjectId)
+          }
+        }
+      } catch (err) {
+        // Don't fail the whole sync — just log and skip this batch.
+        // The next sync run gets another chance.
+        console.warn('[hubspot] getCompanyParentMap batch failed:', err)
+      }
+    }
+
+    return out
+  }
+
   async getOpportunities(
     filters: OpportunityFilters,
   ): Promise<Partial<Opportunity>[]> {

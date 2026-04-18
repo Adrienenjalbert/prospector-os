@@ -275,6 +275,55 @@ describe('slice registry sanity', () => {
     // Tight token budget — the agent's own observations stay compact
     expect(slice?.token_budget).toBeLessThanOrEqual(250)
   })
+
+  it('Phase 3.10 account-family + cross-sell slices are registered and pipeline-categorised', () => {
+    const family = SLICES['account-family']
+    const crossSell = SLICES['cross-sell-opportunities']
+    expect(family).toBeDefined()
+    expect(crossSell).toBeDefined()
+    expect(family?.category).toBe('pipeline')
+    expect(crossSell?.category).toBe('pipeline')
+    // account-family is active-company-only
+    expect(family?.triggers.objects).toContain('company')
+    // cross-sell is always-on for the pipeline-builder roles, not csm
+    expect(crossSell?.triggers.roles).toContain('ae')
+    expect(crossSell?.triggers.roles).toContain('ad')
+    expect(crossSell?.triggers.roles).not.toContain('csm')
+  })
+
+  it('Phase 3.10 account_centric strategy bundle includes the new family + cross-sell slices', () => {
+    expect(STRATEGY_BUNDLES.account_centric).toContain('account-family')
+    expect(STRATEGY_BUNDLES.account_centric).toContain('cross-sell-opportunities')
+  })
+})
+
+describe('Phase 3.10 selector — account-family triggers', () => {
+  it('account-family scores positive when active object is a company', () => {
+    const scored = scoreSlices(
+      buildSelectorInput({
+        role: 'ae',
+        activeObject: 'company',
+        activeUrn: 'urn:rev:company:abc',
+        intentClass: 'meeting_prep',
+      }),
+    )
+    const family = scored.find((s) => s.slug === 'account-family')!
+    expect(family.score).toBeGreaterThan(0)
+  })
+
+  it('account-family does NOT score positive without a company in context', () => {
+    const scored = scoreSlices(
+      buildSelectorInput({
+        role: 'ae',
+        activeObject: 'none',
+        activeUrn: null,
+        intentClass: 'meeting_prep',
+      }),
+    )
+    const family = scored.find((s) => s.slug === 'account-family')!
+    // No object match means no boost; only role + intent matter
+    expect(family.score).toBeLessThan(8)
+  })
 })
 
 describe('Phase 2 slice triggers', () => {

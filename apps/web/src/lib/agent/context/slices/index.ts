@@ -11,6 +11,8 @@ import { repSuccessFingerprintSlice } from './rep-success-fingerprint'
 import { championMapSlice } from './champion-map'
 import { championAlumniSlice } from './champion-alumni-opportunities'
 import { conversationMemorySlice } from './conversation-memory'
+import { accountFamilySlice } from './account-family'
+import { crossSellOpportunitiesSlice } from './cross-sell-opportunities'
 
 /**
  * Single source of truth for every slice in the pack. Adding a new slice =
@@ -34,6 +36,8 @@ export const SLICES: Record<string, ContextSlice<unknown>> = {
   [championMapSlice.slug]: championMapSlice as ContextSlice<unknown>,
   [championAlumniSlice.slug]: championAlumniSlice as ContextSlice<unknown>,
   [conversationMemorySlice.slug]: conversationMemorySlice as ContextSlice<unknown>,
+  [accountFamilySlice.slug]: accountFamilySlice as ContextSlice<unknown>,
+  [crossSellOpportunitiesSlice.slug]: crossSellOpportunitiesSlice as ContextSlice<unknown>,
 }
 
 export const SLICE_SLUGS = Object.keys(SLICES) as readonly string[]
@@ -67,6 +71,7 @@ export const STRATEGY_BUNDLES: Record<
     'champion-map',
     'champion-alumni-opportunities',
     'conversation-memory',
+    'cross-sell-opportunities',
   ],
   account_centric: [
     'current-company-snapshot',
@@ -79,6 +84,8 @@ export const STRATEGY_BUNDLES: Record<
     'rep-success-fingerprint',
     'champion-alumni-opportunities',
     'conversation-memory',
+    'account-family',
+    'cross-sell-opportunities',
   ],
   portfolio_centric: [
     'priority-accounts',
@@ -112,4 +119,6 @@ export {
   championMapSlice,
   championAlumniSlice,
   conversationMemorySlice,
+  accountFamilySlice,
+  crossSellOpportunitiesSlice,
 }
