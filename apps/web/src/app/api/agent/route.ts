@@ -24,8 +24,14 @@ import {
 } from '@prospector/core'
 import { recordCitationsFromToolResult } from '@/lib/agent/citations'
 import { chooseModel, getModel } from '@/lib/agent/model-registry'
+import { compactConversation } from '@/lib/agent/compaction'
 
-const ROLLING_MESSAGE_LIMIT = 20
+// Phase 3.9: ROLLING_MESSAGE_LIMIT remains as the persistence cap on
+// `ai_conversations.messages` (we don't want unbounded growth there
+// either), but the ACTUAL prompt the model sees now goes through
+// compactConversation() which keeps the last 8 verbatim and Haiku-
+// summarises the older half into a system message.
+const ROLLING_MESSAGE_LIMIT = 40
 const USAGE_MONTH_KEY = 'prospector_ai_usage_month'
 
 function currentUsageMonthKey(): string {
@@ -315,17 +321,27 @@ export async function POST(req: Request) {
       packed,
     )
 
+    // Compact the message history (Phase 3.9). Threads ≤ 12 messages
+    // pass through unchanged; longer threads get the older half summarised
+    // by Haiku into a single leading `system` message and the last 8
+    // verbatim. Persisted on ai_conversations.summary_text so the cache
+    // hits on subsequent turns. Falls back to a rolling slice if the
+    // Haiku call fails — the turn never breaks because compaction failed.
+    const compacted = await compactConversation({
+      messages: messages.map((m) => ({
+        role: m.role as 'user' | 'assistant' | 'system',
+        content: m.content,
+      })),
+      supabase,
+      conversationId: activeConversationId,
+    })
+
     // Anthropic supports multiple system messages and per-message
     // providerOptions. We send two: one cacheable (static), one not
     // (dynamic). When there is no dynamic content (onboarding-coach), fall
     // back to the plain `system: string` form so we don't pay for an
     // unnecessary message-array construction.
-    const baseUserMessages = convertToCoreMessages(
-      messages.map((m) => ({
-        role: m.role as 'user' | 'assistant' | 'system',
-        content: m.content,
-      })),
-    )
+    const baseUserMessages = convertToCoreMessages(compacted.messages)
 
     const useCaching = promptParts.dynamicSuffix.length > 0
     const messagesForStream: CoreMessage[] = useCaching
