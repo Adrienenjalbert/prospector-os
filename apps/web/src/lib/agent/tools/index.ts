@@ -1,479 +1,402 @@
-import { z } from 'zod'
-import { tool } from 'ai'
-import { createClient } from '@supabase/supabase-js'
+import type { AgentContext } from '@prospector/core'
+import { tool, type Tool } from 'ai'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
-  )
+import {
+  createPipelineCoachTools,
+  buildPipelineCoachPrompt,
+  buildPipelineCoachPromptParts,
+} from '../agents/pipeline-coach'
+import {
+  createAccountStrategistTools,
+  buildAccountStrategistPrompt,
+  buildAccountStrategistPromptParts,
+} from '../agents/account-strategist'
+import {
+  createLeadershipLensTools,
+  buildLeadershipLensPrompt,
+  buildLeadershipLensPromptParts,
+} from '../agents/leadership-lens'
+import {
+  createOnboardingTools,
+  buildOnboardingCoachPrompt,
+} from '../agents/onboarding'
+import type { SystemPromptParts } from '../agents/_shared'
+import type { PackedContext } from '../context'
+import { loadToolsForAgent, type ToolRegistryRow } from '../tool-loader'
+import { registerBuiltinToolHandlers } from './handlers'
+import {
+  DEFAULT_MIDDLEWARE,
+  withMiddleware,
+  type ToolMiddlewareCtx,
+} from './middleware'
+import { rankToolsByBandit } from '../tool-bandit'
+
+/**
+ * One universal agent, multiple surfaces.
+ *
+ * Per MISSION.md: "We have one agent, many tools." The list below is NOT
+ * a list of distinct agents — it's the set of surface presets the same
+ * agent presents itself as based on `(role, activeUrn)`. Each surface
+ * picks a different prompt + tool subset; the runtime, model, telemetry,
+ * citation engine, and workflow harness are shared.
+ *
+ * `AgentSurface` is the canonical name; `AgentType` is kept as an alias
+ * so existing callers (chat sidebar, agent panel, hooks, tests) don't
+ * need to change. New code should import `AgentSurface`.
+ */
+export const AGENT_SURFACES = [
+  'pipeline-coach',
+  'account-strategist',
+  'leadership-lens',
+  'onboarding-coach',
+] as const
+
+export type AgentSurface = (typeof AGENT_SURFACES)[number]
+
+/** @deprecated Use `AGENT_SURFACES`. Kept as alias to avoid mass renames. */
+export const AGENT_TYPES = AGENT_SURFACES
+/** @deprecated Use `AgentSurface`. Kept as alias to avoid mass renames. */
+export type AgentType = AgentSurface
+
+export function isAgentSurface(value: unknown): value is AgentSurface {
+  return typeof value === 'string' && (AGENT_SURFACES as readonly string[]).includes(value)
 }
 
-export function createAgentTools(tenantId: string, repId: string) {
-  const supabase = getSupabase()
+/** @deprecated Use `isAgentSurface`. */
+export const isAgentType = isAgentSurface
 
-  const priorityQueue = tool({
-    description:
-      'Get a ranked list of accounts the rep should focus on, sorted by expected revenue. Use for "who should I focus on", "what are my top accounts", "who should I call today". Does NOT show funnel/conversion data — use funnel_diagnosis for that.',
-    parameters: z.object({
-      queue_type: z
-        .enum(['today', 'pipeline', 'prospecting'])
-        .default('today')
-        .describe('today = urgent HOT/WARM accounts, pipeline = all accounts with open deals, prospecting = high-ICP accounts with no active deal'),
-      limit: z.number().default(10).describe('Max accounts to return'),
-    }),
-    execute: async ({ queue_type, limit }) => {
-      if (queue_type === 'prospecting') {
-        const { data: accountsWithDeals } = await supabase
-          .from('opportunities')
-          .select('company_id')
-          .eq('tenant_id', tenantId)
-          .eq('owner_crm_id', repId)
-          .eq('is_closed', false)
+// --------------------------------------------------------------------------
+// Role + active-object dispatch
+// --------------------------------------------------------------------------
 
-        const dealAccountIds = (accountsWithDeals ?? []).map((d) => d.company_id)
+/**
+ * Every role the platform recognises. Kept short deliberately — role
+ * definitions are a per-tenant concern (`business_profiles.role_definitions`),
+ * but the union here enumerates what the dispatcher knows how to route.
+ */
+export type AgentRole =
+  | 'nae'
+  | 'ae'
+  | 'growth_ae'
+  | 'ad'
+  | 'csm'
+  | 'leader'
+  | 'admin'
+  | 'rep'
 
-        let query = supabase
-          .from('companies')
-          .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier')
-          .eq('tenant_id', tenantId)
-          .eq('owner_crm_id', repId)
-          .in('icp_tier', ['A', 'B'])
-          .order('expected_revenue', { ascending: false })
-          .limit(limit)
+/**
+ * Map role → AgentType default. When a user opens chat from the generic
+ * sidebar (no active object), we land them in the surface that matches their
+ * role. The ontology browser Action Panel can still override per-click.
+ */
+const ROLE_DEFAULT_AGENT: Record<string, AgentType> = {
+  nae: 'account-strategist',
+  ae: 'pipeline-coach',
+  growth_ae: 'account-strategist',
+  ad: 'account-strategist',
+  csm: 'pipeline-coach',
+  leader: 'leadership-lens',
+  admin: 'leadership-lens',
+  rep: 'pipeline-coach',
+}
 
-        if (dealAccountIds.length > 0) {
-          query = query.not('id', 'in', `(${dealAccountIds.join(',')})`)
-        }
+export interface AgentDispatch {
+  agentType: AgentType
+  role: AgentRole
+  activeUrn: string | null
+}
 
-        const { data, error } = await query
-        if (error) throw new Error(`Prospecting query failed: ${error.message}`)
-        return { queue_type, accounts: data ?? [] }
-      }
+/**
+ * Decides which agent surface to run based on (role, active object). The
+ * active object wins when set: viewing a deal hands the user a deal-deep
+ * agent regardless of role preset.
+ */
+export function dispatchAgent(opts: {
+  role?: string | null
+  activeUrn?: string | null
+  explicitAgentType?: AgentType | null
+}): AgentDispatch {
+  const role = (opts.role as AgentRole) ?? 'rep'
+  const activeUrn = opts.activeUrn ?? null
 
-      let query = supabase
-        .from('companies')
-        .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier')
-        .eq('tenant_id', tenantId)
-        .eq('owner_crm_id', repId)
-        .order('expected_revenue', { ascending: false })
-        .limit(limit)
+  if (opts.explicitAgentType) {
+    return { agentType: opts.explicitAgentType, role, activeUrn }
+  }
 
-      if (queue_type === 'today') {
-        query = query.in('priority_tier', ['HOT', 'WARM'])
-      }
-
-      const { data, error } = await query
-      if (error) throw new Error(`Priority queue query failed: ${error.message}`)
-      return { queue_type, accounts: data ?? [] }
-    },
-  })
-
-  const crmLookup = tool({
-    description:
-      'Look up an account, contact, or deal by name. Use when you need details about a specific entity the rep mentions.',
-    parameters: z.object({
-      search_term: z.string().describe('Name to search for'),
-      type: z
-        .enum(['account', 'contact', 'deal'])
-        .default('account'),
-    }),
-    execute: async ({ search_term, type }) => {
-      switch (type) {
-        case 'account': {
-          const { data } = await supabase
-            .from('companies')
-            .select('id, name, industry, employee_count, hq_city, icp_tier, propensity, priority_tier, priority_reason, expected_revenue')
-            .eq('tenant_id', tenantId)
-            .ilike('name', `%${search_term}%`)
-            .limit(5)
-          return { type: 'account', results: data ?? [] }
-        }
-        case 'contact': {
-          const { data } = await supabase
-            .from('contacts')
-            .select('first_name, last_name, title, email, phone, seniority, is_champion, is_decision_maker, company_id')
-            .eq('tenant_id', tenantId)
-            .or(`first_name.ilike.%${search_term}%,last_name.ilike.%${search_term}%`)
-            .limit(5)
-          return { type: 'contact', results: data ?? [] }
-        }
-        case 'deal': {
-          const { data } = await supabase
-            .from('opportunities')
-            .select('id, name, value, stage, days_in_stage, is_stalled, company_id')
-            .eq('tenant_id', tenantId)
-            .ilike('name', `%${search_term}%`)
-            .limit(5)
-          return { type: 'deal', results: data ?? [] }
-        }
-      }
-    },
-  })
-
-  const accountResearch = tool({
-    description:
-      'Deep dive on one company: returns firmographics, all signals, contacts, and open deals. Use when the rep wants to understand an account before a call or meeting.',
-    parameters: z.object({
-      company_name: z.string().describe('Company name to research'),
-    }),
-    execute: async ({ company_name }) => {
-      const { data: company } = await supabase
-        .from('companies')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .ilike('name', `%${company_name}%`)
-        .limit(1)
-        .single()
-
-      if (!company) return { error: `Company "${company_name}" not found` }
-
-      const [signalsRes, contactsRes, oppsRes, notesRes] = await Promise.all([
-        supabase
-          .from('signals')
-          .select('signal_type, title, description, urgency, relevance_score, detected_at')
-          .eq('tenant_id', tenantId)
-          .eq('company_id', company.id)
-          .order('detected_at', { ascending: false })
-          .limit(10),
-        supabase
-          .from('contacts')
-          .select('id, first_name, last_name, title, email, phone, seniority, is_champion, is_decision_maker, birthday, work_anniversary, personal_interests, alma_mater')
-          .eq('tenant_id', tenantId)
-          .eq('company_id', company.id)
-          .order('relevance_score', { ascending: false })
-          .limit(15),
-        supabase
-          .from('opportunities')
-          .select('name, value, stage, days_in_stage, is_stalled, stall_reason')
-          .eq('tenant_id', tenantId)
-          .eq('company_id', company.id)
-          .eq('is_closed', false)
-          .order('value', { ascending: false })
-          .limit(5),
-        supabase
-          .from('relationship_notes')
-          .select('contact_id, note_type, content, created_at')
-          .eq('tenant_id', tenantId)
-          .eq('company_id', company.id)
-          .order('created_at', { ascending: false })
-          .limit(15),
-      ])
-
-      const notesByContactId = new Map<string, { note_type: string; content: string }[]>()
-      for (const n of notesRes.data ?? []) {
-        if (!n.contact_id) continue
-        const list = notesByContactId.get(n.contact_id) ?? []
-        list.push({ note_type: n.note_type, content: n.content })
-        notesByContactId.set(n.contact_id, list)
-      }
-
-      const enrichedContacts = (contactsRes.data ?? []).map((c) => ({
-        first_name: c.first_name,
-        last_name: c.last_name,
-        title: c.title,
-        email: c.email,
-        phone: c.phone,
-        seniority: c.seniority,
-        is_champion: c.is_champion,
-        is_decision_maker: c.is_decision_maker,
-        birthday: c.birthday,
-        interests: c.personal_interests,
-        alma_mater: c.alma_mater,
-        relationship_notes: notesByContactId.get(c.id) ?? [],
-      }))
-
-      return {
-        company: {
-          name: company.name,
-          industry: company.industry,
-          employee_count: company.employee_count,
-          hq_city: company.hq_city,
-          hq_country: company.hq_country,
-          icp_tier: company.icp_tier,
-          icp_score: company.icp_score,
-          propensity: company.propensity,
-          priority_tier: company.priority_tier,
-          priority_reason: company.priority_reason,
-        },
-        signals: signalsRes.data ?? [],
-        contacts: enrichedContacts,
-        open_deals: oppsRes.data ?? [],
-      }
-    },
-  })
-
-  const outreachDrafter = tool({
-    description:
-      'Fetch account context needed to draft outreach. Returns company details, recent signals, and contact info. After receiving this data, compose the email in your response using the rep\'s outreach tone and Indeed Flex value props.',
-    parameters: z.object({
-      account_name: z.string().describe('Company name (will be looked up)'),
-      contact_name: z.string().optional().describe('Specific contact to address'),
-      outreach_type: z
-        .enum(['cold_email', 'follow_up', 'stall_rescue', 'signal_response', 'meeting_request'])
-        .describe('Type of outreach'),
-    }),
-    execute: async ({ account_name, contact_name, outreach_type }) => {
-      const { data: company } = await supabase
-        .from('companies')
-        .select('id, name, industry, employee_count, hq_city, icp_tier, priority_reason')
-        .eq('tenant_id', tenantId)
-        .ilike('name', `%${account_name}%`)
-        .limit(1)
-        .single()
-
-      if (!company) return { error: `Company "${account_name}" not found` }
-
-      const { data: signals } = await supabase
-        .from('signals')
-        .select('signal_type, title')
-        .eq('tenant_id', tenantId)
-        .eq('company_id', company.id)
-        .order('detected_at', { ascending: false })
-        .limit(3)
-
-      let contact = null
-      if (contact_name) {
-        const { data } = await supabase
-          .from('contacts')
-          .select('first_name, last_name, title, email')
-          .eq('tenant_id', tenantId)
-          .or(`first_name.ilike.%${contact_name}%,last_name.ilike.%${contact_name}%`)
-          .limit(1)
-          .single()
-        contact = data
-      }
-
-      return {
-        company,
-        signals: signals ?? [],
-        contact,
-        outreach_type,
-      }
-    },
-  })
-
-  const funnelDiagnosis = tool({
-    description:
-      'Analyse pipeline health: stage-by-stage conversion rates, drop rates vs company benchmark, and stall counts. Use for "how is my pipeline", "where am I losing deals", "what stage needs work". Does NOT rank individual accounts — use priority_queue for that.',
-    parameters: z.object({
-      stage_filter: z.string().optional().describe('Focus on a specific stage name'),
-    }),
-    execute: async ({ stage_filter }) => {
-      const repQuery = supabase
-        .from('funnel_benchmarks')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .eq('scope', 'rep')
-        .eq('scope_id', repId)
-
-      if (stage_filter) repQuery.eq('stage_name', stage_filter)
-
-      const [repBench, companyBench] = await Promise.all([
-        repQuery,
-        supabase
-          .from('funnel_benchmarks')
-          .select('*')
-          .eq('tenant_id', tenantId)
-          .eq('scope', 'company')
-          .eq('scope_id', 'all'),
-      ])
-
-      return {
-        stages: (repBench.data ?? []).map((rb) => {
-          const cb = (companyBench.data ?? []).find(
-            (c) => c.stage_name === rb.stage_name
-          )
-          return {
-            stage: rb.stage_name,
-            rep_conv_rate: rb.conversion_rate,
-            rep_drop_rate: rb.drop_rate,
-            benchmark_conv_rate: cb?.conversion_rate ?? 0,
-            benchmark_drop_rate: cb?.drop_rate ?? 0,
-            delta_drop: Math.round((rb.drop_rate - (cb?.drop_rate ?? 0)) * 100) / 100,
-            deals: rb.deal_count,
-            avg_days: rb.avg_days_in_stage,
-            stalls: rb.stall_count,
-          }
-        }),
-      }
-    },
-  })
-
-  const dealStrategy = tool({
-    description:
-      'Analyse a specific deal: health assessment based on stage benchmarks, contacts involved, and recommended actions. Use for "how is my deal with X", "what should I do to close X".',
-    parameters: z.object({
-      deal_name: z.string().describe('Deal name to analyse'),
-    }),
-    execute: async ({ deal_name }) => {
-      const { data: deal } = await supabase
-        .from('opportunities')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .ilike('name', `%${deal_name}%`)
-        .limit(1)
-        .single()
-
-      if (!deal) return { error: `Deal "${deal_name}" not found` }
-
-      const [contactsRes, benchRes] = await Promise.all([
-        supabase
-          .from('contacts')
-          .select('first_name, last_name, title, seniority, is_champion, is_economic_buyer, phone, email, last_activity_date')
-          .eq('tenant_id', tenantId)
-          .eq('company_id', deal.company_id)
-          .limit(10),
-        supabase
-          .from('funnel_benchmarks')
-          .select('median_days_in_stage')
-          .eq('tenant_id', tenantId)
-          .eq('scope', 'company')
-          .eq('scope_id', 'all')
-          .eq('stage_name', deal.stage)
-          .limit(1)
-          .single(),
-      ])
-
-      const medianDays = benchRes.data?.median_days_in_stage ?? 14
-      const stallThreshold = Math.round(medianDays * 1.5)
-
-      return {
-        deal: {
-          name: deal.name,
-          value: deal.value,
-          stage: deal.stage,
-          days_in_stage: deal.days_in_stage,
-          is_stalled: deal.is_stalled,
-          stall_reason: deal.stall_reason,
-          expected_close_date: deal.expected_close_date,
-        },
-        health: deal.is_stalled
-          ? 'stalled'
-          : deal.days_in_stage > stallThreshold
-            ? 'at_risk'
-            : 'on_track',
-        benchmark: {
-          median_days: medianDays,
-          stall_threshold: stallThreshold,
-        },
-        contacts: contactsRes.data ?? [],
-      }
-    },
-  })
-
-  const contactFinder = tool({
-    description:
-      'Find contacts at a company for multi-threading. Use when the rep needs to identify decision-makers or find the right person to reach out to.',
-    parameters: z.object({
-      account_name: z.string().describe('Company name'),
-      seniority_filter: z
-        .array(z.string())
-        .optional()
-        .describe('Filter by seniority: c_level, vp, director, manager'),
-    }),
-    execute: async ({ account_name, seniority_filter }) => {
-      const { data: company } = await supabase
-        .from('companies')
-        .select('id')
-        .eq('tenant_id', tenantId)
-        .ilike('name', `%${account_name}%`)
-        .limit(1)
-        .single()
-
-      if (!company) return { error: `Company "${account_name}" not found`, contacts: [] }
-
-      let query = supabase
-        .from('contacts')
-        .select('first_name, last_name, title, email, phone, seniority, department, is_champion, is_decision_maker')
-        .eq('tenant_id', tenantId)
-        .eq('company_id', company.id)
-
-      if (seniority_filter?.length) {
-        query = query.in('seniority', seniority_filter)
-      }
-
-      const { data } = await query
-        .order('relevance_score', { ascending: false })
-        .limit(15)
-
-      return { company_name: account_name, contacts: data ?? [] }
-    },
-  })
-
-  const relationshipNotes = tool({
-    description:
-      'Read or save personal notes about a contact. Use "read" to look up what the rep knows about someone (interests, family, career goals, past conversation takeaways). Use "write" to log a new personal observation after a meeting or call. This builds genuine relationship context over time.',
-    parameters: z.object({
-      action: z.enum(['read', 'write']).describe('Whether to read existing notes or write a new one'),
-      contact_name: z.string().describe('Contact first or last name'),
-      note_type: z.enum([
-        'personal_detail', 'conversation_takeaway', 'follow_up_commitment',
-        'interest_hobby', 'family_mention', 'career_goal', 'pain_point', 'preference', 'general',
-      ]).optional().describe('Type of note (required for write)'),
-      content: z.string().optional().describe('Note content (required for write)'),
-    }),
-    execute: async ({ action, contact_name, note_type, content }) => {
-      const { data: contact } = await supabase
-        .from('contacts')
-        .select('id, first_name, last_name, company_id, title, birthday, work_anniversary, personal_interests, alma_mater, previous_companies')
-        .eq('tenant_id', tenantId)
-        .or(`first_name.ilike.%${contact_name}%,last_name.ilike.%${contact_name}%`)
-        .limit(1)
-        .single()
-
-      if (!contact) return { error: `Contact "${contact_name}" not found` }
-
-      if (action === 'read') {
-        const { data: notes } = await supabase
-          .from('relationship_notes')
-          .select('note_type, content, created_at')
-          .eq('tenant_id', tenantId)
-          .eq('contact_id', contact.id)
-          .order('created_at', { ascending: false })
-          .limit(10)
-
-        return {
-          contact: {
-            name: `${contact.first_name} ${contact.last_name}`,
-            title: contact.title,
-            birthday: contact.birthday,
-            work_anniversary: contact.work_anniversary,
-            interests: contact.personal_interests,
-            alma_mater: contact.alma_mater,
-            previous_companies: contact.previous_companies,
-          },
-          notes: notes ?? [],
-        }
-      }
-
-      if (!note_type || !content) {
-        return { error: 'note_type and content are required for write action' }
-      }
-
-      await supabase.from('relationship_notes').insert({
-        tenant_id: tenantId,
-        contact_id: contact.id,
-        company_id: contact.company_id,
-        rep_crm_id: repId,
-        note_type,
-        content,
-        source: 'agent',
-      })
-
-      return { saved: true, contact_name: `${contact.first_name} ${contact.last_name}`, note_type }
-    },
-  })
+  if (activeUrn?.includes(':deal:') || activeUrn?.includes(':opportunity:')) {
+    return { agentType: 'pipeline-coach', role, activeUrn }
+  }
+  if (activeUrn?.includes(':company:')) {
+    return { agentType: 'account-strategist', role, activeUrn }
+  }
 
   return {
-    priority_queue: priorityQueue,
-    crm_lookup: crmLookup,
-    account_research: accountResearch,
-    outreach_drafter: outreachDrafter,
-    funnel_diagnosis: funnelDiagnosis,
-    deal_strategy: dealStrategy,
-    contact_finder: contactFinder,
-    relationship_notes: relationshipNotes,
+    agentType: ROLE_DEFAULT_AGENT[role] ?? 'pipeline-coach',
+    role,
+    activeUrn,
   }
+}
+
+// --------------------------------------------------------------------------
+// Static tool factories (fallback when tool_registry is empty)
+// --------------------------------------------------------------------------
+
+export function createAgentTools(
+  tenantId: string,
+  repId: string,
+  agentType: AgentType,
+): Record<string, Tool> {
+  switch (agentType) {
+    case 'pipeline-coach':
+      return createPipelineCoachTools(tenantId, repId)
+    case 'account-strategist':
+      return createAccountStrategistTools(tenantId, repId)
+    case 'leadership-lens':
+      return createLeadershipLensTools(tenantId)
+    case 'onboarding-coach':
+      return createOnboardingTools(tenantId)
+  }
+}
+
+export async function buildSystemPromptForAgent(
+  agentType: AgentType,
+  tenantId: string,
+  agentContext: AgentContext | null,
+  packed: PackedContext | null = null,
+): Promise<string> {
+  switch (agentType) {
+    case 'pipeline-coach':
+      return buildPipelineCoachPrompt(tenantId, agentContext, packed)
+    case 'account-strategist':
+      return buildAccountStrategistPrompt(tenantId, agentContext, packed)
+    case 'leadership-lens':
+      return buildLeadershipLensPrompt(tenantId, agentContext, packed)
+    case 'onboarding-coach':
+      return buildOnboardingCoachPrompt(tenantId)
+  }
+}
+
+/**
+ * Cache-aware variant of `buildSystemPromptForAgent`. Returns the system
+ * prompt as `(staticPrefix, dynamicSuffix)` parts so the route can mark
+ * the prefix as cacheable via Anthropic's `cacheControl: ephemeral`
+ * provider option. ~50% input-token reduction within a session.
+ *
+ * Onboarding-coach has no prompt-caching split today (its prompt is
+ * already small + tenant-specific) — returns the whole thing in
+ * `staticPrefix` for callers that just want a single string.
+ */
+export async function buildSystemPromptParts(
+  agentType: AgentType,
+  tenantId: string,
+  agentContext: AgentContext | null,
+  packed: PackedContext | null = null,
+): Promise<SystemPromptParts> {
+  switch (agentType) {
+    case 'pipeline-coach':
+      return buildPipelineCoachPromptParts(tenantId, agentContext, packed)
+    case 'account-strategist':
+      return buildAccountStrategistPromptParts(tenantId, agentContext, packed)
+    case 'leadership-lens':
+      return buildLeadershipLensPromptParts(tenantId, agentContext, packed)
+    case 'onboarding-coach': {
+      const single = await buildOnboardingCoachPrompt(tenantId)
+      return { staticPrefix: single, dynamicSuffix: '' }
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// Registry-driven tool loader (preferred path)
+// --------------------------------------------------------------------------
+
+/**
+ * Loads tools from the tool_registry table for this tenant + role. Falls back
+ * to the static agent-type factory when the registry is empty (new install)
+ * or when the registry has no rows matching the role.
+ *
+ * Two paths for two stages of the platform lifecycle:
+ *   1. No registry yet (greenfield): static factory ensures first-run works.
+ *   2. Registry populated (steady state): DB drives what's available.
+ */
+export async function loadToolsForDispatch(opts: {
+  supabase: SupabaseClient
+  tenantId: string
+  repId: string
+  userId: string
+  role: AgentRole
+  agentType: AgentSurface
+  activeUrn?: string | null
+  /** Interaction id the agent route assigned for this turn. */
+  interactionId?: string | null
+  /**
+   * Intent class from the route's `classifyIntent`. Used by the Thompson
+   * tool bandit to rank tools by per-tenant priors. Optional so workflow
+   * callers without an intent classification still work.
+   */
+  intentClass?: string | null
+}): Promise<Record<string, Tool>> {
+  registerBuiltinToolHandlers()
+
+  const { tools, loaded } = await loadToolsForAgent({
+    supabase: opts.supabase,
+    tenantId: opts.tenantId,
+    repId: opts.repId,
+    userId: opts.userId,
+    role: opts.role,
+    activeUrn: opts.activeUrn ?? null,
+    interactionId: opts.interactionId ?? null,
+  })
+
+  const baseTools =
+    loaded.length > 0
+      ? tools
+      : // Fallback: nothing in registry for this (tenant, role). Use the static
+        // factory so the agent still works on a greenfield tenant before
+        // `scripts/seed-tools.ts` has run. CRITICAL: we wrap the same middleware
+        // chain around the static tools so the harness contract holds —
+        // citations, write-approval, telemetry, connector freshness all run
+        // regardless of which path served the tool.
+        (() => {
+          console.warn(
+            `[tools] tool_registry empty for tenant=${opts.tenantId} role=${opts.role}; falling back to harnessed static factory for agentType=${opts.agentType}`,
+          )
+          return wrapStaticToolsWithMiddleware(
+            createAgentTools(opts.tenantId, opts.repId, opts.agentType),
+            {
+              supabase: opts.supabase,
+              tenantId: opts.tenantId,
+              repId: opts.repId,
+              userId: opts.userId,
+              role: opts.role,
+              activeUrn: opts.activeUrn ?? null,
+              interactionId: opts.interactionId ?? null,
+            },
+          )
+        })()
+
+  // Apply bandit ranking when we have an intent class. The model sees tools
+  // in the resulting iteration order; for ambiguous prompts it tends to
+  // prefer earlier-listed tools, biasing toward tools that have worked for
+  // this tenant on this intent class. Failure here never blocks tool
+  // availability — fall back to insertion order on error.
+  if (opts.intentClass) {
+    try {
+      const ranked = await rankToolsByBandit(
+        opts.supabase,
+        opts.tenantId,
+        opts.intentClass,
+        Object.keys(baseTools),
+      )
+      const reordered: Record<string, Tool> = {}
+      for (const slug of ranked) {
+        if (baseTools[slug]) reordered[slug] = baseTools[slug]
+      }
+      // Append any tool the bandit forgot (defensive).
+      for (const [slug, t] of Object.entries(baseTools)) {
+        if (!reordered[slug]) reordered[slug] = t
+      }
+      return reordered
+    } catch (err) {
+      console.warn('[tools] bandit ranking failed, using insertion order:', err)
+    }
+  }
+
+  return baseTools
+}
+
+// --------------------------------------------------------------------------
+// Middleware wrapper for the static fallback path
+// --------------------------------------------------------------------------
+
+interface WrapStaticOpts {
+  supabase: SupabaseClient
+  tenantId: string
+  repId: string
+  userId: string
+  role: AgentRole
+  activeUrn: string | null
+  interactionId: string | null
+}
+
+/**
+ * The static factory returns AI-SDK `Tool` instances directly (with bound
+ * execute functions). The registry path runs them through the middleware
+ * chain in `tool-loader.ts`. Without this wrapper, fallback tools bypass
+ * citation enforcement, write-approval, and telemetry — a silent harness
+ * bypass that violates MISSION's Tier 2 contract. We synthesize a minimal
+ * `ToolRegistryRow` per slug so the same middlewares can run.
+ */
+function wrapStaticToolsWithMiddleware(
+  toolMap: Record<string, Tool>,
+  opts: WrapStaticOpts,
+): Record<string, Tool> {
+  const wrapped: Record<string, Tool> = {}
+
+  for (const [slug, t] of Object.entries(toolMap)) {
+    const inner = t as Tool & {
+      execute?: (args: unknown) => Promise<unknown>
+      parameters?: unknown
+      description?: string
+    }
+
+    if (typeof inner.execute !== 'function') {
+      // Pass through anything we can't wrap (no execute = no harness needed).
+      wrapped[slug] = t
+      continue
+    }
+
+    const synthesizedRow: ToolRegistryRow = {
+      slug,
+      display_name: slug,
+      description: inner.description ?? slug,
+      available_to_roles: [],
+      enabled: true,
+      is_builtin: true,
+      tool_type: 'builtin',
+      execution_config: { handler: slug },
+      citation_config: null,
+    }
+
+    const ctx: ToolMiddlewareCtx = {
+      slug,
+      tenantId: opts.tenantId,
+      repId: opts.repId,
+      userId: opts.userId,
+      role: opts.role,
+      activeUrn: opts.activeUrn,
+      supabase: opts.supabase,
+      registryRow: synthesizedRow,
+      interactionId: opts.interactionId,
+    }
+
+    const originalExecute = inner.execute.bind(inner)
+    const wrappedExecute = withMiddleware(originalExecute, ctx, DEFAULT_MIDDLEWARE)
+
+    wrapped[slug] = tool({
+      description: inner.description ?? slug,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      parameters: inner.parameters as any,
+      execute: async (args: unknown) => {
+        try {
+          return ((await wrappedExecute(args)) ?? {}) as Record<string, unknown>
+        } catch (err) {
+          return {
+            error:
+              err instanceof Error ? err.message : 'tool_execution_failed',
+          }
+        }
+      },
+    })
+  }
+
+  return wrapped
+}
+
+export {
+  createPipelineCoachTools,
+  createAccountStrategistTools,
+  createLeadershipLensTools,
+  createOnboardingTools,
 }
