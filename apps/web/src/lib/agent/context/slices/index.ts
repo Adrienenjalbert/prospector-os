@@ -9,6 +9,7 @@ import { transcriptSummariesSlice } from './transcript-summaries'
 import { keyContactNotesSlice } from './key-contact-notes'
 import { repSuccessFingerprintSlice } from './rep-success-fingerprint'
 import { championMapSlice } from './champion-map'
+import { championAlumniSlice } from './champion-alumni-opportunities'
 
 /**
  * Single source of truth for every slice in the pack. Adding a new slice =
@@ -30,6 +31,7 @@ export const SLICES: Record<string, ContextSlice<unknown>> = {
   [keyContactNotesSlice.slug]: keyContactNotesSlice as ContextSlice<unknown>,
   [repSuccessFingerprintSlice.slug]: repSuccessFingerprintSlice as ContextSlice<unknown>,
   [championMapSlice.slug]: championMapSlice as ContextSlice<unknown>,
+  [championAlumniSlice.slug]: championAlumniSlice as ContextSlice<unknown>,
 }
 
 export const SLICE_SLUGS = Object.keys(SLICES) as readonly string[]
@@ -61,6 +63,7 @@ export const STRATEGY_BUNDLES: Record<
     'key-contact-notes',
     'rep-success-fingerprint',
     'champion-map',
+    'champion-alumni-opportunities',
   ],
   account_centric: [
     'current-company-snapshot',
@@ -71,6 +74,7 @@ export const STRATEGY_BUNDLES: Record<
     'key-contact-notes',
     'priority-accounts',
     'rep-success-fingerprint',
+    'champion-alumni-opportunities',
   ],
   portfolio_centric: [
     'priority-accounts',
@@ -80,6 +84,7 @@ export const STRATEGY_BUNDLES: Record<
     'key-contact-notes',
     'funnel-comparison',
     'rep-success-fingerprint',
+    'champion-alumni-opportunities',
   ],
   team_centric: [
     'funnel-comparison',
@@ -99,4 +104,5 @@ export {
   keyContactNotesSlice,
   repSuccessFingerprintSlice,
   championMapSlice,
+  championAlumniSlice,
 }

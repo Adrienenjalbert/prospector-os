@@ -6,6 +6,7 @@ import { createLeadershipLensTools } from '../agents/leadership-lens'
 import { createOnboardingTools } from '../agents/onboarding'
 import { consultFrameworkHandler } from './handlers/consult-framework'
 import { hydrateContextHandler } from './handlers/hydrate-context'
+import { draftAlumniIntroHandler } from './handlers/draft-alumni-intro'
 
 /**
  * Bridge between the tool_registry (DB) and the existing tool factories.
@@ -142,4 +143,5 @@ export function registerBuiltinToolHandlers(): void {
   // agent system can lean on. Add new ones here, not in SLUG_TO_FACTORY.
   registerToolHandler(consultFrameworkHandler)
   registerToolHandler(hydrateContextHandler)
+  registerToolHandler(draftAlumniIntroHandler)
 }

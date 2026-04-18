@@ -246,6 +246,22 @@ const EXTRACTORS: Record<string, Extractor> = {
       })
     }
   },
+
+  // Champion alumni intro drafter — same shape as hydrate_context: tool
+  // returns pre-built citations spanning contact + original company +
+  // original deal + new company. Pass through to the collector.
+  draft_alumni_intro: (ctx, r) => {
+    for (const c of asRows(r.citations)) {
+      const claim = str(c, 'claim_text')
+      if (!claim) continue
+      ctx.collector.addCitation({
+        claim_text: claim,
+        source_type: str(c, 'source_type') ?? 'unknown',
+        source_id: str(c, 'source_id'),
+        source_url: str(c, 'source_url'),
+      })
+    }
+  },
 }
 
 export function recordCitationsFromToolResult(

@@ -18,6 +18,7 @@ import {
   runSelfImprove,
   runAttribution,
   runContextSliceCalibration,
+  runChampionAlumniDetector,
   type WorkflowRunRow,
 } from '@/lib/workflows'
 
@@ -76,6 +77,9 @@ export async function GET(req: Request) {
             break
           case 'context_slice_calibration':
             await runContextSliceCalibration(supabase, row.id)
+            break
+          case 'champion_alumni_detector':
+            await runChampionAlumniDetector(supabase, row.id)
             break
           default:
             console.warn(

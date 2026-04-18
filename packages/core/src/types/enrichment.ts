@@ -53,6 +53,19 @@ export interface ContactSearchFilters {
   limit?: number
 }
 
+/**
+ * Result shape for enrichPerson(email) — single-contact refresh that
+ * preserves the *current* employer (organization name + domain) so the
+ * Champion Alumni detector can spot job changes between runs. Reuses
+ * the ContactEnrichmentResult fields and adds current_organization.
+ */
+export interface PersonEnrichmentResult extends ContactEnrichmentResult {
+  current_organization: {
+    name: string | null
+    domain: string | null
+  } | null
+}
+
 export interface JobPosting {
   title: string
   location: string | null

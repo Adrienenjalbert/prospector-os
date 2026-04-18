@@ -487,7 +487,7 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     slug: 'hydrate_context',
     display_name: 'Hydrate Context Slice',
     description:
-      'On-demand load of one Context Pack slice — priority-accounts, stalled-deals, funnel-comparison, recent-signals, current-deal-health, current-company-snapshot, transcript-summaries, key-contact-notes, rep-success-fingerprint, champion-map. Use when the per-turn context is missing the slice you need (different intent than detected, follow-up question shifts focus, or you want to re-anchor on a different account/deal). Returns the rendered slice markdown plus URN-cited rows so the citation pill links the user to the source.',
+      'On-demand load of one Context Pack slice — priority-accounts, stalled-deals, funnel-comparison, recent-signals, current-deal-health, current-company-snapshot, transcript-summaries, key-contact-notes, rep-success-fingerprint, champion-map, champion-alumni-opportunities. Use when the per-turn context is missing the slice you need (different intent than detected, follow-up question shifts focus, or you want to re-anchor on a different account/deal). Returns the rendered slice markdown plus URN-cited rows so the citation pill links the user to the source.',
     category: 'data_query',
     tool_type: 'builtin',
     execution_config: { handler: 'hydrate_context' },
@@ -507,6 +507,7 @@ const BUILTIN_TOOLS: ToolSeed[] = [
             'key-contact-notes',
             'rep-success-fingerprint',
             'champion-map',
+            'champion-alumni-opportunities',
           ],
           description: 'Slice slug to load.',
         },
@@ -523,6 +524,32 @@ const BUILTIN_TOOLS: ToolSeed[] = [
       required: ['slice'],
     },
     available_to_roles: ['nae', 'ae', 'growth_ae', 'ad', 'csm', 'leader'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'draft_alumni_intro',
+    display_name: 'Draft Champion-Alumni Intro',
+    description:
+      "Pulls the context needed to draft a warm-intro outreach to a former champion who has moved to a new company. Pairs with the champion-alumni-opportunities slice and the champion_alumni signal_type. Use whenever the agent surfaces an alumni opportunity OR the rep explicitly asks 'draft a warm intro to X who moved to Y'. Returns original deal context, new company snapshot, talking points, and a suggested framework. The agent then composes the actual outreach in its response — does NOT send anything; the rep approves and sends manually.",
+    category: 'generation',
+    tool_type: 'builtin',
+    execution_config: { handler: 'draft_alumni_intro' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        contact_urn: {
+          type: 'string',
+          description: 'URN of the former champion (e.g. urn:rev:contact:abc).',
+        },
+        new_company_urn: {
+          type: 'string',
+          description: "URN of the contact's new company (e.g. urn:rev:company:xyz).",
+        },
+      },
+      required: ['contact_urn', 'new_company_urn'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad'],
     is_builtin: true,
     enabled: true,
   },
@@ -677,6 +704,7 @@ export async function seedIndeedFlexProfile(
             'draft_outreach',
             'consult_sales_framework',
             'hydrate_context',
+            'draft_alumni_intro',
           ],
         },
         {
@@ -697,6 +725,7 @@ export async function seedIndeedFlexProfile(
             'draft_meeting_brief',
             'consult_sales_framework',
             'hydrate_context',
+            'draft_alumni_intro',
           ],
         },
         {
@@ -712,6 +741,7 @@ export async function seedIndeedFlexProfile(
             'explain_score',
             'consult_sales_framework',
             'hydrate_context',
+            'draft_alumni_intro',
           ],
         },
         {
@@ -732,6 +762,7 @@ export async function seedIndeedFlexProfile(
             'funnel_divergence',
             'consult_sales_framework',
             'hydrate_context',
+            'draft_alumni_intro',
           ],
         },
         {
@@ -748,6 +779,7 @@ export async function seedIndeedFlexProfile(
             'get_funnel_benchmarks',
             'consult_sales_framework',
             'hydrate_context',
+            'draft_alumni_intro',
           ],
         },
         {
@@ -765,6 +797,7 @@ export async function seedIndeedFlexProfile(
             'draft_outreach',
             'consult_sales_framework',
             'hydrate_context',
+            'draft_alumni_intro',
           ],
         },
       ],

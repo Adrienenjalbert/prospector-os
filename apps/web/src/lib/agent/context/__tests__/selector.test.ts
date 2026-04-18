@@ -255,6 +255,15 @@ describe('slice registry sanity', () => {
     expect(SLICES['rep-success-fingerprint']).toBeDefined()
     expect(SLICES['champion-map']).toBeDefined()
   })
+
+  it('Phase 3.5 champion-alumni slice is registered and triggers on the right intents', () => {
+    const slice = SLICES['champion-alumni-opportunities']
+    expect(slice).toBeDefined()
+    expect(slice?.triggers.signalTypes).toContain('champion_alumni')
+    // Surface for AE/NAE — the pipeline-builder roles
+    expect(slice?.triggers.roles).toContain('ae')
+    expect(slice?.triggers.roles).toContain('nae')
+  })
 })
 
 describe('Phase 2 slice triggers', () => {

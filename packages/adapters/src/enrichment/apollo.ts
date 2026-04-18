@@ -5,9 +5,21 @@ import type {
   JobPosting,
   ApolloOrganizationResponse,
   ApolloPersonResponse,
+  PersonEnrichmentResult,
 } from '@prospector/core'
 import type { EnrichmentProvider } from './interface'
 import { normalizeIndustry } from './normalizers/industry-map'
+
+/** Pull a hostname out of a website URL — best-effort, returns null on parse fail. */
+function extractDomain(website: string | null | undefined): string | null {
+  if (!website) return null
+  try {
+    const url = website.startsWith('http') ? website : `https://${website}`
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] || null
+  }
+}
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1'
 const RATE_LIMIT_MS = 600 // ~100 requests/minute
@@ -190,6 +202,66 @@ export class ApolloAdapter implements EnrichmentProvider {
         keywords: tempKeywords.filter((kw) => title.toLowerCase().includes(kw)),
       }
     })
+  }
+
+  /**
+   * Single-contact refresh by email — used by the Champion Alumni
+   * Tracker to detect when a previously-known champion has moved to a
+   * new company. Apollo's `/people/match` endpoint returns the
+   * person's *current* organization (name + domain) along with
+   * employment history, which is exactly what the detector needs to
+   * compare against last-known employer.
+   *
+   * Returns null when Apollo can't match the email — common for
+   * personal addresses or stale contacts. The detector treats null as
+   * "no signal", not an error.
+   */
+  async enrichPerson(email: string): Promise<PersonEnrichmentResult | null> {
+    if (!email) return null
+    await this.throttle()
+
+    const res = await fetch(`${APOLLO_BASE}/people/match`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ email, reveal_personal_emails: false }),
+    })
+    if (!res.ok) {
+      // 404 / 422 means no match — silent, the detector will skip.
+      if (res.status === 404 || res.status === 422) return null
+      throw new Error(`Apollo enrichPerson failed: ${res.status}`)
+    }
+    const data = await res.json()
+    const p = data.person as ApolloPersonResponse | undefined
+    if (!p) return null
+
+    const org = (p as unknown as { organization?: { name?: string; primary_domain?: string; website_url?: string } }).organization
+
+    return {
+      email: p.email ?? null,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      title: p.title ?? null,
+      seniority: normalizeSeniority(p.seniority),
+      department: p.departments?.[0] ?? null,
+      phone: p.phone_numbers?.[0]?.raw_number ?? null,
+      linkedin_url: p.linkedin_url ?? null,
+      apollo_id: p.id ?? null,
+      photo_url: p.photo_url ?? null,
+      twitter_url: p.twitter_url ?? null,
+      city: p.city ?? null,
+      country: p.country ?? null,
+      alma_mater: p.education?.[0]?.school_name ?? null,
+      previous_companies: (p.employment_history ?? [])
+        .map((e) => e.organization_name)
+        .filter(Boolean)
+        .slice(0, 5),
+      current_organization: org
+        ? {
+            name: org.name ?? null,
+            domain: org.primary_domain ?? extractDomain(org.website_url ?? null),
+          }
+        : null,
+    }
   }
 
   private headers(): Record<string, string> {

@@ -13,6 +13,7 @@ import {
   enqueueSelfImprove,
   enqueueAttribution,
   enqueueContextSliceCalibration,
+  enqueueChampionAlumniDetector,
 } from '@/lib/workflows'
 
 /**
@@ -50,7 +51,13 @@ export async function GET(req: Request) {
         // bandit priors that the selector reads on the next turn. Daily
         // cadence with a 3-day look-back window for resilience to slip.
         await enqueueContextSliceCalibration(supabase, tenant.id)
-        enqueued += 7
+        // Champion alumni detector (Phase 3.5) — refreshes won-deal
+        // champions via Apollo, emits champion_alumni signals when they
+        // turn up at a new company in the tenant's CRM. Generates net-
+        // new pipeline from the existing contacts.previous_companies
+        // data that no other caller touches.
+        await enqueueChampionAlumniDetector(supabase, tenant.id)
+        enqueued += 8
       } catch (err) {
         console.warn(`[cron/learning] tenant ${tenant.id} enqueue failed:`, err)
       }
