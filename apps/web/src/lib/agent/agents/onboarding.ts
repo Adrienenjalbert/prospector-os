@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { tool } from 'ai'
 import { getServiceSupabase } from '../tools/shared'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
+import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import {
   loadBusinessProfile,
   formatAgentHeader,
@@ -9,9 +10,28 @@ import {
   commonBehaviourRules,
 } from './_shared'
 
-function decryptCredentials(encrypted: unknown): Record<string, string> {
-  if (!encrypted || typeof encrypted !== 'object') return {}
-  return encrypted as Record<string, string>
+/**
+ * Resolve the CRM credentials column into a plain object.
+ *
+ * This is a known production failure mode the previous onboarding agent
+ * stub silently triggered: `crm_credentials_encrypted` is a string
+ * (AES-256-GCM ciphertext from `lib/crypto.ts`) when
+ * `CREDENTIALS_ENCRYPTION_KEY` is set — the previous helper just
+ * returned `{}` for strings, so every CRM tool call below ("explore
+ * fields", "analyze accounts", etc.) ran against `null` adapter and
+ * answered "No CRM connected" even after the user had completed the
+ * onboarding wizard.
+ *
+ * Same pattern as `lib/onboarding/hubspot-webhooks.ts` and the cron
+ * sync route — single source of truth lives in `lib/crypto.ts`.
+ */
+function resolveCrmCredentials(raw: unknown): Record<string, string> {
+  if (!raw) return {}
+  if (isEncryptedString(raw)) {
+    return decryptCredentials(raw) as Record<string, string>
+  }
+  if (typeof raw === 'object') return raw as Record<string, string>
+  return {}
 }
 
 async function getCrmAdapter(supabase: ReturnType<typeof getServiceSupabase>, tenantId: string) {
@@ -23,7 +43,7 @@ async function getCrmAdapter(supabase: ReturnType<typeof getServiceSupabase>, te
 
   if (!tenant?.crm_credentials_encrypted) return null
 
-  const creds = decryptCredentials(tenant.crm_credentials_encrypted)
+  const creds = resolveCrmCredentials(tenant.crm_credentials_encrypted)
 
   if (tenant.crm_type === 'hubspot' && creds.private_app_token) {
     return {

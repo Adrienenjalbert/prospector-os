@@ -73,11 +73,20 @@ export default function OnboardingWizard() {
   const [funnelAccepted, setFunnelAccepted] = useState<Record<string, boolean>>({});
   const [stageDays, setStageDays] = useState<Record<string, number>>({});
 
-  // Preferences state
-  const [role, setRole] = useState("rep");
-  const [alertFreq, setAlertFreq] = useState("medium");
-  const [commStyle, setCommStyle] = useState("brief");
-  const [outreachTone, setOutreachTone] = useState("consultative");
+  // Preferences state — narrow to the enum values the saveOnboardingPreferences
+  // server action accepts (it Zod-validates the payload). Without narrowing
+  // here, the wizard could pass a typo (e.g. "very_high") and the validation
+  // error would only surface on submit; this way TS catches it at the
+  // <select> level when we type-check.
+  type RoleValue = 'rep' | 'csm' | 'ad' | 'manager' | 'revops' | 'admin'
+  type AlertFreqValue = 'high' | 'medium' | 'low'
+  type CommStyleValue = 'formal' | 'casual' | 'brief'
+  type OutreachToneValue = 'professional' | 'consultative' | 'direct' | 'warm' | 'executive'
+
+  const [role, setRole] = useState<RoleValue>("rep");
+  const [alertFreq, setAlertFreq] = useState<AlertFreqValue>("medium");
+  const [commStyle, setCommStyle] = useState<CommStyleValue>("brief");
+  const [outreachTone, setOutreachTone] = useState<OutreachToneValue>("consultative");
   const [focusStage, setFocusStage] = useState("");
   const [slackId, setSlackId] = useState("");
   const [savingPrefs, setSavingPrefs] = useState(false);
@@ -186,19 +195,32 @@ export default function OnboardingWizard() {
     setStepId("preferences");
   }, [funnelProposal, funnelAccepted, stageDays]);
 
+  const [prefsError, setPrefsError] = useState<string | null>(null);
+
   const handleFinish = useCallback(async () => {
     setSavingPrefs(true);
+    setPrefsError(null);
     try {
+      // saveOnboardingPreferences Zod-validates the slack_user_id format
+      // (`^[UW][A-Z0-9]+$`). Catch the parse error and surface a usable
+      // message instead of an opaque thrown ZodError stack trace.
       await saveOnboardingPreferences({
         alert_frequency: alertFreq,
         comm_style: commStyle,
         focus_stage: focusStage || null,
         role,
-        slack_user_id: slackId || null,
+        slack_user_id: slackId.trim() ? slackId.trim() : null,
         outreach_tone: outreachTone,
       });
       router.push("/inbox");
       router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not save preferences';
+      setPrefsError(
+        /slack/i.test(msg)
+          ? 'Slack user IDs look like U01ABCDEF — the one you entered does not match. Leave it blank to skip.'
+          : msg,
+      );
     } finally {
       setSavingPrefs(false);
     }
@@ -282,6 +304,7 @@ export default function OnboardingWizard() {
               slackId={slackId}
               setSlackId={setSlackId}
               saving={savingPrefs}
+              error={prefsError}
               onBack={() => setStepId("funnel")}
               onFinish={handleFinish}
             />
@@ -910,20 +933,29 @@ function StageCard({
 
 // ── Step 6: Preferences ──────────────────────────────────────────────────
 
+// Mirror the narrowed enum unions defined on the wizard's parent state.
+// Keeping these inline (vs. exported from a types file) because the shape
+// is local to this file and nothing else needs to import it.
+type PreferencesRole = 'rep' | 'csm' | 'ad' | 'manager' | 'revops' | 'admin'
+type PreferencesAlertFreq = 'high' | 'medium' | 'low'
+type PreferencesCommStyle = 'formal' | 'casual' | 'brief'
+type PreferencesOutreachTone = 'professional' | 'consultative' | 'direct' | 'warm' | 'executive'
+
 interface PreferencesStepProps {
-  role: string;
-  setRole: (v: string) => void;
-  alertFreq: string;
-  setAlertFreq: (v: string) => void;
-  commStyle: string;
-  setCommStyle: (v: string) => void;
-  outreachTone: string;
-  setOutreachTone: (v: string) => void;
+  role: PreferencesRole;
+  setRole: (v: PreferencesRole) => void;
+  alertFreq: PreferencesAlertFreq;
+  setAlertFreq: (v: PreferencesAlertFreq) => void;
+  commStyle: PreferencesCommStyle;
+  setCommStyle: (v: PreferencesCommStyle) => void;
+  outreachTone: PreferencesOutreachTone;
+  setOutreachTone: (v: PreferencesOutreachTone) => void;
   focusStage: string;
   setFocusStage: (v: string) => void;
   slackId: string;
   setSlackId: (v: string) => void;
   saving: boolean;
+  error: string | null;
   onBack: () => void;
   onFinish: () => void;
 }
@@ -939,7 +971,7 @@ function PreferencesStep(p: PreferencesStepProps) {
         <Field label="Your role" hint="Determines which dashboards and skills you see by default.">
           <select
             value={p.role}
-            onChange={(e) => p.setRole(e.target.value)}
+            onChange={(e) => p.setRole(e.target.value as PreferencesRole)}
             className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-violet-500 focus:outline-none"
           >
             <option value="rep">Account Executive (AE)</option>
@@ -955,7 +987,7 @@ function PreferencesStep(p: PreferencesStepProps) {
           <Field label="Alert frequency" hint="How often should we ping you?">
             <select
               value={p.alertFreq}
-              onChange={(e) => p.setAlertFreq(e.target.value)}
+              onChange={(e) => p.setAlertFreq(e.target.value as PreferencesAlertFreq)}
               className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-violet-500 focus:outline-none"
             >
               <option value="high">High — every signal and stall</option>
@@ -966,7 +998,7 @@ function PreferencesStep(p: PreferencesStepProps) {
           <Field label="Communication style" hint="How the assistant talks to you.">
             <select
               value={p.commStyle}
-              onChange={(e) => p.setCommStyle(e.target.value)}
+              onChange={(e) => p.setCommStyle(e.target.value as PreferencesCommStyle)}
               className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-violet-500 focus:outline-none"
             >
               <option value="brief">Brief and direct</option>
@@ -980,9 +1012,11 @@ function PreferencesStep(p: PreferencesStepProps) {
           <Field label="Outreach tone" hint="Default voice for drafted messages.">
             <select
               value={p.outreachTone}
-              onChange={(e) => p.setOutreachTone(e.target.value)}
+              onChange={(e) => p.setOutreachTone(e.target.value as PreferencesOutreachTone)}
               className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-violet-500 focus:outline-none"
             >
+              {/* Match the OutreachTone enum in saveOnboardingPreferences */}
+              <option value="professional">Professional</option>
               <option value="consultative">Consultative</option>
               <option value="direct">Direct</option>
               <option value="warm">Warm</option>
@@ -1006,7 +1040,7 @@ function PreferencesStep(p: PreferencesStepProps) {
 
         <Field
           label="Slack user ID (optional)"
-          hint="We'll DM you alerts and briefs here if set."
+          hint="We'll DM you alerts and briefs here if set. Find it in Slack: profile → ⋮ → Copy member ID."
         >
           <input
             value={p.slackId}
@@ -1015,6 +1049,16 @@ function PreferencesStep(p: PreferencesStepProps) {
             className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 focus:border-violet-500 focus:outline-none"
           />
         </Field>
+
+        {p.error && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="rounded-md border border-rose-800/40 bg-rose-950/30 px-3 py-2 text-sm text-rose-200"
+          >
+            {p.error}
+          </div>
+        )}
       </div>
       <StepFooter
         onBack={p.onBack}

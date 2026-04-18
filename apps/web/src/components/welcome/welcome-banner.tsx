@@ -28,11 +28,28 @@ async function loadState(): Promise<WelcomeState> {
 
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('tenant_id, full_name')
+      .select('tenant_id, full_name, rep_profile_id')
       .eq('id', user.id)
       .single()
     if (!profile?.tenant_id) {
       return { show: false, hasBaseline: false, hasInteractions: false, hasCompanies: false, userName: null }
+    }
+
+    // The agent route writes `agent_interaction_outcomes.rep_crm_id`
+    // as `rep_profile.crm_id ?? user.id` (see apps/web/src/app/api/agent/route.ts).
+    // The previous query here only filtered by `user.id`, so for any
+    // tenant whose users had a populated `crm_id` (i.e. every real
+    // tenant), the count was always 0 and the welcome banner would
+    // never dismiss. We mirror the agent route's resolution: prefer
+    // the rep's crm_id, fall back to user.id.
+    let interactionRepId: string = user.id
+    if (profile.rep_profile_id) {
+      const { data: rep } = await supabase
+        .from('rep_profiles')
+        .select('crm_id')
+        .eq('id', profile.rep_profile_id)
+        .single()
+      if (rep?.crm_id) interactionRepId = rep.crm_id as string
     }
 
     const [baseline, interactions, companies] = await Promise.all([
@@ -41,7 +58,7 @@ async function loadState(): Promise<WelcomeState> {
         .from('agent_interaction_outcomes')
         .select('id', { count: 'exact', head: true })
         .eq('tenant_id', profile.tenant_id)
-        .eq('rep_crm_id', user.id),
+        .eq('rep_crm_id', interactionRepId),
       supabase
         .from('companies')
         .select('id', { count: 'exact', head: true })

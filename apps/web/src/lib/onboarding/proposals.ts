@@ -16,6 +16,13 @@ export interface CompanyForAnalysis {
 
 export interface OpportunityForAnalysis {
   stage?: string | null
+  // Pipeline order from the CRM. Salesforce + HubSpot both expose this
+  // (Salesforce: `OpportunityStage.SortOrder`; HubSpot: `dealstage`
+  // pipeline position). When present, we use it to order funnel stages
+  // in the proposal so "Lead → Qualified → Proposal → Negotiation"
+  // appears in the right order even when dictionary iteration would
+  // shuffle them. Falls back to first-observed order when missing.
+  stage_order?: number | null
   days_in_stage?: number | null
   is_won?: boolean | null
   is_closed?: boolean | null
@@ -194,10 +201,38 @@ export function buildFunnelProposal(
     return { source: 'default', config: buildDefaultFunnelConfig() }
   }
 
-  const stages = [...new Set(opps.map((o) => o.stage).filter(Boolean))] as string[]
-  if (stages.length === 0) {
+  // First pass: collect every distinct stage and remember the smallest
+  // `stage_order` we observed for each. CRM-driven order is the source
+  // of truth — when missing, we fall back to first-observed order via
+  // a synthetic monotonic counter so the output is at least stable
+  // across runs (vs. relying on Set iteration order which depends on
+  // input order from Postgres).
+  const stageOrders = new Map<string, number>()
+  let firstSeenCounter = 0
+  for (const o of opps) {
+    if (!o.stage) continue
+    if (!stageOrders.has(o.stage)) {
+      stageOrders.set(
+        o.stage,
+        typeof o.stage_order === 'number' ? o.stage_order : 1000 + firstSeenCounter++,
+      )
+    } else if (typeof o.stage_order === 'number') {
+      // Prefer the lowest CRM-supplied order if multiple opps disagree.
+      const prev = stageOrders.get(o.stage)!
+      stageOrders.set(o.stage, Math.min(prev, o.stage_order))
+    }
+  }
+
+  if (stageOrders.size === 0) {
     return { source: 'default', config: buildDefaultFunnelConfig() }
   }
+
+  // Sort stages by their CRM (or fallback) order before generating
+  // configs — gives the wizard a sensible top-to-bottom presentation
+  // and downstream funnel queries a stable `order` field.
+  const stages = [...stageOrders.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .map(([name]) => name)
 
   const stageMap: Record<string, { count: number; days: number[] }> = {}
   for (const stage of stages) {

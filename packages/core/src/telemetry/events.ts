@@ -46,6 +46,24 @@ export type AgentEventType =
   // the failure mode where an agent silently runs with a subset of its
   // configured toolset.
   | 'tool_registry_drift'
+  // Onboarding lifecycle events. Emitted by the wizard's server actions
+  // in `apps/web/src/app/actions/onboarding.ts` and the baseline
+  // survey at `apps/web/src/app/actions/baseline-survey.ts`. Without
+  // these, operators have no way to measure completion rate per step,
+  // time-to-first-cited-answer, or where users drop off the funnel.
+  // Payload conventions:
+  //   onboarding_step_completed: { step: 'welcome' | 'crm' | 'sync' | ... }
+  //   crm_connected: { crm_type: 'hubspot' | 'salesforce', webhook_subscribed: boolean }
+  //   onboarding_proposals_loaded: { icp_source: 'derived'|'default', funnel_source, won_deals }
+  //   onboarding_config_applied: { kind: 'icp' | 'funnel' }
+  //   onboarding_completed: { duration_ms?, completed_steps[] }
+  //   baseline_submitted: { task_count }
+  | 'onboarding_step_completed'
+  | 'crm_connected'
+  | 'onboarding_proposals_loaded'
+  | 'onboarding_config_applied'
+  | 'onboarding_completed'
+  | 'baseline_submitted'
   | 'error'
 
 /**

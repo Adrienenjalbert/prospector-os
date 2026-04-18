@@ -1,9 +1,12 @@
 'use server'
 
 import { headers } from 'next/headers'
+import { z } from 'zod'
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { getServiceSupabase } from '@/lib/cron-auth'
 import { encryptCredentials } from '@/lib/crypto'
+import { emitAgentEvent } from '@prospector/core'
+import { subscribeHubspotPropertyWebhooks } from '@/lib/onboarding/hubspot-webhooks'
 import {
   buildIcpProposal,
   buildFunnelProposal,
@@ -13,41 +16,188 @@ import {
   type FunnelProposal,
 } from '@/lib/onboarding/proposals'
 
-export type SaveCrmCredentialsInput = {
-  crm_type?: 'hubspot' | 'salesforce'
-  private_app_token?: string
-  client_id?: string
-  client_secret?: string
-  instance_url?: string
-}
+// =============================================================================
+// Validation schemas
+//
+// Every server action below parses its input with Zod before doing anything
+// else. Without this the wizard could write malformed credentials, partial
+// preferences, or runaway JSON into `tenants.icp_config` JSONB. The HubSpot
+// PAT pattern is from the HubSpot Private App docs (`pat-na1-…`); the
+// Salesforce instance URL must be a real https URL on a Salesforce-hosted
+// domain so a typo can't produce silent retry-storms against the wrong host.
+// =============================================================================
 
-export async function saveCrmCredentials(input: SaveCrmCredentialsInput) {
+const HUBSPOT_PAT_REGEX = /^pat-[a-z0-9]+-[a-z0-9-]{20,}$/i
+
+const SaveCrmCredentialsSchema = z.discriminatedUnion('crm_type', [
+  z.object({
+    crm_type: z.literal('hubspot'),
+    private_app_token: z
+      .string()
+      .min(20, 'HubSpot Private App token looks too short')
+      .regex(
+        HUBSPOT_PAT_REGEX,
+        'HubSpot Private App tokens start with `pat-` followed by hex segments',
+      ),
+  }),
+  z.object({
+    crm_type: z.literal('salesforce'),
+    client_id: z.string().min(10, 'Client ID is required'),
+    client_secret: z.string().min(10, 'Client secret is required'),
+    instance_url: z
+      .string()
+      .url('Instance URL must be a full https URL')
+      .regex(
+        /^https:\/\/[a-z0-9.-]+\.(my\.salesforce\.com|salesforce\.com|force\.com)\/?$/i,
+        'Instance URL must point at a Salesforce-hosted domain',
+      ),
+  }),
+])
+
+export type SaveCrmCredentialsInput = z.infer<typeof SaveCrmCredentialsSchema>
+
+const SavePreferencesSchema = z.object({
+  alert_frequency: z.enum(['high', 'medium', 'low']),
+  comm_style: z.enum(['formal', 'casual', 'brief']),
+  focus_stage: z.string().nullable(),
+  role: z.enum(['rep', 'csm', 'ad', 'manager', 'revops', 'admin']).optional(),
+  // Slack user IDs follow `U`/`W` + uppercase alphanumerics; `null` is the
+  // explicit "user opted out" signal so we store NULL rather than empty
+  // string and the dispatcher's `if (slack_user_id)` check is honest.
+  slack_user_id: z
+    .string()
+    .regex(/^[UW][A-Z0-9]+$/, 'Slack user IDs look like U01ABCDEF')
+    .nullable()
+    .optional(),
+  outreach_tone: z.enum(['professional', 'consultative', 'direct', 'warm', 'executive']).optional(),
+})
+
+export type SavePreferencesInput = z.infer<typeof SavePreferencesSchema>
+
+const IcpConfigSchema = z.object({
+  version: z.string().optional(),
+  dimensions: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        weight: z.number().min(0).max(1),
+        description: z.string().optional(),
+        scoring_tiers: z.array(z.unknown()).optional(),
+      }),
+    )
+    .min(1, 'ICP must have at least one dimension')
+    .refine(
+      // Weights must sum to 1.0 (within float tolerance). If a tenant
+      // accidentally writes weights that sum to 0.4 or 1.7, every
+      // priority score downstream is silently miscalibrated. Reject at
+      // the API instead of finding out 90 days later.
+      (dims) => {
+        const sum = dims.reduce((s, d) => s + d.weight, 0)
+        return Math.abs(sum - 1) < 0.001
+      },
+      { message: 'ICP dimension weights must sum to 1.0' },
+    ),
+  tier_thresholds: z.record(z.number()).optional(),
+}).passthrough()
+
+const FunnelConfigSchema = z.object({
+  stages: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        order: z.number().int().nonnegative(),
+        crm_field_value: z.string().optional(),
+        stage_type: z.enum(['active', 'closed_won', 'closed_lost']).optional(),
+        expected_velocity_days: z.number().nonnegative().optional(),
+        stall_multiplier: z.number().positive().optional(),
+        description: z.string().optional(),
+      }),
+    )
+    .min(1, 'Funnel must have at least one stage')
+    .refine(
+      // Stage names must be unique — duplicates produce ambiguous
+      // benchmark joins downstream and a confusing UI.
+      (stages) => new Set(stages.map((s) => s.name)).size === stages.length,
+      { message: 'Funnel stage names must be unique' },
+    ),
+  benchmark_config: z.unknown().optional(),
+  stall_config: z.unknown().optional(),
+}).passthrough()
+
+// =============================================================================
+// Shared helpers
+// =============================================================================
+
+async function requireProfile(): Promise<{ userId: string; tenantId: string; role: string | null }> {
   const supabase = await createSupabaseServer()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) {
-    throw new Error('Unauthorized')
-  }
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Unauthorized')
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('tenant_id')
+    .select('tenant_id, role')
     .eq('id', user.id)
     .single()
+  if (!profile?.tenant_id) throw new Error('No tenant')
 
-  if (!profile?.tenant_id) {
-    throw new Error('No tenant')
+  return {
+    userId: user.id,
+    tenantId: profile.tenant_id as string,
+    role: (profile as { role?: string | null }).role ?? null,
   }
+}
 
+/**
+ * Build the public-facing app URL the HubSpot webhook subscription
+ * needs as a callback. Falls back to the request host so dev (where
+ * NEXT_PUBLIC_APP_URL is `localhost:3000`) still works behind a tunnel.
+ * Returns null if no usable URL can be derived (in which case the
+ * caller MUST skip the subscribe step rather than register `localhost`
+ * with HubSpot).
+ */
+async function deriveCallbackUrl(): Promise<string | null> {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '')
+  if (envUrl && /^https?:\/\//.test(envUrl)) {
+    return `${envUrl}/api/webhooks/hubspot-properties`
+  }
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host')
+  const proto = h.get('x-forwarded-proto') ?? 'https'
+  if (!host) return null
+  // Skip localhost — HubSpot won't accept it as a webhook callback.
+  if (/localhost|127\.0\.0\.1/.test(host)) return null
+  return `${proto}://${host}/api/webhooks/hubspot-properties`
+}
+
+// =============================================================================
+// CRM credentials
+// =============================================================================
+
+export async function saveCrmCredentials(input: SaveCrmCredentialsInput) {
+  const parsed = SaveCrmCredentialsSchema.parse(input)
+  const { userId, tenantId } = await requireProfile()
   const admin = getServiceSupabase()
 
-  const crmType = input.crm_type ?? 'salesforce'
-  const rawCreds = crmType === 'hubspot'
-    ? { private_app_token: input.private_app_token }
-    : { client_id: input.client_id, client_secret: input.client_secret, instance_url: input.instance_url }
+  const rawCreds = parsed.crm_type === 'hubspot'
+    ? { private_app_token: parsed.private_app_token }
+    : {
+        client_id: parsed.client_id,
+        client_secret: parsed.client_secret,
+        instance_url: parsed.instance_url,
+      }
 
+  // Fail closed in production: writing CRM credentials as plaintext JSON
+  // into Postgres is a real security incident waiting to happen. The
+  // previous version silently fell through to a plaintext write when
+  // CREDENTIALS_ENCRYPTION_KEY was missing. We now require the key in
+  // every non-development environment.
   const hasEncryptionKey = !!process.env.CREDENTIALS_ENCRYPTION_KEY
+  if (!hasEncryptionKey && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Cannot store CRM credentials: CREDENTIALS_ENCRYPTION_KEY is not configured. ' +
+        'Generate one with `openssl rand -hex 32` and set it before retrying.',
+    )
+  }
   const credentialPayload = hasEncryptionKey
     ? encryptCredentials(rawCreds)
     : rawCreds
@@ -55,16 +205,62 @@ export async function saveCrmCredentials(input: SaveCrmCredentialsInput) {
   const { error } = await admin
     .from('tenants')
     .update({
-      crm_type: crmType,
+      crm_type: parsed.crm_type,
       crm_credentials_encrypted: credentialPayload,
     })
-    .eq('id', profile.tenant_id)
+    .eq('id', tenantId)
 
   if (error) {
     console.error('[onboarding] saveCrmCredentials', error)
     throw new Error(error.message)
   }
+
+  // For HubSpot tenants, register property-change webhook subscriptions
+  // so the agent's per-deal slices reflect CRM updates within seconds
+  // (vs. the 6h cron sync window). Best-effort — if the subscribe call
+  // fails (HubSpot down, callback URL unresolvable in dev), we don't
+  // block the wizard. The same function is exposed at
+  // /admin/connectors as a "resync" button for retry.
+  let webhookSubscribed = false
+  if (parsed.crm_type === 'hubspot') {
+    const callbackUrl = await deriveCallbackUrl()
+    if (callbackUrl) {
+      const sub = await subscribeHubspotPropertyWebhooks(admin, tenantId, callbackUrl)
+      webhookSubscribed = sub.ok
+      if (!sub.ok) {
+        console.warn('[onboarding] HubSpot webhook subscribe failed:', sub.error)
+      }
+    } else {
+      console.warn(
+        '[onboarding] Skipping HubSpot webhook subscribe: no public callback URL configured ' +
+          '(set NEXT_PUBLIC_APP_URL).',
+      )
+    }
+  }
+
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'crm_connected',
+    payload: {
+      crm_type: parsed.crm_type,
+      webhook_subscribed: webhookSubscribed,
+    },
+  })
+
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_step_completed',
+    payload: { step: 'crm' },
+  })
+
+  return { ok: true, webhook_subscribed: webhookSubscribed }
 }
+
+// =============================================================================
+// Sync pipeline (sync + enrich + score + signals)
+// =============================================================================
 
 export async function runCrmSyncFromOnboarding() {
   const h = await headers()
@@ -86,11 +282,41 @@ export async function runCrmSyncFromOnboarding() {
   return res.json() as Promise<{ message?: string; synced?: number; error?: string }>
 }
 
+interface PipelineStepResult {
+  ok: boolean
+  count?: number
+  error?: string
+}
+
+async function runPipelineStep(
+  baseUrl: string,
+  path: string,
+  authHeaders: Record<string, string>,
+  countField: 'synced' | 'enriched' | 'scored',
+): Promise<PipelineStepResult> {
+  try {
+    const res = await fetch(`${baseUrl}${path}`, { headers: authHeaders })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      return { ok: false, error: `${path} → ${res.status}: ${body.slice(0, 200)}` }
+    }
+    const data = (await res.json()) as Record<string, unknown>
+    const count = typeof data[countField] === 'number' ? (data[countField] as number) : 0
+    return { ok: true, count }
+  } catch (err) {
+    return {
+      ok: false,
+      error: `${path} → ${err instanceof Error ? err.message : 'fetch error'}`,
+    }
+  }
+}
+
 export async function runFullOnboardingPipeline(): Promise<{
   synced: number
   enriched: number
   scored: number
 }> {
+  const { userId, tenantId } = await requireProfile()
   const h = await headers()
   const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000'
   const proto = h.get('x-forwarded-proto') ?? 'http'
@@ -98,63 +324,72 @@ export async function runFullOnboardingPipeline(): Promise<{
   const authHeaders: Record<string, string> = cronSecret
     ? { Authorization: `Bearer ${cronSecret}` }
     : {}
-
   const baseUrl = `${proto}://${host}`
 
-  const syncRes = await fetch(`${baseUrl}/api/cron/sync`, { headers: authHeaders })
-  const syncData = syncRes.ok ? ((await syncRes.json()) as { synced?: number }) : { synced: 0 }
+  // Sync is the BLOCKER step — without it none of the others have data.
+  // Throw on failure so the wizard surfaces the error to the user
+  // instead of cheerfully reporting `synced: 0`.
+  const syncRes = await runPipelineStep(baseUrl, '/api/cron/sync', authHeaders, 'synced')
+  if (!syncRes.ok) {
+    throw new Error(`CRM sync failed: ${syncRes.error}`)
+  }
 
-  const enrichRes = await fetch(`${baseUrl}/api/cron/enrich`, { headers: authHeaders })
-  const enrichData = enrichRes.ok ? ((await enrichRes.json()) as { enriched?: number }) : { enriched: 0 }
+  // Enrich + score + signals are downstream — best-effort. Each of
+  // those routes runs nightly anyway; failing one in the wizard shouldn't
+  // block the user from continuing.
+  const enrichRes = await runPipelineStep(baseUrl, '/api/cron/enrich', authHeaders, 'enriched')
+  const scoreRes = await runPipelineStep(baseUrl, '/api/cron/score', authHeaders, 'scored')
+  await runPipelineStep(baseUrl, '/api/cron/signals', authHeaders, 'synced')
 
-  const scoreRes = await fetch(`${baseUrl}/api/cron/score`, { headers: authHeaders })
-  const scoreData = scoreRes.ok ? ((await scoreRes.json()) as { scored?: number }) : { scored: 0 }
-
-  await fetch(`${baseUrl}/api/cron/signals`, { headers: authHeaders }).catch(() => {})
+  const admin = getServiceSupabase()
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_step_completed',
+    payload: {
+      step: 'sync',
+      synced: syncRes.count ?? 0,
+      enriched: enrichRes.count ?? 0,
+      scored: scoreRes.count ?? 0,
+      enrich_error: enrichRes.ok ? undefined : enrichRes.error,
+      score_error: scoreRes.ok ? undefined : scoreRes.error,
+    },
+  })
 
   return {
-    synced: syncData.synced ?? 0,
-    enriched: enrichData.enriched ?? 0,
-    scored: scoreData.scored ?? 0,
+    synced: syncRes.count ?? 0,
+    enriched: enrichRes.count ?? 0,
+    scored: scoreRes.count ?? 0,
   }
 }
 
-export type SavePreferencesInput = {
-  alert_frequency: string
-  comm_style: string
-  focus_stage: string | null
-  role?: string
-  slack_user_id?: string | null
-  outreach_tone?: string
-}
+// =============================================================================
+// Preferences
+// =============================================================================
 
 export async function saveOnboardingPreferences(input: SavePreferencesInput) {
+  const parsed = SavePreferencesSchema.parse(input)
   const supabase = await createSupabaseServer()
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user) {
-    throw new Error('Unauthorized')
-  }
+  if (!user) throw new Error('Unauthorized')
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('rep_profile_id')
+    .select('tenant_id, rep_profile_id')
     .eq('id', user.id)
     .single()
-
-  if (!profile?.rep_profile_id) {
-    throw new Error('No rep profile')
-  }
+  if (!profile?.rep_profile_id) throw new Error('No rep profile')
 
   const repUpdate: Record<string, unknown> = {
-    alert_frequency: input.alert_frequency,
-    comm_style: input.comm_style,
-    focus_stage: input.focus_stage || null,
+    alert_frequency: parsed.alert_frequency,
+    comm_style: parsed.comm_style,
+    focus_stage: parsed.focus_stage || null,
   }
-  if (input.outreach_tone) repUpdate.outreach_tone = input.outreach_tone
-  if (input.slack_user_id !== undefined) {
-    repUpdate.slack_user_id = input.slack_user_id || null
+  if (parsed.outreach_tone) repUpdate.outreach_tone = parsed.outreach_tone
+  if (parsed.slack_user_id !== undefined) {
+    repUpdate.slack_user_id = parsed.slack_user_id || null
   }
 
   const { error } = await supabase
@@ -167,33 +402,36 @@ export async function saveOnboardingPreferences(input: SavePreferencesInput) {
     throw new Error(error.message)
   }
 
-  if (input.role) {
+  if (parsed.role) {
     const { error: roleErr } = await supabase
       .from('user_profiles')
-      .update({ role: input.role })
+      .update({ role: parsed.role })
       .eq('id', user.id)
     if (roleErr) {
       console.error('[onboarding] saveOnboardingPreferences (role)', roleErr)
     }
   }
+
+  if (profile.tenant_id) {
+    const admin = getServiceSupabase()
+    await emitAgentEvent(admin, {
+      tenant_id: profile.tenant_id as string,
+      user_id: user.id,
+      event_type: 'onboarding_step_completed',
+      payload: { step: 'preferences', role: parsed.role ?? null },
+    })
+    await emitAgentEvent(admin, {
+      tenant_id: profile.tenant_id as string,
+      user_id: user.id,
+      event_type: 'onboarding_completed',
+      payload: { final_role: parsed.role ?? null },
+    })
+  }
 }
 
-// ── Wizard server actions ────────────────────────────────────────────────
-
-async function getCurrentTenantId(): Promise<string> {
-  const supabase = await createSupabaseServer()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Unauthorized')
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('tenant_id')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.tenant_id) throw new Error('No tenant')
-  return profile.tenant_id
-}
+// =============================================================================
+// Wizard data + proposals
+// =============================================================================
 
 export interface SyncSummary {
   companies: number
@@ -201,12 +439,8 @@ export interface SyncSummary {
   contacts: number
 }
 
-/**
- * Used by the wizard's "Sync & Explore" step. Returns counts so the UI can
- * tell the user how much data was found (which informs the next two steps).
- */
 export async function getTenantDataSummary(): Promise<SyncSummary> {
-  const tenantId = await getCurrentTenantId()
+  const { tenantId } = await requireProfile()
   const admin = getServiceSupabase()
 
   const [companies, opps, contacts] = await Promise.all([
@@ -235,13 +469,13 @@ export async function getOnboardingProposals(): Promise<{
   icp: IcpProposal
   funnel: FunnelProposal
 }> {
-  const tenantId = await getCurrentTenantId()
+  const { userId, tenantId } = await requireProfile()
   const admin = getServiceSupabase()
 
   const [oppsRes, companiesRes, wonOppsRes] = await Promise.all([
     admin
       .from('opportunities')
-      .select('stage, days_in_stage, is_won, is_closed, value, company_id')
+      .select('stage, stage_order, days_in_stage, is_won, is_closed, value, company_id')
       .eq('tenant_id', tenantId),
     admin
       .from('companies')
@@ -274,15 +508,28 @@ export async function getOnboardingProposals(): Promise<{
   )
   const funnel = buildFunnelProposal(oppsRes.data ?? [])
 
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_proposals_loaded',
+    payload: {
+      icp_source: icp.source,
+      funnel_source: funnel.source,
+      won_deals: wonCompanies.length,
+      stages_found: funnel.analysis?.stages_found ?? 0,
+    },
+  })
+
   return { icp, funnel }
 }
 
 export async function applyIcpConfig(config: IcpConfig, note?: string) {
-  const tenantId = await getCurrentTenantId()
+  const parsed = IcpConfigSchema.parse(config)
+  const { userId, tenantId } = await requireProfile()
   const admin = getServiceSupabase()
 
   const stamped = {
-    ...(config as unknown as Record<string, unknown>),
+    ...(parsed as unknown as Record<string, unknown>),
     _updated_at: new Date().toISOString(),
     _updated_note: note ?? null,
   }
@@ -293,14 +540,28 @@ export async function applyIcpConfig(config: IcpConfig, note?: string) {
     .eq('id', tenantId)
 
   if (error) throw new Error(`Failed to save ICP config: ${error.message}`)
+
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_config_applied',
+    payload: { kind: 'icp', dimensions: parsed.dimensions.length },
+  })
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_step_completed',
+    payload: { step: 'icp' },
+  })
 }
 
 export async function applyFunnelConfig(config: FunnelConfig, note?: string) {
-  const tenantId = await getCurrentTenantId()
+  const parsed = FunnelConfigSchema.parse(config)
+  const { userId, tenantId } = await requireProfile()
   const admin = getServiceSupabase()
 
   const stamped = {
-    ...(config as unknown as Record<string, unknown>),
+    ...(parsed as unknown as Record<string, unknown>),
     _updated_at: new Date().toISOString(),
     _updated_note: note ?? null,
   }
@@ -311,4 +572,17 @@ export async function applyFunnelConfig(config: FunnelConfig, note?: string) {
     .eq('id', tenantId)
 
   if (error) throw new Error(`Failed to save funnel config: ${error.message}`)
+
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_config_applied',
+    payload: { kind: 'funnel', stages: parsed.stages.length },
+  })
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_step_completed',
+    payload: { step: 'funnel' },
+  })
 }
