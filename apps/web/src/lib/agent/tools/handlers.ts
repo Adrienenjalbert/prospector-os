@@ -7,6 +7,11 @@ import { createOnboardingTools } from '../agents/onboarding'
 import { consultFrameworkHandler } from './handlers/consult-framework'
 import { hydrateContextHandler } from './handlers/hydrate-context'
 import { draftAlumniIntroHandler } from './handlers/draft-alumni-intro'
+import {
+  logCrmActivityHandler,
+  updateCrmPropertyHandler,
+  createCrmTaskHandler,
+} from './handlers/crm-write'
 
 /**
  * Bridge between the tool_registry (DB) and the existing tool factories.
@@ -144,4 +149,10 @@ export function registerBuiltinToolHandlers(): void {
   registerToolHandler(consultFrameworkHandler)
   registerToolHandler(hydrateContextHandler)
   registerToolHandler(draftAlumniIntroHandler)
+  // CRM write-back tools (Phase 3.6) — all marked mutates_crm in
+  // execution_config so the writeApprovalGate middleware blocks the
+  // first invocation and surfaces a [DO] chip to the rep.
+  registerToolHandler(logCrmActivityHandler)
+  registerToolHandler(updateCrmPropertyHandler)
+  registerToolHandler(createCrmTaskHandler)
 }

@@ -528,6 +528,121 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     enabled: true,
   },
   {
+    slug: 'log_crm_activity',
+    display_name: 'Log CRM Activity',
+    description:
+      "Create a HubSpot engagement (note/call/email/meeting) on a deal/company/contact. Use when the rep wants the agent to log an observation, call summary, or meeting notes back to the CRM. Marked mutates_crm so the writeApprovalGate middleware blocks the first invocation and surfaces a [DO] chip — the rep clicks to approve, the UI re-invokes with an approval_token. Returns a citation pointing at the new HubSpot record so the rep can verify in one click.",
+    category: 'action',
+    tool_type: 'builtin',
+    execution_config: { handler: 'log_crm_activity', mutates_crm: true },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        target_urn: {
+          type: 'string',
+          description: 'URN of the deal/company/contact (e.g. urn:rev:deal:abc).',
+        },
+        activity_type: {
+          type: 'string',
+          enum: ['note', 'call', 'email', 'meeting'],
+          description: 'Engagement type — note is the safe default.',
+        },
+        body: {
+          type: 'string',
+          description: 'Body text of the engagement.',
+        },
+        duration_minutes: {
+          type: 'number',
+          description: 'Optional duration for calls/meetings.',
+        },
+        approval_token: {
+          type: 'string',
+          description: 'Approval token from the [DO] chip (added by the UI).',
+        },
+      },
+      required: ['target_urn', 'activity_type', 'body'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad', 'csm'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'update_crm_property',
+    display_name: 'Update CRM Property',
+    description:
+      "Update one HubSpot property on a deal/company/contact (e.g. set dealstage to 'Negotiation', set hs_meddpicc_champion_email to a new value, mark a custom flag). Marked mutates_crm so the writeApprovalGate middleware enforces approval. Returns a citation pointing at the just-updated CRM record. Surface the property name + new value in the [DO] chip so the rep knows exactly what they're approving.",
+    category: 'action',
+    tool_type: 'builtin',
+    execution_config: { handler: 'update_crm_property', mutates_crm: true },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        target_urn: {
+          type: 'string',
+          description: 'URN of the deal/company/contact to update.',
+        },
+        property: {
+          type: 'string',
+          description: 'HubSpot property name (e.g. dealstage, amount, hs_meddpicc_champion_email).',
+        },
+        value: {
+          description: 'New value (string/number/boolean/null).',
+        },
+        approval_token: {
+          type: 'string',
+          description: 'Approval token from the [DO] chip.',
+        },
+      },
+      required: ['target_urn', 'property', 'value'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'create_crm_task',
+    display_name: 'Create CRM Task',
+    description:
+      "Schedule a HubSpot follow-up task with optional due date, priority, and association to a deal/company/contact. Use after a call where the rep agrees to a follow-up action ('I'll send the proposal Monday'). Marked mutates_crm so the writeApprovalGate enforces approval. Returns a citation pointing at the new task in HubSpot.",
+    category: 'action',
+    tool_type: 'builtin',
+    execution_config: { handler: 'create_crm_task', mutates_crm: true },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        subject: {
+          type: 'string',
+          description: 'Short subject line for the task.',
+        },
+        body: {
+          type: 'string',
+          description: 'Optional richer description.',
+        },
+        due_date_iso: {
+          type: 'string',
+          description: 'ISO 8601 timestamp for the due date.',
+        },
+        priority: {
+          type: 'string',
+          enum: ['LOW', 'MEDIUM', 'HIGH'],
+          description: 'Task priority — defaults to MEDIUM.',
+        },
+        related_to_urn: {
+          type: 'string',
+          description: 'Optional URN to associate the task with.',
+        },
+        approval_token: {
+          type: 'string',
+          description: 'Approval token from the [DO] chip.',
+        },
+      },
+      required: ['subject'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad', 'csm'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
     slug: 'draft_alumni_intro',
     display_name: 'Draft Champion-Alumni Intro',
     description:
@@ -705,6 +820,9 @@ export async function seedIndeedFlexProfile(
             'consult_sales_framework',
             'hydrate_context',
             'draft_alumni_intro',
+            'log_crm_activity',
+            'update_crm_property',
+            'create_crm_task',
           ],
         },
         {
@@ -726,6 +844,9 @@ export async function seedIndeedFlexProfile(
             'consult_sales_framework',
             'hydrate_context',
             'draft_alumni_intro',
+            'log_crm_activity',
+            'update_crm_property',
+            'create_crm_task',
           ],
         },
         {
@@ -742,6 +863,9 @@ export async function seedIndeedFlexProfile(
             'consult_sales_framework',
             'hydrate_context',
             'draft_alumni_intro',
+            'log_crm_activity',
+            'update_crm_property',
+            'create_crm_task',
           ],
         },
         {
@@ -763,6 +887,9 @@ export async function seedIndeedFlexProfile(
             'consult_sales_framework',
             'hydrate_context',
             'draft_alumni_intro',
+            'log_crm_activity',
+            'update_crm_property',
+            'create_crm_task',
           ],
         },
         {
@@ -780,6 +907,9 @@ export async function seedIndeedFlexProfile(
             'consult_sales_framework',
             'hydrate_context',
             'draft_alumni_intro',
+            'log_crm_activity',
+            'update_crm_property',
+            'create_crm_task',
           ],
         },
         {
@@ -798,6 +928,9 @@ export async function seedIndeedFlexProfile(
             'consult_sales_framework',
             'hydrate_context',
             'draft_alumni_intro',
+            'log_crm_activity',
+            'update_crm_property',
+            'create_crm_task',
           ],
         },
       ],

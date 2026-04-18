@@ -262,6 +262,47 @@ const EXTRACTORS: Record<string, Extractor> = {
       })
     }
   },
+
+  // CRM write-back tools (Phase 3.6) — each returns citations pointing
+  // at the just-written CRM record so the citation pill links the rep
+  // to the new note/task/property in HubSpot. Same pass-through pattern
+  // as hydrate_context / draft_alumni_intro.
+  log_crm_activity: (ctx, r) => {
+    for (const c of asRows(r.citations)) {
+      const claim = str(c, 'claim_text')
+      if (!claim) continue
+      ctx.collector.addCitation({
+        claim_text: claim,
+        source_type: str(c, 'source_type') ?? 'unknown',
+        source_id: str(c, 'source_id'),
+        source_url: str(c, 'source_url'),
+      })
+    }
+  },
+  update_crm_property: (ctx, r) => {
+    for (const c of asRows(r.citations)) {
+      const claim = str(c, 'claim_text')
+      if (!claim) continue
+      ctx.collector.addCitation({
+        claim_text: claim,
+        source_type: str(c, 'source_type') ?? 'unknown',
+        source_id: str(c, 'source_id'),
+        source_url: str(c, 'source_url'),
+      })
+    }
+  },
+  create_crm_task: (ctx, r) => {
+    for (const c of asRows(r.citations)) {
+      const claim = str(c, 'claim_text')
+      if (!claim) continue
+      ctx.collector.addCitation({
+        claim_text: claim,
+        source_type: str(c, 'source_type') ?? 'unknown',
+        source_id: str(c, 'source_id'),
+        source_url: str(c, 'source_url'),
+      })
+    }
+  },
 }
 
 export function recordCitationsFromToolResult(
