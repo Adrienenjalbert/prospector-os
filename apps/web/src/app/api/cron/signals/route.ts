@@ -166,6 +166,42 @@ export async function GET(req: Request) {
       const flexKeywords =
         signalTypes.find((t) => t.name === 'temp_job_posting')?.flex_keywords ?? []
 
+      // Dedup window: a signal of the same type for the same company that
+      // landed in the last 7 days is treated as the SAME signal (just
+      // refreshed). Pre-this-change every cron run inserted a new
+      // `hiring_surge` row, so a company with persistent open jobs piled
+      // up dozens of duplicate signals — bloating the inbox, double-
+      // counting in `weighted_score` averages, and making the rep see
+      // the same recommendation 5 times in a week.
+      const dedupSinceMs = 7 * 24 * 60 * 60 * 1000
+      const dedupSince = new Date(Date.now() - dedupSinceMs).toISOString()
+      const insertSignalIfNew = async (row: {
+        tenant_id: string
+        company_id: string
+        signal_type: string
+        title: string
+        source: string
+        relevance_score: number
+        weight_multiplier: number
+        recency_days: number
+        weighted_score: number
+        urgency: string
+        detected_at: string
+        description?: string | null
+        recommended_action?: string | null
+      }): Promise<boolean> => {
+        const { count } = await supabase
+          .from('signals')
+          .select('id', { count: 'exact', head: true })
+          .eq('tenant_id', row.tenant_id)
+          .eq('company_id', row.company_id)
+          .eq('signal_type', row.signal_type)
+          .gte('detected_at', dedupSince)
+        if ((count ?? 0) > 0) return false
+        await supabase.from('signals').insert(row)
+        return true
+      }
+
       for (const company of companies) {
         if (!company.domain) continue
 
@@ -175,7 +211,7 @@ export async function GET(req: Request) {
 
           if (tempPostings.length > 0) {
             const typeConfig = signalTypes.find((t) => t.name === 'temp_job_posting')
-            await supabase.from('signals').insert({
+            const inserted = await insertSignalIfNew({
               tenant_id: tenant.id,
               company_id: company.id,
               signal_type: 'temp_job_posting',
@@ -188,12 +224,12 @@ export async function GET(req: Request) {
               urgency: tempPostings.length >= 5 ? 'immediate' : 'this_week',
               detected_at: new Date().toISOString(),
             })
-            totalSignals++
+            if (inserted) totalSignals++
           }
 
           if (postings.length >= 10) {
             const typeConfig = signalTypes.find((t) => t.name === 'hiring_surge')
-            await supabase.from('signals').insert({
+            const inserted = await insertSignalIfNew({
               tenant_id: tenant.id,
               company_id: company.id,
               signal_type: 'hiring_surge',
@@ -206,7 +242,7 @@ export async function GET(req: Request) {
               urgency: 'this_week',
               detected_at: new Date().toISOString(),
             })
-            totalSignals++
+            if (inserted) totalSignals++
           }
 
           const researchGated = deepResearchConfig
@@ -233,7 +269,7 @@ export async function GET(req: Request) {
               const typeConfig = signalTypes.find((t) => t.name === sig.type)
               const weight = typeConfig?.weight_multiplier ?? 1.0
 
-              await supabase.from('signals').insert({
+              const inserted = await insertSignalIfNew({
                 tenant_id: tenant.id,
                 company_id: company.id,
                 signal_type: sig.type,
@@ -248,7 +284,7 @@ export async function GET(req: Request) {
                 recommended_action: sig.recommended_action ?? null,
                 detected_at: new Date().toISOString(),
               })
-              totalSignals++
+              if (inserted) totalSignals++
             }
           }
 

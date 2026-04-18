@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { urn } from '@prospector/core'
 import { QueueHeader, type PipelineStage } from '@/components/priority/queue-header'
 import { InboxList } from '@/components/priority/inbox-list'
 import { WeeklyPulse } from '@/components/priority/weekly-pulse'
@@ -23,6 +24,7 @@ interface SubScore {
 
 interface PriorityItem {
   accountName: string
+  accountUrn: string
   accountId: string
   dealValue: number | null
   expectedRevenue: number
@@ -45,6 +47,7 @@ const DEMO_ITEMS: PriorityItem[] = [
   {
     accountName: 'Acme Logistics',
     accountId: 'demo-001',
+    accountUrn: 'urn:rev:demo:company:demo-001',
     dealValue: 800_000,
     expectedRevenue: 200_000,
     triggerType: 'stall',
@@ -72,6 +75,7 @@ const DEMO_ITEMS: PriorityItem[] = [
   {
     accountName: 'Beta Warehousing',
     accountId: 'demo-002',
+    accountUrn: 'urn:rev:demo:company:demo-002',
     dealValue: 200_000,
     expectedRevenue: 160_000,
     triggerType: 'signal',
@@ -100,6 +104,7 @@ const DEMO_ITEMS: PriorityItem[] = [
   {
     accountName: 'Gamma Manufacturing',
     accountId: 'demo-003',
+    accountUrn: 'urn:rev:demo:company:demo-003',
     dealValue: null,
     expectedRevenue: 63_000,
     triggerType: 'prospect',
@@ -200,7 +205,9 @@ async function fetchRealData(): Promise<{
           .limit(30),
         supabase
           .from('signals')
-          .select('company_id, signal_type, title, urgency')
+          .select(
+            'company_id, signal_type, title, urgency, recommended_action',
+          )
           .eq('tenant_id', profile.tenant_id)
           .gte('detected_at', new Date(Date.now() - 14 * 86400000).toISOString())
           .order('weighted_score', { ascending: false })
@@ -312,14 +319,26 @@ async function fetchRealData(): Promise<{
         triggerType = 'signal'
         severity = 'high'
         triggerDetail = `${signal.signal_type.replace(/_/g, ' ')}: ${signal.title}`
-        nextAction = `Act on ${signal.signal_type.replace(/_/g, ' ')} signal`
+        // Prefer the LLM-generated `recommended_action` (populated by
+        // cron/signals deep-research) over the generic
+        // "Act on hiring_surge signal". The deep-research prompt asks
+        // for "Specific action for the sales rep" — so when present,
+        // it's the targeted, contextual line we want the rep to see
+        // (e.g. "Email Sarah Chen, VP Eng, re: their Series B").
+        // Pre-this-change the column was populated but never read by the
+        // inbox, so the targeted text was discarded for a generic one.
+        nextAction =
+          signal.recommended_action?.trim() ||
+          `Act on ${signal.signal_type.replace(/_/g, ' ')} signal`
       } else if (!stall && !signal) {
         triggerType = 'prospect'
         triggerDetail = `Tier ${c.icp_tier} ICP fit. ${c.priority_reason ?? ''}`
         nextAction = `Research ${c.name} and send intro outreach`
       }
 
-      if (contactName) {
+      // Append contact context only when the line doesn't already
+      // mention a person — avoids "Email Sarah ... — contact Sarah Chen".
+      if (contactName && !nextAction.toLowerCase().includes(contactName.toLowerCase())) {
         nextAction += ` — contact ${contactName} (${contact!.title ?? 'Decision Maker'})`
       }
 
@@ -335,6 +354,13 @@ async function fetchRealData(): Promise<{
       return {
         accountName: c.name,
         accountId: c.id,
+        // Pre-resolved URN so the inbox draft button can pass it in the
+        // `prospector:open-chat` event detail. Without `activeUrn` the
+        // chat agent has no way to know which company it's drafting
+        // for — it had to re-derive from the prompt text, missing
+        // signals, contacts, and tier context that the company-anchored
+        // context-pack slices would have hydrated.
+        accountUrn: urn.company(profile.tenant_id, c.id),
         dealValue: stall?.value ?? null,
         expectedRevenue: c.expected_revenue,
         triggerType,

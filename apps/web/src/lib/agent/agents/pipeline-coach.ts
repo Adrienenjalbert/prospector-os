@@ -254,7 +254,7 @@ export function createPipelineCoachTools(tenantId: string, repId: string) {
 
   const suggest_next_action = tool({
     description:
-      'Based on deal stage, stall status, and contact coverage, suggest concrete next actions. Use for "what should I do next", "how do I move this forward".',
+      'Based on deal stage, stall status, and contact coverage, suggest the single best next action. Returns a structured `next_best_action` (action, contact, channel, timing, reasoning) plus the underlying coverage facts so the agent can quote real numbers. Use for "what should I do next", "how do I move this forward".',
     parameters: z.object({
       deal_name: z.string().describe('Deal name to get actions for'),
     }),
@@ -269,15 +269,15 @@ export function createPipelineCoachTools(tenantId: string, repId: string) {
 
       if (!deal) return { error: `Deal "${deal_name}" not found` }
 
-      const [contactsRes, signalsRes, benchRes] = await Promise.all([
+      const [contactsRes, signalsRes, benchRes, companyRes] = await Promise.all([
         supabase
           .from('contacts')
-          .select('first_name, last_name, title, seniority, is_champion, is_decision_maker, is_economic_buyer, last_activity_date')
+          .select('id, first_name, last_name, title, seniority, phone, email, is_champion, is_decision_maker, is_economic_buyer, last_activity_date, relevance_score, linkedin_url')
           .eq('tenant_id', tenantId)
           .eq('company_id', deal.company_id),
         supabase
           .from('signals')
-          .select('signal_type, title, urgency')
+          .select('signal_type, title, urgency, recommended_action')
           .eq('tenant_id', tenantId)
           .eq('company_id', deal.company_id)
           .order('detected_at', { ascending: false })
@@ -291,6 +291,12 @@ export function createPipelineCoachTools(tenantId: string, repId: string) {
           .eq('stage_name', deal.stage)
           .limit(1)
           .single(),
+        supabase
+          .from('companies')
+          .select('icp_tier, expected_revenue, priority_tier')
+          .eq('tenant_id', tenantId)
+          .eq('id', deal.company_id)
+          .maybeSingle(),
       ])
 
       const contacts = contactsRes.data ?? []
@@ -298,8 +304,78 @@ export function createPipelineCoachTools(tenantId: string, repId: string) {
       const hasDecisionMaker = contacts.some(c => c.is_decision_maker)
       const hasEconomicBuyer = contacts.some(c => c.is_economic_buyer)
       const medianDays = benchRes.data?.median_days_in_stage ?? 14
+      const signals = signalsRes.data ?? []
+
+      // Pick the targeted contact for the action: prefer (1) someone
+      // recently engaged on a stalled deal (avoid repeating the same
+      // dead-end), (2) the highest-relevance contact otherwise. Pre-
+      // this-change the tool returned all contact rows and let the
+      // model pick — that worked, but the model would frequently default
+      // to the first contact returned (which Postgres doesn't sort
+      // meaningfully). Now we rank deterministically and surface the
+      // pick + the runner-ups.
+      const ranked = [...contacts].sort(
+        (a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0),
+      )
+      const engaged = ranked.find((c) => c.last_activity_date)
+      const targetContact =
+        deal.is_stalled && engaged && engaged.id !== ranked[0]?.id
+          ? engaged
+          : ranked[0]
+
+      // Build the typed `NextBestAction`-shaped object so the agent has
+      // a single structured "do X by Y with Z" instead of a wall of
+      // facts. Mirrors `packages/core/src/prioritisation/action-
+      // generator.ts#NextBestAction` so a future server-side caller
+      // (Slack pre-call brief, leadership digest) can consume the same
+      // shape without re-deriving.
+      const channel: 'call' | 'email' | 'meeting' | 'linkedin' =
+        deal.is_stalled && targetContact?.phone
+          ? 'call'
+          : targetContact?.email
+            ? 'email'
+            : targetContact?.linkedin_url
+              ? 'linkedin'
+              : 'meeting'
+
+      const timing: string = deal.is_stalled
+        ? 'Today'
+        : signals.some((s) => s.urgency === 'immediate')
+          ? 'This week'
+          : 'Within 7 days'
+
+      let actionLine: string
+      let reasoning: string
+      if (deal.is_stalled) {
+        actionLine = `Re-engage on stalled deal "${deal.name}" — ${deal.days_in_stage}d at ${deal.stage}`
+        reasoning = `Deal stalled ${deal.days_in_stage}d at ${deal.stage} (median ${medianDays}d). ${engaged && engaged.id !== ranked[0]?.id ? `Try ${engaged.first_name} who showed recent engagement.` : 'Re-engage primary contact with a new angle.'}`
+      } else if (!hasChampion || !hasDecisionMaker) {
+        const gap = !hasChampion ? 'champion' : 'decision maker'
+        actionLine = `Identify and recruit a ${gap} on "${deal.name}"`
+        reasoning = `Coverage gap: missing ${gap}. ${contacts.length} contact(s) on file; none flagged as ${gap}.`
+      } else if (signals[0]?.urgency === 'immediate') {
+        actionLine = signals[0].recommended_action?.trim() || `Act on signal: ${signals[0].title}`
+        reasoning = `Immediate-urgency ${signals[0].signal_type} signal active: ${signals[0].title}.`
+      } else {
+        actionLine = `Progress "${deal.name}" at ${deal.stage}`
+        reasoning = `Deal at ${deal.stage} for ${deal.days_in_stage}d (median ${medianDays}d). Coverage healthy. Schedule next concrete step.`
+      }
+
+      const nextBestAction = {
+        action: actionLine,
+        contact_name: targetContact
+          ? `${targetContact.first_name} ${targetContact.last_name}`.trim()
+          : null,
+        contact_title: targetContact?.title ?? null,
+        contact_phone: targetContact?.phone ?? null,
+        contact_email: targetContact?.email ?? null,
+        channel,
+        timing,
+        reasoning,
+      }
 
       return {
+        next_best_action: nextBestAction,
         deal: {
           name: deal.name,
           value: deal.value,
@@ -308,15 +384,16 @@ export function createPipelineCoachTools(tenantId: string, repId: string) {
           is_stalled: deal.is_stalled,
           stall_reason: deal.stall_reason,
         },
+        company: companyRes.data ?? null,
         contact_coverage: {
           total: contacts.length,
           has_champion: hasChampion,
           has_decision_maker: hasDecisionMaker,
           has_economic_buyer: hasEconomicBuyer,
         },
-        active_signals: signalsRes.data ?? [],
+        active_signals: signals,
         benchmark_median_days: medianDays,
-        contacts: contacts.map(c => ({
+        contacts: ranked.slice(0, 5).map(c => ({
           name: `${c.first_name} ${c.last_name}`,
           title: c.title,
           seniority: c.seniority,

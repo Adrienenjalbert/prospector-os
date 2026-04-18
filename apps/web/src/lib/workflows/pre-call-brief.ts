@@ -367,6 +367,19 @@ export async function runPreCallBrief(
             : undefined,
         )
 
+        // Emit the brief-sent event with BOTH the company URN
+        // (`subject_urn`) AND the meeting URN in the payload. The
+        // attribution workflow (`workflows/attribution.ts`) joins
+        // `agent_events` to `outcome_events` on matching `subject_urn`,
+        // and the HubSpot meeting webhook fires its outcome events
+        // against `urn.meeting(...)`. Pre-this-change the brief used
+        // company-URN only and the meeting outcome used meeting-URN
+        // only, so the attribution rule never matched and the
+        // pre-call-brief workflow's downstream wins were never
+        // credited. Carrying both lets the attribution engine match on
+        // either side.
+        const fetched = ctx.stepState.fetch_meeting as FetchedMeeting
+        const meetingUrn = urn.meeting(brief.tenant_id, fetched.meeting_id)
         await emitAgentEvent(ctx.supabase, {
           tenant_id: brief.tenant_id,
           interaction_id: brief.interaction_id,
@@ -376,6 +389,8 @@ export async function runPreCallBrief(
           subject_urn: brief.subject_urn,
           payload: {
             workflow: 'pre_call_brief',
+            meeting_urn: meetingUrn,
+            related_urns: [brief.subject_urn, meetingUrn],
             skipped: result.skipped ?? false,
             reason: result.skippedReason ?? result.error ?? null,
           },

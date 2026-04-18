@@ -5,13 +5,12 @@ import { MessageCircle, PenSquare, CheckCircle2 } from 'lucide-react'
 
 import { recordActionInvoked } from '@/app/actions/implicit-feedback'
 import { cn } from '@/lib/utils'
-
-type ActionKind = 'ASK' | 'DRAFT' | 'DO'
-
-interface ParsedAction {
-  kind: ActionKind
-  text: string
-}
+import {
+  buildClickPrompt,
+  parseNextSteps,
+  type ActionKind,
+  type ParsedAction,
+} from './next-steps-parser'
 
 export interface SuggestedActionsProps {
   /** The full assistant message text. We parse the `## Next Steps` section. */
@@ -36,67 +35,20 @@ const STYLE: Record<ActionKind, string> = {
 }
 
 /**
- * Parses the `## Next Steps` section of an assistant message into typed
- * actions. The agent prompt requires this section in a strict format
- * (see `commonBehaviourRules` in `_shared.ts`):
- *
- *   ## Next Steps
- *   - [ASK] What signals fired this week?
- *   - [DRAFT] Email to champion
- *   - [DO] Call John Smith Tuesday
- *
- * Tolerant of small formatting drift: '##' / '###' / '**Next Steps**',
- * with or without the brackets, with or without the dash.
- */
-function parseNextSteps(content: string): ParsedAction[] {
-  if (!content) return []
-
-  // Find the Next Steps heading. Accept a few variants.
-  const headingRegex = /(?:^|\n)\s*(?:#{2,3}|\*\*)\s*Next Steps\s*\**\s*\n/i
-  const match = headingRegex.exec(content)
-  if (!match) return []
-
-  const after = content.slice(match.index + match[0].length)
-  const lines = after.split('\n')
-
-  const actions: ParsedAction[] = []
-  for (const raw of lines) {
-    const line = raw.trim()
-    if (!line) {
-      if (actions.length > 0) break
-      continue
-    }
-    // Stop at next heading.
-    if (line.startsWith('#') || line.startsWith('**')) break
-
-    // Match: optional "- ", then [TAG], then text. Also accept "1. ", "* ".
-    const itemMatch = /^(?:[-*]|\d+\.)\s*\[(ASK|DRAFT|DO)\]\s+(.+)$/i.exec(line)
-    if (itemMatch) {
-      const kind = itemMatch[1].toUpperCase() as ActionKind
-      const text = itemMatch[2].trim()
-      if (text) actions.push({ kind, text })
-      continue
-    }
-
-    // Tolerant fallback: bullet without tag → treat as ASK.
-    const fallback = /^(?:[-*]|\d+\.)\s+(.+)$/.exec(line)
-    if (fallback && fallback[1].length > 0) {
-      actions.push({ kind: 'ASK', text: fallback[1].trim() })
-    }
-  }
-
-  // Hard cap at 3 — choice paralysis kills adoption. If the model returned
-  // more, we take the first three (assumed to be highest-priority).
-  return actions.slice(0, 3)
-}
-
-/**
  * Multi-choice click-to-prompt buttons under every assistant message.
  *
  * - ASK fires the prompt back into the chat (sends as user message).
  * - DRAFT fires a "draft this for me" prompt back into the chat.
- * - DO is non-clickable (displayed as a checklist item) — it represents
- *   real-world action outside the chat.
+ * - DO is the real-world action chip. Pre-this-change DO was a disabled
+ *   button: no click handler, no telemetry, no follow-through. The
+ *   audit flagged this as a BLOCKER because the agent prompt + the
+ *   `writeApprovalGate` middleware both ASSUMED the [DO] chip was the
+ *   approval surface for CRM mutations — but the chip never fired
+ *   anything, so the loop was theatre. Now [DO] is interactive: a
+ *   click logs `action_invoked` (so attribution + the tool bandit can
+ *   learn from real-world action) and opens the chat with a
+ *   confirmation prompt the agent can either re-execute (with an
+ *   approval token) or convert into a CRM write.
  *
  * Every click logs `action_invoked` so the attribution engine and tool
  * bandit can learn what actions actually drive outcomes per tenant.
@@ -118,14 +70,14 @@ export function SuggestedActions({
       void recordActionInvoked(interactionId, `suggested_${a.kind.toLowerCase()}`, activeUrn ?? null)
     })
 
-    if (a.kind === 'DO') return // Display-only
-
-    const prompt = a.kind === 'DRAFT' ? `Draft this for me: ${a.text}` : a.text
-
+    // The DO chip's confirmation framing is intentionally instructive
+    // ("re-invoke the relevant tool with the approval handshake") so
+    // the agent reading the next turn knows it's the approval surface,
+    // not a fresh request. See `next-steps-parser.ts#buildClickPrompt`.
     window.dispatchEvent(
       new CustomEvent('prospector:open-chat', {
         detail: {
-          prompt,
+          prompt: buildClickPrompt(a),
           activeUrn: activeUrn ?? undefined,
         },
       }),
@@ -136,17 +88,14 @@ export function SuggestedActions({
     <div className="mt-2 flex flex-wrap gap-1.5 pl-11">
       {actions.map((a, i) => {
         const Icon = ICON[a.kind]
-        const interactive = a.kind !== 'DO'
         return (
           <button
             key={`${a.kind}:${i}`}
             type="button"
-            disabled={!interactive}
             onClick={() => onClick(a)}
             className={cn(
               'inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors',
               STYLE[a.kind],
-              !interactive && 'cursor-default opacity-80',
             )}
             title={a.text}
           >

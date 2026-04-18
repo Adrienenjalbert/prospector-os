@@ -75,7 +75,11 @@ export interface ActionPanelProps {
  */
 export function ActionPanel({ subjectUrn, subjectLabel, objectType }: ActionPanelProps) {
   const [, start] = useTransition()
-  const applicable = ACTIONS.filter((a) => a.appliesTo.includes(objectType))
+  // MISSION cap: ≤ 3 actions per surface. Pre-this-change a company
+  // page surfaced 4 applicable actions and a deal page surfaced 4 —
+  // choice paralysis is the single biggest UX killer the audit flagged.
+  // The first 3 are kept (declared in highest-impact order in `ACTIONS`).
+  const applicable = ACTIONS.filter((a) => a.appliesTo.includes(objectType)).slice(0, 3)
 
   const onAction = (action: ActionSpec) => {
     start(() => {

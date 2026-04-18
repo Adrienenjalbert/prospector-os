@@ -21,7 +21,12 @@ export function InboxList({ items, completedTodayCount = 0 }: InboxListProps) {
   const totalCompleted = completedTodayCount + localCompleted
   const showOutcome = totalCompleted >= OUTCOME_CAPTURE_THRESHOLD
 
-  function handleDraftOutreach(accountId: string, accountName: string, contactName: string | null) {
+  function handleDraftOutreach(
+    accountId: string,
+    accountUrn: string,
+    accountName: string,
+    contactName: string | null,
+  ) {
     trackCardDrafted(accountId)
 
     const prompt = contactName
@@ -29,7 +34,14 @@ export function InboxList({ items, completedTodayCount = 0 }: InboxListProps) {
       : `Draft an intro email to the decision-maker at ${accountName}. Reference their ICP fit and any recent signals.`
 
     window.dispatchEvent(
-      new CustomEvent('prospector:open-chat', { detail: { prompt } })
+      new CustomEvent('prospector:open-chat', {
+        // Pass the company URN so the agent's context-pack loads the
+        // company snapshot, transcript summaries, signal feed, and
+        // key-contact notes for THIS account. Without it the agent
+        // would have to re-derive the company from the prompt text and
+        // the company-anchored slices would stay empty.
+        detail: { prompt, activeUrn: accountUrn },
+      }),
     )
   }
 
@@ -54,7 +66,12 @@ export function InboxList({ items, completedTodayCount = 0 }: InboxListProps) {
           {...item}
           showOutcomeCapture={showOutcome}
           onDraftOutreach={() =>
-            handleDraftOutreach(item.accountId, item.accountName, item.contactName)
+            handleDraftOutreach(
+              item.accountId,
+              item.accountUrn,
+              item.accountName,
+              item.contactName,
+            )
           }
           onComplete={() => handleComplete(item.accountId)}
           onFeedback={(type) => handleFeedback(item.accountId, type)}

@@ -17,6 +17,15 @@ export interface SubScore {
 export interface PriorityCardProps {
   accountName: string
   accountId: string
+  /**
+   * Canonical URN of this account. Forwarded to the chat dispatch event
+   * (`prospector:open-chat`) so the agent's context-pack picks the
+   * `current-company-snapshot`, transcript-summaries, and key-contact
+   * slices automatically. Pre-this-change the inbox dispatched without
+   * a URN, so the agent's company-anchored slices stayed empty and the
+   * draft response was thinner than it needed to be.
+   */
+  accountUrn: string
   dealValue: number | null
   expectedRevenue: number
   triggerType: 'stall' | 'signal' | 'prospect' | 'pipeline'

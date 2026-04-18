@@ -80,21 +80,46 @@ function isFeedbackNegative(id: string): boolean {
   return id.startsWith('feedback_neg_')
 }
 
+/**
+ * Parsed shape of the JSON Slack actions carry in their `value` field.
+ *
+ * The Slack adapter (`packages/adapters/src/notifications/slack.ts`) writes
+ * `account_id` + `trigger_event_id` as the canonical fields on every
+ * notification button (matches the current `NotificationRecord` schema).
+ * Pre-this-change the route still parsed the older draft names
+ * (`company_id` / `alert_type`), so:
+ *   - `valueMeta.company_id` was always undefined → the draft handler
+ *     fell back to "Draft an outreach email for this account." with no
+ *     company name and no `activeUrn` for the chat agent.
+ *   - `valueMeta.alert_type` was always undefined → `alert_feedback`
+ *     rows landed with `alert_type = 'slack_interaction'` regardless of
+ *     which trigger fired, breaking attribution by trigger type.
+ *
+ * We accept both names during the migration window (older notifications
+ * already in transit) but prefer the canonical names. New notifications
+ * land on the canonical fields.
+ */
 function parseActionValue(value: string | undefined): {
   tenant_id?: string
-  company_id?: string
-  alert_type?: string
+  account_id?: string
+  trigger_event_id?: string
   rep_crm_id?: string
+  notification_id?: string
 } {
   if (!value) return {}
   try {
-    const parsed = JSON.parse(value) as unknown
+    const parsed = JSON.parse(value) as Record<string, unknown> | null
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as {
-        tenant_id?: string
-        company_id?: string
-        alert_type?: string
-        rep_crm_id?: string
+      const get = (k: string): string | undefined =>
+        typeof parsed[k] === 'string' ? (parsed[k] as string) : undefined
+      return {
+        tenant_id: get('tenant_id'),
+        // Prefer canonical names, fall back to legacy draft names so an
+        // in-flight notification from the previous build still works.
+        account_id: get('account_id') ?? get('company_id'),
+        trigger_event_id: get('trigger_event_id') ?? get('alert_type'),
+        rep_crm_id: get('rep_crm_id'),
+        notification_id: get('notification_id'),
       }
     }
   } catch {
@@ -153,7 +178,7 @@ async function handleBlockActions(payload: SlackBlockActionsPayload) {
       const ctx = await resolveRepContext(supabase, slackUserId)
       if (!ctx) continue
 
-      const companyId = valueMeta.company_id
+      const companyId = valueMeta.account_id
       let prompt = 'Draft an outreach email for this account.'
       if (companyId) {
         const { data: comp } = await supabase
@@ -212,12 +237,12 @@ async function handleBlockActions(payload: SlackBlockActionsPayload) {
       }
 
       const reaction = isFeedbackPositive(id) ? 'positive' : 'negative'
-      const companyId = valueMeta.company_id ?? null
+      const companyId = valueMeta.account_id ?? null
 
       const { error } = await supabase.from('alert_feedback').insert({
         tenant_id: tenantId,
         rep_crm_id: repCrmId,
-        alert_type: valueMeta.alert_type ?? 'slack_interaction',
+        alert_type: valueMeta.trigger_event_id ?? 'slack_interaction',
         company_id: companyId,
         reaction,
         action_taken: false,
