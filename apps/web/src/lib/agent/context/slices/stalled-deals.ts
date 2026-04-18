@@ -142,13 +142,14 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
     }
   },
 
-  formatForPrompt(rows: StalledDealRow[]): string {
+  formatForPrompt(rows: StalledDealRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) {
       return '### Stalled deals\n_No deals currently flagged stalled — clean slate._'
     }
+    const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 6).map((r) => {
       const reason = r.stall_reason ? ` — ${r.stall_reason}` : ''
-      return `- ${r.company_name} "${r.name}" ${urnInline('opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value)}${reason}`
+      return `- ${r.company_name} "${r.name}" ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value)}${reason}`
     })
     return `### Stalled deals (${rows.length})\n${lines.join('\n')}`
   },

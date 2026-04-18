@@ -188,11 +188,12 @@ export const currentCompanySnapshotSlice: ContextSlice<CompanySnapshotRow> = {
     }
   },
 
-  formatForPrompt(rows: CompanySnapshotRow[]): string {
+  formatForPrompt(rows: CompanySnapshotRow[], fmtCtx?: { tenantId: string }): string {
     const r = rows[0]
     if (!r) return '### Current company\n_No active company context._'
+    const tenantId = fmtCtx?.tenantId ?? ''
 
-    const headLine = `### ${r.name} ${urnInline('company', r.id)}`
+    const headLine = `### ${r.name} ${urnInline(tenantId, 'company', r.id)}`
     const meta = [
       r.industry,
       r.hq_city ?? r.hq_country,
@@ -206,14 +207,14 @@ export const currentCompanySnapshotSlice: ContextSlice<CompanySnapshotRow> = {
 
     const signalLines = r.top_signals.length
       ? `\n**Top signals:**\n${r.top_signals
-          .map((s) => `- [${s.urgency}] ${s.title} ${urnInline('signal', s.id)}`)
+          .map((s) => `- [${s.urgency}] ${s.title} ${urnInline(tenantId, 'signal', s.id)}`)
           .join('\n')}`
       : ''
 
     const dealLines = r.open_deals.length
       ? `\n**Open deals:**\n${r.open_deals
           .slice(0, 3)
-          .map((d) => `- ${d.name} ${urnInline('opportunity', d.id)} — ${d.stage} ${d.days_in_stage ?? '?'}d, ${fmtMoney(d.value)}${d.is_stalled ? ' STALLED' : ''}`)
+          .map((d) => `- ${d.name} ${urnInline(tenantId, 'opportunity', d.id)} — ${d.stage} ${d.days_in_stage ?? '?'}d, ${fmtMoney(d.value)}${d.is_stalled ? ' STALLED' : ''}`)
           .join('\n')}`
       : ''
 
@@ -227,7 +228,7 @@ export const currentCompanySnapshotSlice: ContextSlice<CompanySnapshotRow> = {
               c.is_economic_buyer ? 'EB' : null,
               c.is_decision_maker ? 'DM' : null,
             ].filter(Boolean).join('/')
-            return `- ${name}${c.title ? ` (${c.title})` : ''}${flags ? ` [${flags}]` : ''} ${urnInline('contact', c.id)}`
+            return `- ${name}${c.title ? ` (${c.title})` : ''}${flags ? ` [${flags}]` : ''} ${urnInline(tenantId, 'contact', c.id)}`
           })
           .join('\n')}`
       : ''

@@ -140,12 +140,13 @@ export const keyContactNotesSlice: ContextSlice<NoteRow> = {
     }
   },
 
-  formatForPrompt(rows: NoteRow[]): string {
+  formatForPrompt(rows: NoteRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) {
       return '### Key contact notes\n_No personal notes recorded yet — encourage the rep to capture takeaways via the relationship_notes tool._'
     }
+    const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 5).map((r) => {
-      const urn = r.contact_id ? ` ${urnInline('contact', r.contact_id)}` : ''
+      const urn = r.contact_id ? ` ${urnInline(tenantId, 'contact', r.contact_id)}` : ''
       const trimmed = r.content.length > 180 ? `${r.content.slice(0, 180)}…` : r.content
       return `- ${r.contact_name}${urn} (${r.note_type ?? 'note'}, ${fmtAge(r.created_at)}): ${trimmed}`
     })

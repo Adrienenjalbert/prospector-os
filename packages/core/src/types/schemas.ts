@@ -59,6 +59,19 @@ export const CompanyLocationSchema = z.object({
   is_hq: z.boolean().optional(),
 })
 
+/**
+ * `CompanySchema` is the **agent-facing trimmed view** of the Company
+ * ontology row. It covers the fields the LLM sees inside prompts and
+ * structured outputs — name, scoring, ICP/priority tier, owner. The
+ * full DB row has more fields (industry_group, employee_range,
+ * urgency_multiplier, enrichment_*, churn_risk_*, parent_company_id,
+ * etc.) — those land in `CompanyRowSchema` below for code paths that
+ * read straight from Supabase.
+ *
+ * Use `CompanySchema` for: tool inputs, structured agent outputs.
+ * Use `CompanyRowSchema` for: server-side row validation, JSON-blob
+ * persistence, audit trails.
+ */
 export const CompanySchema = z.object({
   id: z.string(),
   tenant_id: z.string(),
@@ -94,6 +107,45 @@ export const CompanySchema = z.object({
   priority_reason: z.string().nullable(),
 })
 export type CompanyParsed = z.infer<typeof CompanySchema>
+
+/**
+ * Full row schema — covers every column on the `companies` table after
+ * migrations 001–009. Use this when validating raw rows from Supabase
+ * before persisting back, so silent drift (a new column added but not
+ * declared here) shows up as a schema-parse failure rather than as a
+ * silent missing field at write time.
+ */
+export const CompanyRowSchema = CompanySchema.extend({
+  industry_group: z.string().nullable().optional(),
+  employee_range: z.string().nullable().optional(),
+  revenue_range: z.string().nullable().optional(),
+  founded_year: z.number().nullable().optional(),
+  location_count: z.number().optional(),
+  owner_email: z.string().nullable().optional(),
+  urgency_multiplier: z.number().optional(),
+  // Per-tenant adaptation surface: weights / dimensions snapshot at
+  // last scoring run — JSONB blobs that pass through to /admin/adaptation.
+  icp_dimensions: z.record(z.unknown()).optional(),
+  enrichment_data: z.record(z.unknown()).optional(),
+  enrichment_source: z.string().nullable().optional(),
+  enriched_at: z.string().nullable().optional(),
+  last_signal_check: z.string().nullable().optional(),
+  icp_config_version: z.string().nullable().optional(),
+  // Account hierarchy (migration 008)
+  parent_company_id: z.string().nullable().optional(),
+  parent_crm_id: z.string().nullable().optional(),
+  is_account_family_root: z.boolean().optional(),
+  // CSM / churn columns added in migration 001 schema extensions
+  csm_crm_id: z.string().nullable().optional(),
+  churn_risk_score: z.number().nullable().optional(),
+  churn_risk_factors: z.record(z.unknown()).nullable().optional(),
+  last_exec_engagement: z.string().nullable().optional(),
+  last_activity_date: z.string().nullable().optional(),
+  last_crm_sync: z.string().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+})
+export type CompanyRowParsed = z.infer<typeof CompanyRowSchema>
 
 export const ContactSchema = z.object({
   id: z.string(),
@@ -151,7 +203,11 @@ export type SignalParsed = z.infer<typeof SignalSchema>
 export const TranscriptSchema = z.object({
   id: z.string(),
   tenant_id: z.string(),
-  account_id: z.string().nullable(),
+  // `company_id` matches the column name in `transcripts` (migration 001)
+  // and the field name in `Transcript` from `platform.ts`. The earlier
+  // `account_id` here was a drift artefact — every consumer of the
+  // schema had to remember to translate the field name.
+  company_id: z.string().nullable(),
   source: z.enum(['gong', 'fireflies', 'otter']),
   source_id: z.string(),
   title: z.string().nullable(),

@@ -220,8 +220,9 @@ export const crossSellOpportunitiesSlice: ContextSlice<CrossSellRow> = {
     }
   },
 
-  formatForPrompt(rows: CrossSellRow[]): string {
+  formatForPrompt(rows: CrossSellRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) return ''
+    const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.map((r) => {
       const status = r.candidate_company.has_open_deal ? '_open deal_' : '_cold_'
       const tier = r.candidate_company.icp_tier
@@ -230,7 +231,7 @@ export const crossSellOpportunitiesSlice: ContextSlice<CrossSellRow> = {
       const industry = r.candidate_company.industry
         ? ` · ${r.candidate_company.industry}`
         : ''
-      return `- ${r.candidate_company.name} ${urnInline('company', r.candidate_company.id)}${tier}${industry} — same family as won ${r.won_company.name} ${urnInline('company', r.won_company.id)} ${status}`
+      return `- ${r.candidate_company.name} ${urnInline(tenantId, 'company', r.candidate_company.id)}${tier}${industry} — same family as won ${r.won_company.name} ${urnInline(tenantId, 'company', r.won_company.id)} ${status}`
     })
     return `### Cross-sell — already won a sibling (${rows.length})\n${lines.join('\n')}\n\n_These are family members of accounts you've won. Warm-by-association cold outreach has 2-4x conversion of pure cold._`
   },

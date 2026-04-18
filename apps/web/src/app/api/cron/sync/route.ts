@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
 import { SalesforceAdapter, HubSpotAdapter } from '@prospector/adapters'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
-import { emitOutcomeEvent, type OutcomeEventInput } from '@prospector/core'
+import { emitOutcomeEvent, urn, type OutcomeEventInput } from '@prospector/core'
 
 /**
  * Compare a fresh CRM opportunity row against what we have in Postgres and
@@ -17,14 +17,27 @@ import { emitOutcomeEvent, type OutcomeEventInput } from '@prospector/core'
  */
 function diffOppForOutcomes(
   tenantId: string,
+  // The opportunity's canonical Postgres UUID. Pass null/undefined when
+  // the row isn't yet persisted (the caller already filters those out).
+  oppId: string | undefined,
+  // The opportunity's CRM-side id. Recorded in the event payload so
+  // attribution can map back to HubSpot/Salesforce links, but NEVER
+  // used as the URN segment — see comment below.
   oppCrmId: string | undefined,
   prev: { stage?: string | null; value?: number | null; is_won?: boolean | null; is_closed?: boolean | null } | null,
   next: { stage?: string | null; value?: number | null; is_won?: boolean | null; is_closed?: boolean | null },
   source: 'salesforce' | 'hubspot',
 ): OutcomeEventInput[] {
-  if (!oppCrmId) return []
+  if (!oppId) return []
   const events: OutcomeEventInput[] = []
-  const subjectUrn = `urn:rev:opportunity:${oppCrmId}`
+  // Canonical URN — `urn:rev:{tenantId}:{type}:{id}`. Previously this
+  // emitted shorthand `urn:rev:opportunity:{crmId}` which (a) lacked
+  // the tenant segment so cross-tenant attribution could collide, and
+  // (b) used the CRM id (HubSpot deal id) as the URN id, which doesn't
+  // round-trip through `parseUrn` to a Postgres opportunities.id row
+  // — breaking the attribution workflow's joins.
+  const subjectUrn = urn.opportunity(tenantId, oppId)
+  const crmRefPayload = oppCrmId ? { crm_id: oppCrmId } : {}
 
   // Stage transition
   if (prev && (prev.stage ?? null) !== (next.stage ?? null)) {
@@ -33,7 +46,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_stage_changed',
       source,
-      payload: { from: prev.stage ?? null, to: next.stage ?? null },
+      payload: { ...crmRefPayload, from: prev.stage ?? null, to: next.stage ?? null },
     })
   }
 
@@ -48,7 +61,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_amount_changed',
       source,
-      payload: { from: prevValue, to: nextValue },
+      payload: { ...crmRefPayload, from: prevValue, to: nextValue },
       value_amount: nextValue,
     })
   }
@@ -60,7 +73,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_closed_won',
       source,
-      payload: { stage: next.stage ?? null },
+      payload: { ...crmRefPayload, stage: next.stage ?? null },
       value_amount: nextValue,
     })
   }
@@ -72,7 +85,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_closed_lost',
       source,
-      payload: { stage: next.stage ?? null },
+      payload: { ...crmRefPayload, stage: next.stage ?? null },
       value_amount: nextValue,
     })
   }
@@ -274,12 +287,15 @@ async function syncSalesforce(
 
       const { data: previousOpp } = await supabase
         .from('opportunities')
-        .select('stage, value, is_won, is_closed')
+        .select('id, stage, value, is_won, is_closed')
         .eq('tenant_id', tenantId)
         .eq('crm_id', opp.crm_id)
         .maybeSingle()
 
-      await supabase.from('opportunities').upsert({
+      // Capture the canonical Postgres id from the upsert so we can
+      // emit outcome events whose subject_urn references the
+      // ontology row (not the CRM id) — see diffOppForOutcomes.
+      const { data: upsertedOpp } = await supabase.from('opportunities').upsert({
         tenant_id: tenantId,
         crm_id: opp.crm_id,
         company_id: company.id,
@@ -296,10 +312,13 @@ async function syncSalesforce(
         owner_crm_id: opp.owner_crm_id,
         last_crm_sync: new Date().toISOString(),
       }, { onConflict: 'tenant_id,crm_id' })
+        .select('id')
+        .single()
       synced++
 
       const events = diffOppForOutcomes(
         tenantId,
+        upsertedOpp?.id ?? previousOpp?.id,
         opp.crm_id,
         previousOpp,
         {
@@ -423,12 +442,12 @@ async function syncHubSpot(
 
     const { data: previousOpp } = await supabase
       .from('opportunities')
-      .select('stage, value, is_won, is_closed')
+      .select('id, stage, value, is_won, is_closed')
       .eq('tenant_id', tenantId)
       .eq('crm_id', opp.crm_id)
       .maybeSingle()
 
-    await supabase.from('opportunities').upsert({
+    const { data: upsertedOpp } = await supabase.from('opportunities').upsert({
       tenant_id: tenantId,
       crm_id: opp.crm_id,
       company_id: company.id,
@@ -443,10 +462,13 @@ async function syncHubSpot(
       owner_crm_id: opp.owner_crm_id,
       last_crm_sync: new Date().toISOString(),
     }, { onConflict: 'tenant_id,crm_id' })
+      .select('id')
+      .single()
     synced++
 
     const events = diffOppForOutcomes(
       tenantId,
+      upsertedOpp?.id ?? previousOpp?.id,
       opp.crm_id,
       previousOpp,
       {

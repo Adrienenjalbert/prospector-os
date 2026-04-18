@@ -172,9 +172,10 @@ export const championMapSlice: ContextSlice<ChampionMapRow> = {
     }
   },
 
-  formatForPrompt(rows: ChampionMapRow[]): string {
+  formatForPrompt(rows: ChampionMapRow[], fmtCtx?: { tenantId: string }): string {
     const r = rows[0]
     if (!r) return '### Buying committee\n_No active deal context._'
+    const tenantId = fmtCtx?.tenantId ?? ''
 
     const renderGroup = (label: string, contacts: ChampionContact[]) => {
       if (contacts.length === 0) return `${label}: _none_`
@@ -183,7 +184,7 @@ export const championMapSlice: ContextSlice<ChampionMapRow> = {
         contacts
           .map((c) => {
             const name = `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || c.email || 'Contact'
-            return `  - ${name}${c.title ? ` (${c.title})` : ''} ${urnInline('contact', c.id)} — last activity ${fmtAge(c.last_activity_date)}`
+            return `  - ${name}${c.title ? ` (${c.title})` : ''} ${urnInline(tenantId, 'contact', c.id)} — last activity ${fmtAge(c.last_activity_date)}`
           })
           .join('\n')
       )
@@ -204,7 +205,7 @@ export const championMapSlice: ContextSlice<ChampionMapRow> = {
         r.unflagged
           .map((c) => {
             const name = `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || c.email || 'Contact'
-            return `  - ${name}${c.title ? ` (${c.title})` : ''} ${urnInline('contact', c.id)}`
+            return `  - ${name}${c.title ? ` (${c.title})` : ''} ${urnInline(tenantId, 'contact', c.id)}`
           })
           .join('\n'),
       )

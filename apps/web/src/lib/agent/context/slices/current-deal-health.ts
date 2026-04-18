@@ -201,9 +201,10 @@ export const currentDealHealthSlice: ContextSlice<DealHealthRow> = {
     }
   },
 
-  formatForPrompt(rows: DealHealthRow[]): string {
+  formatForPrompt(rows: DealHealthRow[], fmtCtx?: { tenantId: string }): string {
     const r = rows[0]
     if (!r) return '### Current deal\n_No active deal context._'
+    const tenantId = fmtCtx?.tenantId ?? ''
     const cov = r.coverage
     const flags: string[] = []
     if (!cov.has_champion) flags.push('NO CHAMPION')
@@ -212,10 +213,10 @@ export const currentDealHealthSlice: ContextSlice<DealHealthRow> = {
     const flagPart = flags.length ? ` ⚠ ${flags.join(', ')}` : ''
     const stallPart = r.is_stalled ? ` STALLED${r.stall_reason ? `: ${r.stall_reason}` : ''}` : ''
     const companyLine = r.company
-      ? `\n- Company: ${r.company.name} ${urnInline('company', r.company.id)} (${r.company.industry ?? '—'}, ICP ${r.company.icp_tier ?? '—'})`
+      ? `\n- Company: ${r.company.name} ${urnInline(tenantId, 'company', r.company.id)} (${r.company.industry ?? '—'}, ICP ${r.company.icp_tier ?? '—'})`
       : ''
     return `### Current deal health
-- ${r.name} ${urnInline('opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value)} [${r.health.toUpperCase()}]${stallPart}${flagPart}
+- ${r.name} ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value)} [${r.health.toUpperCase()}]${stallPart}${flagPart}
 - Stakeholders: ${cov.total_contacts} total${companyLine}`
   },
 

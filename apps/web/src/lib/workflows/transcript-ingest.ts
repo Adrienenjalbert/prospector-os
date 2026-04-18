@@ -65,9 +65,16 @@ export async function runTranscriptIngest(
         const { transcript_id } = ctx.stepState.ingest_transcript as { transcript_id: string }
         if (!ctx.tenantId) return { skipped: true, reason: 'no_tenant' }
 
+        // Defence in depth: scope by tenant_id even though the row was
+        // just inserted with this same tenant. RLS catches the
+        // cross-tenant case in production, but service-role queries
+        // bypass RLS — without explicit `.eq('tenant_id', ...)` here
+        // a workflow runner bug that mixed up `transcript_id` could
+        // surface another tenant's row.
         const { data: transcript } = await ctx.supabase
           .from('transcripts')
           .select('company_id, summary, themes, meddpicc_extracted')
+          .eq('tenant_id', ctx.tenantId)
           .eq('id', transcript_id)
           .maybeSingle()
 

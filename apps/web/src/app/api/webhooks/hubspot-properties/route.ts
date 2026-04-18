@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { emitOutcomeEvent, type OutcomeEventInput } from '@prospector/core'
+import { emitOutcomeEvent, urn, type OutcomeEventInput } from '@prospector/core'
 import {
   verifyHubSpotSignature,
   resolveTenantByPortal,
@@ -138,12 +138,22 @@ function resolveTarget(subscriptionType: string | undefined): ResolvedTarget | n
  */
 function diffOppForOutcomes(
   tenantId: string,
+  // Canonical Postgres opportunities.id — required for the URN. Drop
+  // outcome events when this is missing rather than emitting an
+  // un-attributable URN. The CRM id is recorded in payload as crm_id.
+  oppId: string | null,
   oppCrmId: string,
   prev: { stage?: string | null; value?: number | null; is_won?: boolean | null; is_closed?: boolean | null } | null,
   next: Record<string, unknown>,
 ): OutcomeEventInput[] {
+  if (!oppId) return []
   const events: OutcomeEventInput[] = []
-  const subjectUrn = `urn:rev:opportunity:${oppCrmId}`
+  // Canonical URN — see cron/sync's diffOppForOutcomes for the
+  // rationale: shorthand `urn:rev:opportunity:{crmId}` lacks the
+  // tenant segment and uses the CRM id (not Postgres UUID), so it
+  // doesn't round-trip through `parseUrn` and breaks attribution joins.
+  const subjectUrn = urn.opportunity(tenantId, oppId)
+  const crmRefPayload = { crm_id: oppCrmId }
 
   if ('stage' in next && prev && (prev.stage ?? null) !== (next.stage ?? null)) {
     events.push({
@@ -151,7 +161,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_stage_changed',
       source: 'hubspot_webhook',
-      payload: { from: prev.stage ?? null, to: (next.stage as string | null) ?? null },
+      payload: { ...crmRefPayload, from: prev.stage ?? null, to: (next.stage as string | null) ?? null },
     })
   }
 
@@ -166,7 +176,7 @@ function diffOppForOutcomes(
         subject_urn: subjectUrn,
         event_type: 'deal_amount_changed',
         source: 'hubspot_webhook',
-        payload: { from: prevValue, to: nextValue },
+        payload: { ...crmRefPayload, from: prevValue, to: nextValue },
         value_amount: nextValue,
       })
     }
@@ -178,7 +188,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_closed_won',
       source: 'hubspot_webhook',
-      payload: { stage: (next.stage as string | null) ?? prev?.stage ?? null },
+      payload: { ...crmRefPayload, stage: (next.stage as string | null) ?? prev?.stage ?? null },
       value_amount: Number((next.value as number | null) ?? prev?.value ?? 0),
     })
   }
@@ -194,7 +204,7 @@ function diffOppForOutcomes(
       subject_urn: subjectUrn,
       event_type: 'deal_closed_lost',
       source: 'hubspot_webhook',
-      payload: { stage: (next.stage as string | null) ?? prev?.stage ?? null },
+      payload: { ...crmRefPayload, stage: (next.stage as string | null) ?? prev?.stage ?? null },
       value_amount: Number((next.value as number | null) ?? prev?.value ?? 0),
     })
   }
@@ -298,7 +308,7 @@ export async function POST(request: Request) {
       if (target.emitOutcomes) {
         const { data: prev } = await supabase
           .from(target.tableName)
-          .select('stage, value, is_won, is_closed')
+          .select('id, stage, value, is_won, is_closed')
           .eq('tenant_id', tenantId)
           .eq('crm_id', crmId)
           .maybeSingle()
@@ -333,13 +343,16 @@ export async function POST(request: Request) {
 
       // Outcome events for deal-level changes. Same shape as cron/sync
       // emits so the attribution workflow doesn't need to know the
-      // source.
+      // source. Pull the canonical Postgres id off the prevForOutcome
+      // row (we just fetched it above) so the URN is canonical.
       if (target.emitOutcomes) {
         const nextForOutcome: Record<string, unknown> = {
           [setter.column]: transformedValue,
         }
+        const oppId = (prevForOutcome as { id?: string } | null)?.id ?? null
         const outcomeEvents = diffOppForOutcomes(
           tenantId,
+          oppId,
           crmId,
           prevForOutcome,
           nextForOutcome,

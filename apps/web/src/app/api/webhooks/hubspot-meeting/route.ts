@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import { emitOutcomeEvent } from '@prospector/core'
+import { emitOutcomeEvent, urn } from '@prospector/core'
 import { enqueuePreCallBrief, runPreCallBrief } from '@/lib/workflows'
 
 export const runtime = 'nodejs'
@@ -191,13 +191,18 @@ export async function POST(request: Request) {
       // pre-call briefs we sent against actual booked meetings. The
       // attribution workflow reads outcome_events; without this row the
       // ROI page has nothing to credit pre-call briefs against.
+      // Canonical URN — `urn:rev:{tenantId}:meeting:{hsObjectId}`.
+      // We use the HubSpot meeting id as the URN id segment because
+      // we don't yet have a tenant-side meetings table; the portal id
+      // + meeting id uniquely identify the meeting on HubSpot's side.
       await emitOutcomeEvent(supabase, {
         tenant_id: tenantId,
-        subject_urn: `urn:rev:meeting:${event.objectId}`,
+        subject_urn: urn.meeting(tenantId, String(event.objectId)),
         event_type: 'meeting_booked',
         source: 'hubspot_webhook',
         payload: {
           portal_id: event.portalId,
+          hubspot_object_id: event.objectId,
           subscription_type: event.subscriptionType,
           occurred_at: event.occurredAt ?? null,
         },

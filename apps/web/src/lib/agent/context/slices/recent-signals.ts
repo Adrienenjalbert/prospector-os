@@ -136,12 +136,13 @@ export const recentSignalsSlice: ContextSlice<SignalRow> = {
     }
   },
 
-  formatForPrompt(rows: SignalRow[]): string {
+  formatForPrompt(rows: SignalRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) {
       return '### Recent signals (14d)\n_No signals detected in this window._'
     }
+    const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 6).map((r) => {
-      return `- [${r.urgency}] ${r.company_name}: ${r.title} ${urnInline('signal', r.id)} — ${fmtAge(r.detected_at)}`
+      return `- [${r.urgency}] ${r.company_name}: ${r.title} ${urnInline(tenantId, 'signal', r.id)} — ${fmtAge(r.detected_at)}`
     })
     return `### Recent signals (${rows.length} in 14d)\n${lines.join('\n')}`
   },

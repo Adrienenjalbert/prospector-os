@@ -228,9 +228,10 @@ export const accountFamilySlice: ContextSlice<AccountFamilyRow> = {
     }
   },
 
-  formatForPrompt(rows: AccountFamilyRow[]): string {
+  formatForPrompt(rows: AccountFamilyRow[], fmtCtx?: { tenantId: string }): string {
     const r = rows[0]
     if (!r) return ''
+    const tenantId = fmtCtx?.tenantId ?? ''
 
     const summary = `${r.won_count} won · ${r.open_count} open · ${r.cold_count} cold across ${r.total_members} family members`
     const lines = r.members
@@ -249,7 +250,7 @@ export const accountFamilySlice: ContextSlice<AccountFamilyRow> = {
         const valuePart = m.open_deal_value
           ? ` · open ${fmtMoney(m.open_deal_value)}`
           : ''
-        return `- [${m.outcome}] ${m.name} ${urnInline('company', m.id)} ${label}${valuePart}`
+        return `- [${m.outcome}] ${m.name} ${urnInline(tenantId, 'company', m.id)} ${label}${valuePart}`
       })
 
     const cold = r.members.filter(

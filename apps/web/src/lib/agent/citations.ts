@@ -99,7 +99,11 @@ const addBenchmark = (ctx: CitationContext, stage: Row) => {
   if (!name) return
   ctx.collector.addCitation({
     claim_text: `Benchmark: ${name}`,
-    source_type: 'funnel_benchmark',
+    // `benchmark` matches `UrnObjectType` in `urn.ts` so the citation
+    // pill renders the same label everywhere. The previous
+    // `funnel_benchmark` value created two parallel taxonomies for
+    // the same concept.
+    source_type: 'benchmark',
     source_id: name,
   })
 }

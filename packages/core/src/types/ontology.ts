@@ -47,6 +47,22 @@ export interface Company {
   last_signal_check: string | null
   icp_config_version: string | null
 
+  // Account hierarchy (migration 008). NULL for unrelated/standalone
+  // accounts. The agent reads `parent_company_id` (resolved); the sync
+  // workflow owns the bookkeeping via `parent_crm_id`.
+  parent_company_id: string | null
+  parent_crm_id: string | null
+  is_account_family_root: boolean
+
+  // CSM / portfolio-health columns (migration 001 schema extensions).
+  // Populated by the churn-escalation + portfolio-digest workflows.
+  // Nullable because they only exist for tenants with CSM workflows
+  // enabled — pure-pipeline tenants leave these null.
+  csm_crm_id: string | null
+  churn_risk_score: number | null
+  churn_risk_factors: Record<string, unknown> | null
+  last_exec_engagement: string | null
+
   created_at: string
   updated_at: string
   last_activity_date: string | null

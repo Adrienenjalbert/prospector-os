@@ -116,14 +116,25 @@ async function main() {
   }
 
   // 4. Insert contacts
+  // Seed contacts get a synthetic `crm_id` (`seed:<email>` or
+  // `seed:<first>-<last>`) so they hit the same `(tenant_id, crm_id)`
+  // unique partial index that production sync relies on. Previously
+  // the seed used `onConflict: 'id'`, which (a) requires every seed row
+  // to embed a stable UUID, and (b) diverged from how the cron sync
+  // route inserts rows — re-running the seed would silently create
+  // duplicates instead of upserting.
   console.log('4. Inserting contacts...')
   for (const ct of seedData.contacts) {
     const companyId = companyIdMap.get(ct.company_crm_id)
     if (!companyId) continue
 
+    const syntheticCrmId =
+      'seed:' + (ct.email ?? `${ct.first_name}-${ct.last_name}`).toLowerCase()
+
     const { error } = await supabase.from('contacts').upsert({
       tenant_id: tenantId,
       company_id: companyId,
+      crm_id: syntheticCrmId,
       first_name: ct.first_name,
       last_name: ct.last_name,
       title: ct.title,
@@ -135,7 +146,8 @@ async function main() {
       is_decision_maker: ct.is_decision_maker,
       relevance_score: ct.is_decision_maker ? 80 : 40,
       last_activity_date: new Date(Date.now() - Math.random() * 14 * 86400000).toISOString(),
-    }, { onConflict: 'id' })
+      last_crm_sync: new Date().toISOString(),
+    }, { onConflict: 'tenant_id,crm_id' })
 
     if (error) console.warn(`   Contact ${ct.first_name} ${ct.last_name}: ${error.message}`)
   }

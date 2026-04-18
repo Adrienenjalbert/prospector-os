@@ -302,7 +302,10 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
       failed.push({ slug: r.slug, reason: r.reason })
       continue
     }
-    const markdown = slice.formatForPrompt(r.result.rows)
+    // Pass tenantId so slices can emit canonical URNs
+    // (urn:rev:{tenantId}:{type}:{id}). Slices that don't emit URNs
+    // ignore the second argument.
+    const markdown = slice.formatForPrompt(r.result.rows, { tenantId: opts.tenantId })
     const tokens = estimateTokens(markdown)
     packedBySlug.set(r.slug, {
       slug: r.slug,
@@ -428,7 +431,23 @@ export function renderPackedSections(packed: PackedContext): string {
 export function extractUrnsFromText(text: string): string[] {
   if (!text) return []
   const urns = new Set<string>()
-  const re = /urn:rev:[a-z]+:[A-Za-z0-9_-]+/gi
+  // Canonical URN is `urn:rev:{tenantId}:{type}:{id}` where tenantId is
+  // a UUID (digits + hyphens) and id can be a UUID or a CRM id.
+  // The previous regex `urn:rev:[a-z]+:[A-Za-z0-9_-]+` only allowed
+  // letters in the next segment after `urn:rev:`, so it could match
+  // shorthand (`urn:rev:type:id`) but never canonical URNs whose
+  // tenant segment starts with a digit. That's why the bandit's
+  // `context_slice_consumed` event stream looked empty for any tenant
+  // with a UUID id starting with a digit (i.e. all of them).
+  //
+  // The new pattern matches both forms:
+  //   - canonical: urn:rev:<tenantId>:<type>:<id>
+  //   - shorthand: urn:rev:<type>:<id>  (legacy; still emitted by some
+  //     places we haven't migrated yet — kept matched so we don't lose
+  //     telemetry during the rollout)
+  // A URN segment is `[A-Za-z0-9_-]+` (alphanumeric + hyphen + underscore).
+  // We allow 3 OR 4 segments after `urn:rev:` so both shapes parse.
+  const re = /urn:rev(?::[A-Za-z0-9_-]+){2,4}/gi
   for (const match of text.matchAll(re)) {
     urns.add(match[0])
   }

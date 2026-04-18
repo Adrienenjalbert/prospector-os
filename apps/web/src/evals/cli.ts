@@ -90,7 +90,11 @@ function getSupabase(): SupabaseClient {
 function pickAgentType(c: EvalCase): AgentType {
   const dispatch = dispatchAgent({
     role: c.role,
-    activeUrn: c.category === 'account' ? 'urn:rev:company:eval-stub' : null,
+    // Canonical URN for the eval stub. The previous shorthand
+    // (`urn:rev:company:eval-stub`) had only 4 segments and would not
+    // round-trip through `parseUrn` (which requires ≥5).
+    activeUrn:
+      c.category === 'account' ? 'urn:rev:eval-stub-tenant:company:eval-stub' : null,
   })
   return dispatch.agentType
 }

@@ -129,7 +129,19 @@ export function fmtAge(timestamp: string | null | undefined, now = Date.now()): 
 /**
  * Compose a compact URN string the agent can quote inline (so the
  * citation collector and the URN-citation pill both pick it up).
+ *
+ * IMPORTANT: emits the canonical `urn:rev:{tenantId}:{type}:{id}` form
+ * so it round-trips through `parseUrn()` and matches the regex in
+ * `extractUrnsFromText()`. The previous shorthand (`urn:rev:type:id`)
+ * silently dropped the tenant segment, breaking citation pills and the
+ * `context_slice_consumed` event stream that the bandit reads.
  */
-export function urnInline(type: 'company' | 'opportunity' | 'deal' | 'contact' | 'signal' | 'transcript', id: string): string {
-  return `\`urn:rev:${type}:${id}\``
+import { toUrn, type UrnObjectType } from '@prospector/core'
+
+export function urnInline(
+  tenantId: string,
+  type: UrnObjectType,
+  id: string,
+): string {
+  return `\`${toUrn(tenantId, type, id)}\``
 }

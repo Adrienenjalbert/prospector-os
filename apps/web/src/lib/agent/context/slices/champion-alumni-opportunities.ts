@@ -148,13 +148,14 @@ export const championAlumniSlice: ContextSlice<AlumniRow> = {
     }
   },
 
-  formatForPrompt(rows: AlumniRow[]): string {
+  formatForPrompt(rows: AlumniRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) {
       return '### Champion alumni — warm-intro pipeline\n_No alumni opportunities surfaced yet — the nightly detector populates this as champions move._'
     }
+    const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 5).map((r) => {
       const fresh = fmtAge(r.detected_at)
-      return `- ${r.signal_title} → ${r.new_company_name} ${urnInline('company', r.new_company_id)} (detected ${fresh})`
+      return `- ${r.signal_title} → ${r.new_company_name} ${urnInline(tenantId, 'company', r.new_company_id)} (detected ${fresh})`
     })
     return `### Champion alumni — warm-intro pipeline (${rows.length})
 ${lines.join('\n')}

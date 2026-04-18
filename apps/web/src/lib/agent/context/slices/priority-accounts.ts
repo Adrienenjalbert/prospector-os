@@ -189,10 +189,11 @@ export const prioritySlice: ContextSlice<PriorityAccountRow> = {
     }
   },
 
-  formatForPrompt(rows: PriorityAccountRow[]): string {
+  formatForPrompt(rows: PriorityAccountRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) {
       return '### Priority accounts\n_No priority accounts found for this rep._'
     }
+    const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 8).map((r, i) => {
       const tier = r.priority_tier ?? '—'
       const er = fmtMoney(r.expected_revenue)
@@ -202,7 +203,7 @@ export const prioritySlice: ContextSlice<PriorityAccountRow> = {
       const signalPart = r.signal_count > 0
         ? ` | ${r.signal_count} signal${r.signal_count > 1 ? 's' : ''}: ${r.top_signal}`
         : ''
-      return `${i + 1}. ${r.name} ${urnInline('company', r.id)} — ${tier}, expected ${er}${dealPart}${signalPart}`
+      return `${i + 1}. ${r.name} ${urnInline(tenantId, 'company', r.id)} — ${tier}, expected ${er}${dealPart}${signalPart}`
     })
     return `### Priority accounts (${rows.length})\n${lines.join('\n')}`
   },

@@ -239,8 +239,18 @@ export interface ContextSlice<TRow = unknown, TArgs = void> {
     args?: TArgs,
   ) => Promise<SliceLoadResult<TRow>>
 
-  /** Compact markdown for the prompt — never raw JSON. URNs inline. */
-  formatForPrompt: (rows: TRow[]) => string
+  /**
+   * Compact markdown for the prompt — never raw JSON. URNs inline.
+   *
+   * Slices receive an optional `fmtCtx` with the tenant id so they can
+   * emit canonical URNs via `urnInline(fmtCtx.tenantId, type, id)` —
+   * the older shorthand (`urn:rev:type:id`) silently dropped the
+   * tenant segment, breaking citation pills + the
+   * `context_slice_consumed` event stream that the bandit reads.
+   * `fmtCtx` is optional only for backwards compat with slices that
+   * don't emit URNs.
+   */
+  formatForPrompt: (rows: TRow[], fmtCtx?: { tenantId: string }) => string
 
   /** Single-row URN citation. Used by the on-demand tool to cite one item. */
   citeRow: (row: TRow) => PendingCitation

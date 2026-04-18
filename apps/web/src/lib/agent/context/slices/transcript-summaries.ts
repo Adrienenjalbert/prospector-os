@@ -1,5 +1,5 @@
 import type { ContextSlice, SliceLoadCtx, SliceLoadResult } from '../types'
-import { citeTranscript, fmtAge } from './_helpers'
+import { citeTranscript, fmtAge, urnInline } from './_helpers'
 
 /**
  * `transcript-summaries` — recent call/meeting summaries for the active
@@ -100,17 +100,18 @@ export const transcriptSummariesSlice: ContextSlice<TranscriptRow> = {
     }
   },
 
-  formatForPrompt(rows: TranscriptRow[]): string {
+  formatForPrompt(rows: TranscriptRow[], fmtCtx?: { tenantId: string }): string {
     if (rows.length === 0) {
       return '### Recent transcripts (60d)\n_No transcripts captured for this company in the last 60 days._'
     }
+    const tenantId = fmtCtx?.tenantId ?? ''
     const blocks = rows.map((r) => {
       const titlePart = r.title ?? r.source ?? 'Transcript'
       const themesPart = r.themes.length ? ` · themes: ${r.themes.slice(0, 4).join(', ')}` : ''
       const summary = r.summary
         ? r.summary.slice(0, 240)
         : '_No summary._'
-      return `**${titlePart}** (${fmtAge(r.occurred_at)}${themesPart})\n> ${summary}\n\`urn:rev:transcript:${r.id}\``
+      return `**${titlePart}** (${fmtAge(r.occurred_at)}${themesPart})\n> ${summary}\n${urnInline(tenantId, 'transcript', r.id)}`
     })
     return `### Recent transcripts (${rows.length})\n${blocks.join('\n\n')}`
   },

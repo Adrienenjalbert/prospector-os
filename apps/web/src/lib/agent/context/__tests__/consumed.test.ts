@@ -44,6 +44,38 @@ describe('extractUrnsFromText', () => {
   it('returns empty array for empty text', () => {
     expect(extractUrnsFromText('')).toEqual([])
   })
+
+  // Canonical URN format is `urn:rev:{tenantId}:{type}:{id}` where
+  // tenantId is a UUID. The earlier regex `urn:rev:[a-z]+:[A-Za-z0-9_-]+`
+  // could not match a UUID-tenant segment because `[a-z]+` rejects
+  // digits + hyphens. Result: every canonical URN emitted by `urn.*`
+  // helpers was invisible to the bandit's `context_slice_consumed`
+  // event stream. These tests pin the canonical-URN parsing contract.
+  it('finds canonical URNs with a UUID tenant segment', () => {
+    const text =
+      'See `urn:rev:11111111-2222-3333-4444-555555555555:opportunity:abc-123` for context.'
+    expect(extractUrnsFromText(text)).toEqual([
+      'urn:rev:11111111-2222-3333-4444-555555555555:opportunity:abc-123',
+    ])
+  })
+
+  it('finds canonical URNs whose tenant segment starts with a digit', () => {
+    // Most real UUIDs start with a digit — a regression here would
+    // silently lose URN-consumption signal for ~60% of tenants.
+    const text = 'urn:rev:9abcde00-0000-0000-0000-000000000000:company:co-1'
+    expect(extractUrnsFromText(text)).toEqual([
+      'urn:rev:9abcde00-0000-0000-0000-000000000000:company:co-1',
+    ])
+  })
+
+  it('still finds shorthand URNs for backwards compat with un-migrated text', () => {
+    // Some seeded prompts and goldens still emit the legacy 4-segment
+    // form; the regex must accept both during the rollout window.
+    const text = 'See urn:rev:opportunity:abc and `urn:rev:company:xyz` together.'
+    const urns = extractUrnsFromText(text)
+    expect(urns).toContain('urn:rev:opportunity:abc')
+    expect(urns).toContain('urn:rev:company:xyz')
+  })
 })
 
 describe('consumedSlicesFromResponse', () => {
