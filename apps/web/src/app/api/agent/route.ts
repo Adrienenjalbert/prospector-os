@@ -25,6 +25,7 @@ import {
 import { recordCitationsFromToolResult } from '@/lib/agent/citations'
 import { chooseModel, getModel } from '@/lib/agent/model-registry'
 import { compactConversation } from '@/lib/agent/compaction'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 // Phase 3.9: ROLLING_MESSAGE_LIMIT remains as the persistence cap on
 // `ai_conversations.messages` (we don't want unbounded growth there
@@ -126,6 +127,21 @@ export async function POST(req: Request) {
         status: 403,
         headers: { 'Content-Type': 'application/json' },
       })
+    }
+
+    // Rate limit per user. The chat agent is the most expensive
+    // endpoint we expose (Claude tokens + tool fan-out). Without a
+    // limiter, a hammering script costs O($) per minute per attacker.
+    // Default cap is 10 turns / minute / user — enough for normal
+    // conversation, will trip an automated abuser. The check uses
+    // `agent_events` as the source so it works across cold-starts and
+    // horizontal scale (in-memory state would be effectively unlimited).
+    const limit = await checkRateLimit(supabase, user.id)
+    if (!limit.allowed) {
+      console.warn(
+        `[agent] rate-limited user=${user.id} used=${limit.used}/${limit.limit}`,
+      )
+      return rateLimitResponse(limit)
     }
 
     const { data: repProfile } = await supabase

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
+import { forEachTenantChunked, statusFor } from '@/lib/cron-fanout'
 import { SalesforceAdapter, HubSpotAdapter } from '@prospector/adapters'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import { emitOutcomeEvent, urn, type OutcomeEventInput } from '@prospector/core'
@@ -157,40 +158,65 @@ async function syncCompanyHierarchy(
   // self-join. Use a single SQL UPDATE per tenant — set
   // parent_company_id where it's NULL but parent_crm_id matches another
   // tenant-scoped row's crm_id.
-  await supabase.rpc('resolve_company_parents', { tenant_id_in: tenantId })
-    .then(
-      () => undefined,
-      // RPC may not exist in tenants that haven't applied migration 008
-      // yet — silently fall back to a per-row update path. This keeps
-      // the sync working even before the migration is run on every env.
-      async () => {
-        const { data: orphans } = await supabase
-          .from('companies')
-          .select('id, parent_crm_id')
-          .eq('tenant_id', tenantId)
-          .is('parent_company_id', null)
-          .not('parent_crm_id', 'is', null)
-        for (const row of orphans ?? []) {
-          if (!row.parent_crm_id) continue
-          const { data: parent } = await supabase
-            .from('companies')
-            .select('id')
-            .eq('tenant_id', tenantId)
-            .eq('crm_id', row.parent_crm_id)
-            .maybeSingle()
-          if (parent) {
-            await supabase
-              .from('companies')
-              .update({ parent_company_id: parent.id })
-              .eq('id', row.id)
-            await supabase
-              .from('companies')
-              .update({ is_account_family_root: true })
-              .eq('id', parent.id)
-          }
-        }
-      },
+  //
+  // The fallback path exists for tenants that haven't applied migration
+  // 008 yet (the RPC simply doesn't exist there — Postgres returns
+  // PGRST202 / 42883). Pre-this-change ANY error from the RPC fell
+  // through to the per-row fallback, which masked real failures (RLS
+  // denial, network blip, statement timeout) by silently doing
+  // double the work. We now distinguish the "missing function" code
+  // from real errors and let the latter surface.
+  const { error: rpcError } = await supabase.rpc('resolve_company_parents', {
+    tenant_id_in: tenantId,
+  })
+  if (!rpcError) return
+
+  const code = (rpcError as { code?: string }).code ?? ''
+  const isMissingFunction =
+    code === 'PGRST202' ||
+    code === '42883' ||
+    /could not find the function/i.test(rpcError.message ?? '')
+
+  if (!isMissingFunction) {
+    // Real failure — log it, don't silently double-work via the fallback.
+    console.warn(
+      `[cron/sync] resolve_company_parents RPC failed for tenant=${tenantId}: ${rpcError.message}`,
     )
+    return
+  }
+
+  // Migration 008 not applied → use the per-row update path. Log once
+  // at info level so ops can see this tenant is on the slow path and
+  // schedule the migration.
+  console.warn(
+    `[cron/sync] tenant=${tenantId} on slow parent-resolve path (run migration 008 to enable RPC)`,
+  )
+
+  const { data: orphans } = await supabase
+    .from('companies')
+    .select('id, parent_crm_id')
+    .eq('tenant_id', tenantId)
+    .is('parent_company_id', null)
+    .not('parent_crm_id', 'is', null)
+  for (const row of orphans ?? []) {
+    if (!row.parent_crm_id) continue
+    const { data: parent } = await supabase
+      .from('companies')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('crm_id', row.parent_crm_id)
+      .maybeSingle()
+    if (parent) {
+      await supabase
+        .from('companies')
+        .update({ parent_company_id: parent.id })
+        .eq('id', row.id)
+      await supabase
+        .from('companies')
+        .update({ is_account_family_root: true })
+        .eq('id', parent.id)
+    }
+  }
 }
 
 export async function GET(req: Request) {
@@ -210,20 +236,50 @@ export async function GET(req: Request) {
       return NextResponse.json({ message: 'No active tenants' })
     }
 
-    let totalSynced = 0
+    // Bounded fan-out across tenants. Pre-this-change the loop was
+    // sequential — one slow HubSpot org (a tenant with 50K accounts
+    // and a slow API key) would push the entire fleet's sync past
+    // the cron's wall-clock budget, leaving every later tenant
+    // unsynced. Now we process tenants in chunks of 5 (CRMs are the
+    // tightest rate-limit ceiling we hit here, so a small chunk
+    // protects against burst rate-limit responses) and never let one
+    // tenant's failure abort the rest.
+    const tenantsTyped = tenants.map((t) => ({
+      id: t.id,
+      crm_type: t.crm_type,
+      crm_credentials_encrypted: t.crm_credentials_encrypted,
+    }))
 
-    for (const tenant of tenants) {
-      const creds = parseCreds(tenant.crm_credentials_encrypted)
+    const fanout = await forEachTenantChunked(
+      tenantsTyped,
+      async (t) => {
+        const tenant = t as (typeof tenantsTyped)[number]
+        const creds = parseCreds(tenant.crm_credentials_encrypted)
+        if (tenant.crm_type === 'salesforce' && creds.client_id) {
+          return await syncSalesforce(supabase, tenant.id, creds)
+        }
+        if (tenant.crm_type === 'hubspot' && creds.private_app_token) {
+          return await syncHubSpot(supabase, tenant.id, creds)
+        }
+        return 0
+      },
+      { logPrefix: '[cron/sync]', chunkSize: 5 },
+    )
 
-      if (tenant.crm_type === 'salesforce' && creds.client_id) {
-        totalSynced += await syncSalesforce(supabase, tenant.id, creds)
-      } else if (tenant.crm_type === 'hubspot' && creds.private_app_token) {
-        totalSynced += await syncHubSpot(supabase, tenant.id, creds)
-      }
-    }
-
-    await recordCronRun('/api/cron/sync', 'success', Date.now() - startTime, totalSynced)
-    return NextResponse.json({ synced: totalSynced })
+    await recordCronRun(
+      '/api/cron/sync',
+      statusFor(fanout),
+      Date.now() - startTime,
+      fanout.records,
+      fanout.failed > 0
+        ? `${fanout.failed}/${fanout.ok + fanout.failed} tenants failed; first: ${fanout.errors[0]?.error ?? 'unknown'}`
+        : undefined,
+    )
+    return NextResponse.json({
+      synced: fanout.records,
+      tenants_ok: fanout.ok,
+      tenants_failed: fanout.failed,
+    })
   } catch (err) {
     console.error('[cron/sync]', err)
     await recordCronRun('/api/cron/sync', 'error', Date.now() - startTime, 0, err instanceof Error ? err.message : 'Unknown error')
@@ -362,8 +418,16 @@ async function syncSalesforce(
           }, { onConflict: 'tenant_id,crm_id' })
           synced++
         }
-      } catch {
-        // Some companies may not have contacts accessible
+      } catch (err) {
+        // Some companies may not have contacts accessible (deleted in
+        // CRM, permissions). Pre-this-change the catch was silent —
+        // a permissions misconfiguration surfaced as "0 contacts
+        // synced" with no breadcrumb. Now we log per-company so ops
+        // can grep `[cron/sync] sf contact-sync` to find the pattern.
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[cron/sync] sf contact-sync skipped tenant=${tenantId} company=${company.id}: ${message}`,
+        )
       }
     }
   }
@@ -527,8 +591,15 @@ async function syncHubSpot(
           }, { onConflict: 'tenant_id,crm_id' })
           synced++
         }
-      } catch {
-        // Some companies may not have contacts accessible
+      } catch (err) {
+        // Same rationale as the Salesforce path: log the company id +
+        // tenant + sanitised error so a permissions misconfig is
+        // greppable, but never let one company's failure abort the
+        // tenant's sync run.
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[cron/sync] hs contact-sync skipped tenant=${tenantId} company=${company.id}: ${message}`,
+        )
       }
       lastCompanyId = company.id
       companiesProcessed++

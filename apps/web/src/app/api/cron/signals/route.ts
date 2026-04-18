@@ -291,8 +291,16 @@ export async function GET(req: Request) {
           await supabase.from('companies').update({
             last_signal_check: new Date().toISOString(),
           }).eq('id', company.id)
-        } catch {
-          // Skip company on API error, continue with next
+        } catch (err) {
+          // Skip company on Apollo / Claude / Postgres failure, continue
+          // with next. Log per-company so a partial outage doesn't go
+          // silent — without this, an Apollo 5xx that affected 30% of
+          // companies showed up as "fewer signals than usual" with no
+          // breadcrumb to grep.
+          const message = err instanceof Error ? err.message : String(err)
+          console.warn(
+            `[cron/signals] tenant=${tenant.id} company=${company.id} skipped: ${message}`,
+          )
         }
       }
 
@@ -379,7 +387,12 @@ async function shouldRunDeepResearch(
   const conversionRate = actioned / roiData.length
 
   if (conversionRate < 0.05) {
-    console.log(
+    // Operational decision (skip an expensive Claude deep-research
+    // call for this tenant). Use `console.warn` so it shows up in the
+    // Vercel function logs filter alongside other ops-visible
+    // breadcrumbs — `console.log` was being filtered out at the
+    // platform level and the skip became invisible.
+    console.warn(
       `[cron/signals] Skipping deep research — ROI too low ` +
       `(${(conversionRate * 100).toFixed(1)}% conversion, ${roiData.length} samples)`
     )

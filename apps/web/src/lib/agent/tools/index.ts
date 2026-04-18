@@ -1,6 +1,7 @@
 import type { AgentContext } from '@prospector/core'
 import { tool, type Tool } from 'ai'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { ZodTypeAny } from 'zod'
 
 import {
   createPipelineCoachTools,
@@ -367,15 +368,32 @@ function wrapStaticToolsWithMiddleware(
   const wrapped: Record<string, Tool> = {}
 
   for (const [slug, t] of Object.entries(toolMap)) {
+    // AI SDK's `Tool<PARAMETERS extends ToolParameters>` already declares
+    // `parameters` as `z.ZodTypeAny | Schema<any>`. The previous code
+    // typed this field as `unknown` and then re-cast with `as any` at
+    // the call site — TS-safety regression that made it hard to spot
+    // a parameters object that's neither Zod nor an AI SDK Schema.
+    // Now we type the field correctly so future drift gets caught at
+    // compile time.
     const inner = t as Tool & {
       execute?: (args: unknown) => Promise<unknown>
-      parameters?: unknown
+      parameters?: ZodTypeAny | undefined
       description?: string
     }
 
     if (typeof inner.execute !== 'function') {
       // Pass through anything we can't wrap (no execute = no harness needed).
       wrapped[slug] = t
+      continue
+    }
+    if (!inner.parameters) {
+      // Defensive: a Tool without parameters can't survive AI SDK's
+      // strict tool-call validation. Skip rather than wrap with a
+      // bogus schema and surface a noisy warning so the missing schema
+      // is greppable in the function logs.
+      console.warn(
+        `[tools] static fallback skipping ${slug} — missing parameters schema`,
+      )
       continue
     }
 
@@ -410,8 +428,7 @@ function wrapStaticToolsWithMiddleware(
 
     wrapped[slug] = tool({
       description: inner.description ?? slug,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      parameters: inner.parameters as any,
+      parameters: inner.parameters,
       execute: async (args: unknown) => {
         try {
           return ((await wrappedExecute(args)) ?? {}) as Record<string, unknown>

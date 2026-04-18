@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ZodSchema } from 'zod'
+import { wrapError } from '@/lib/errors'
 
 /**
  * Thin durable-workflow runner. Each workflow is a sequence of named steps.
@@ -110,7 +111,7 @@ export async function startWorkflow(
     .single()
 
   if (error || !data) {
-    throw new Error(`Failed to start workflow: ${error?.message}`)
+    throw wrapError('Failed to start workflow', error ?? new Error('no row returned'))
   }
   return data as WorkflowRunRow
 }

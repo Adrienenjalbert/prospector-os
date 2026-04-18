@@ -20,7 +20,7 @@
     "@prospector/core": "*",
     "@prospector/db": "*",
     "@supabase/ssr": "^0.6",
-    "@supabase/supabase-js": "^2",
+    "@supabase/supabase-js": "^2.103.2",
     "ai": "^4",
     "clsx": "^2",
     "lucide-react": "^0.475",
