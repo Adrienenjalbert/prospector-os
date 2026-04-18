@@ -222,6 +222,25 @@ export async function POST(req: Request) {
       explicitAgentType: agentType,
     })
 
+    // Resolve the active conversation row up-front so per-conversation
+    // tools (record_conversation_note) and the conversation-memory slice
+    // can scope their queries correctly. The route's onFinish handler
+    // creates/updates this row at the END of each turn, so on turn 2+
+    // we hit an existing row; turn 1 returns null (handler no-ops
+    // gracefully — the observation will be capturable next turn).
+    const threadType = agentType === 'onboarding-coach' ? 'onboarding' : 'general'
+    const { data: existingConversation } = await supabase
+      .from('ai_conversations')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('user_id', user.id)
+      .eq('thread_type', threadType)
+      .is('thread_entity_id', null)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const activeConversationId = existingConversation?.id ?? null
+
     const tools = await loadToolsForDispatch({
       supabase,
       tenantId,
@@ -232,6 +251,7 @@ export async function POST(req: Request) {
       activeUrn: dispatch.activeUrn,
       interactionId,
       intentClass,
+      conversationId: activeConversationId,
     })
 
     const contextSelection = pickContextStrategy({

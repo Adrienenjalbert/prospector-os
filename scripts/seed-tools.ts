@@ -528,6 +528,39 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     enabled: true,
   },
   {
+    slug: 'record_conversation_note',
+    display_name: 'Record Conversation Note',
+    description:
+      "Persist a structured observation between turns within this chat thread so the next turn doesn't have to re-derive it. Scopes: user_preference (rep style/format prefs), intent_observation (what the rep is actually trying to do), working_assumption (what you assumed; revisit if data shifts), commitment (something the rep or champion agreed to), general (catch-all). Notes are <=500 chars, scoped to the current ai_conversations row, and surface in the conversation-memory slice on the next turn. Use freely — non-mutating to CRM, no approval required. Don't record long narrative summaries; those go in message history. Notes are concrete, structured, ≤ 1 sentence.",
+    category: 'action',
+    tool_type: 'builtin',
+    execution_config: { handler: 'record_conversation_note' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'The observation to remember. Concrete and short — favour facts over interpretations.',
+        },
+        scope: {
+          type: 'string',
+          enum: [
+            'user_preference',
+            'intent_observation',
+            'working_assumption',
+            'commitment',
+            'general',
+          ],
+          description: 'The structural axis — see tool description for guidance.',
+        },
+      },
+      required: ['content', 'scope'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad', 'csm', 'leader'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
     slug: 'log_crm_activity',
     display_name: 'Log CRM Activity',
     description:
@@ -823,6 +856,7 @@ export async function seedIndeedFlexProfile(
             'log_crm_activity',
             'update_crm_property',
             'create_crm_task',
+            'record_conversation_note',
           ],
         },
         {
@@ -847,6 +881,7 @@ export async function seedIndeedFlexProfile(
             'log_crm_activity',
             'update_crm_property',
             'create_crm_task',
+            'record_conversation_note',
           ],
         },
         {
@@ -866,6 +901,7 @@ export async function seedIndeedFlexProfile(
             'log_crm_activity',
             'update_crm_property',
             'create_crm_task',
+            'record_conversation_note',
           ],
         },
         {
@@ -890,6 +926,7 @@ export async function seedIndeedFlexProfile(
             'log_crm_activity',
             'update_crm_property',
             'create_crm_task',
+            'record_conversation_note',
           ],
         },
         {
@@ -910,6 +947,7 @@ export async function seedIndeedFlexProfile(
             'log_crm_activity',
             'update_crm_property',
             'create_crm_task',
+            'record_conversation_note',
           ],
         },
         {
@@ -931,6 +969,7 @@ export async function seedIndeedFlexProfile(
             'log_crm_activity',
             'update_crm_property',
             'create_crm_task',
+            'record_conversation_note',
           ],
         },
       ],

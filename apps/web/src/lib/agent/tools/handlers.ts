@@ -12,6 +12,7 @@ import {
   updateCrmPropertyHandler,
   createCrmTaskHandler,
 } from './handlers/crm-write'
+import { recordConversationNoteHandler } from './handlers/record-conversation-note'
 
 /**
  * Bridge between the tool_registry (DB) and the existing tool factories.
@@ -155,4 +156,8 @@ export function registerBuiltinToolHandlers(): void {
   registerToolHandler(logCrmActivityHandler)
   registerToolHandler(updateCrmPropertyHandler)
   registerToolHandler(createCrmTaskHandler)
+  // Phase 3.7 conversation memory — non-mutating, scoped to the active
+  // ai_conversations row. The handler resolves the conversation by
+  // (user, tenant, thread_type) so it works without a route change.
+  registerToolHandler(recordConversationNoteHandler)
 }

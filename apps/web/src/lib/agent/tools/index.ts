@@ -230,6 +230,8 @@ export async function loadToolsForDispatch(opts: {
   activeUrn?: string | null
   /** Interaction id the agent route assigned for this turn. */
   interactionId?: string | null
+  /** Active ai_conversations.id, when known (Phase 3.7 conversation memory). */
+  conversationId?: string | null
   /**
    * Intent class from the route's `classifyIntent`. Used by the Thompson
    * tool bandit to rank tools by per-tenant priors. Optional so workflow
@@ -247,6 +249,7 @@ export async function loadToolsForDispatch(opts: {
     role: opts.role,
     activeUrn: opts.activeUrn ?? null,
     interactionId: opts.interactionId ?? null,
+    conversationId: opts.conversationId ?? null,
   })
 
   const baseTools =

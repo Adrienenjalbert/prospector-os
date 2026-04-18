@@ -264,6 +264,17 @@ describe('slice registry sanity', () => {
     expect(slice?.triggers.roles).toContain('ae')
     expect(slice?.triggers.roles).toContain('nae')
   })
+
+  it('Phase 3.7 conversation-memory slice is registered and meta-categorised', () => {
+    const slice = SLICES['conversation-memory']
+    expect(slice).toBeDefined()
+    expect(slice?.category).toBe('meta')
+    // Loaded for AE/NAE/CSM/AD — universal carry-forward surface
+    expect(slice?.triggers.roles).toContain('ae')
+    expect(slice?.triggers.roles).toContain('csm')
+    // Tight token budget — the agent's own observations stay compact
+    expect(slice?.token_budget).toBeLessThanOrEqual(250)
+  })
 })
 
 describe('Phase 2 slice triggers', () => {
