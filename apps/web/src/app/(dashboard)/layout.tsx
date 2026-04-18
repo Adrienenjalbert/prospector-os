@@ -13,6 +13,41 @@ import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { getSkillsForPath, resolveSkillPrompt } from "@/lib/agent/skills";
 import { clsx } from "clsx";
 
+/**
+ * Pure helper — picks the right agent surface for the chat sidebar based on
+ * the rep's role and the current page. Must agree with `dispatchAgent` in
+ * `apps/web/src/lib/agent/tools/index.ts` (server-side mapping). Without
+ * this, every chat opened from the global sidebar landed in pipeline-coach
+ * regardless of role — leadership-lens and onboarding-coach were
+ * effectively unreachable from free-form chat.
+ *
+ * Active-object routes still win: viewing a deal opens pipeline-coach,
+ * viewing a company opens account-strategist, viewing onboarding opens
+ * onboarding-coach. Otherwise we fall back to the role default.
+ */
+function pickChatAgentType(role: string, pathname: string): AgentType {
+  if (pathname.startsWith("/onboarding")) return "onboarding-coach";
+  if (pathname.startsWith("/admin/")) return "leadership-lens";
+  if (pathname.startsWith("/objects/deals") || pathname.startsWith("/pipeline")) {
+    return "pipeline-coach";
+  }
+  if (
+    pathname.startsWith("/objects/companies") ||
+    pathname.startsWith("/accounts")
+  ) {
+    return "account-strategist";
+  }
+  if (pathname.startsWith("/analytics/forecast") || pathname.startsWith("/analytics/team")) {
+    return "leadership-lens";
+  }
+  // Role default — leaders/admins land in leadership-lens; reps in
+  // pipeline-coach. Mirrors `ROLE_DEFAULT_AGENT` server-side.
+  if (role === "manager" || role === "admin" || role === "revops") {
+    return "leadership-lens";
+  }
+  return "pipeline-coach";
+}
+
 type NavItem = { href: string; label: string; roles?: string[] };
 type NavDropdownItem = { href: string; label: string; roles?: string[] };
 type NavDropdownDef = { label: string; items: NavDropdownItem[]; roles?: string[] };
@@ -319,13 +354,8 @@ export default function DashboardLayout({
           initialPrompt={chatInitialPrompt}
           onPromptConsumed={() => setChatInitialPrompt(null)}
           activeUrn={chatActiveUrn}
-          agentType={
-            pathname.startsWith('/objects/deals') || pathname.startsWith('/pipeline')
-              ? 'pipeline-coach'
-              : pathname.startsWith('/objects/companies') || pathname.startsWith('/accounts')
-                ? 'account-strategist'
-                : 'pipeline-coach'
-          }
+          agentType={pickChatAgentType(userRole, pathname)}
+          userRole={userRole}
         />
         <AgentPanel
           isOpen={agentPanel.isOpen}

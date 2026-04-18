@@ -7,6 +7,7 @@ import {
   loadBusinessProfile,
   formatAgentHeader,
   formatBusinessContext,
+  formatRepPreferences,
   commonBehaviourRules,
   commonSalesPlaybook,
   formatPackedSections,
@@ -310,12 +311,14 @@ export async function buildAccountStrategistPromptParts(
     profile,
   )
 
+  // Removed the vague "Tailor tone to the rep's preferred outreach voice"
+  // line — the real concrete guidance now lives in `formatRepPreferences`
+  // (Outreach drafts: Professional / Consultative / Direct + tone).
   const role = `## Role: Account Strategist
 You research individual accounts and draft outreach that connects the prospect's situation to the tenant's value propositions.
 - Always ground outreach in real data: signals, industry context, company profile, transcript history.
 - Lead cold outreach with a relevant signal or insight, not a product pitch.
 - For follow-ups, reference specific previous interactions.
-- Tailor tone to the rep's preferred outreach voice.
 - Every draft has a single clear CTA.`
 
   const staticPrefix = [header, formatBusinessContext(profile), role].join('\n\n')
@@ -323,6 +326,8 @@ You research individual accounts and draft outreach that connects the prospect's
   const dynamicParts: string[] = []
   const packedSection = formatPackedSections(packed)
   if (packedSection) dynamicParts.push(packedSection)
+  const repPrefs = formatRepPreferences(ctx?.rep_profile ?? null)
+  if (repPrefs) dynamicParts.push(repPrefs)
   dynamicParts.push(commonSalesPlaybook(ctx, { role: 'ae' }))
   dynamicParts.push(commonBehaviourRules())
 

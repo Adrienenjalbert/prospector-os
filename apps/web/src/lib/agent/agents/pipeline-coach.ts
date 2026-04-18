@@ -6,6 +6,7 @@ import {
   loadBusinessProfile,
   formatAgentHeader,
   formatBusinessContext,
+  formatRepPreferences,
   commonBehaviourRules,
   commonSalesPlaybook,
   formatPackedSections,
@@ -399,8 +400,11 @@ export async function buildPipelineCoachPromptParts(
   // Static prefix — cacheable across turns within the same (tenant, role).
   const staticPrefix = [header, formatBusinessContext(profile), role].join('\n\n')
 
-  // Dynamic suffix — per-turn data + intent-dependent playbook + behaviour
-  // rules (rules at end for lost-in-the-middle attention).
+  // Dynamic suffix — per-turn data + rep prefs + intent-dependent playbook
+  // + behaviour rules (rules at end for lost-in-the-middle attention).
+  // Rep preferences land BEFORE the playbook so they shape framework
+  // application (e.g. a "brief" rep gets the SPIN questions in 4 lines,
+  // not 12).
   const dynamicParts: string[] = []
   const packedSection = formatPackedSections(packed)
   if (packedSection) {
@@ -419,6 +423,8 @@ export async function buildPipelineCoachPromptParts(
       dynamicParts.push(`## Top Priority Accounts (snapshot)\n${top.join('\n')}`)
     }
   }
+  const repPrefs = formatRepPreferences(ctx?.rep_profile ?? null)
+  if (repPrefs) dynamicParts.push(repPrefs)
   dynamicParts.push(commonSalesPlaybook(ctx, { role: 'ae' }))
   dynamicParts.push(commonBehaviourRules())
   const dynamicSuffix = dynamicParts.join('\n\n')

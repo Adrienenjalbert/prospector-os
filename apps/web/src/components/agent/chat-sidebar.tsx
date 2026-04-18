@@ -49,6 +49,77 @@ export interface ChatSidebarProps {
    * every emitted event gets the subject_urn attached.
    */
   activeUrn?: string | null;
+  /**
+   * The current rep's role. Used to show/hide the "leadership-lens" surface
+   * in the agent picker — reps shouldn't see a lens designed for their
+   * manager. Optional; absent value = show all surfaces.
+   */
+  userRole?: string;
+}
+
+/**
+ * Surface picker shown above the chat input. Lets a rep flip from
+ * pipeline-coach into account-strategist or onboarding-coach without
+ * navigating to a different page. Without this, the only way to reach
+ * `leadership-lens` or `onboarding-coach` from chat was to navigate to
+ * an admin or onboarding URL — undiscoverable for most reps.
+ *
+ * Reps see 3 surfaces (pipeline-coach, account-strategist, onboarding-coach);
+ * managers / admins see all 4 (adds leadership-lens). Hiding leadership-lens
+ * from reps avoids confusion: the lens reasons about cross-rep aggregates
+ * a rep doesn't have permission to see anyway.
+ */
+const SURFACE_LABELS: Record<AgentType, { label: string; tag: string }> = {
+  "pipeline-coach": { label: "Pipeline Coach", tag: "deals & velocity" },
+  "account-strategist": { label: "Account Strategist", tag: "accounts & outreach" },
+  "leadership-lens": { label: "Leadership Lens", tag: "team rollups" },
+  "onboarding-coach": { label: "Onboarding Coach", tag: "setup & config" },
+};
+
+function SurfacePicker({
+  current,
+  onChange,
+  userRole,
+}: {
+  current: AgentType;
+  onChange: (next: AgentType) => void;
+  userRole?: string;
+}) {
+  const isLeader =
+    userRole === "manager" || userRole === "admin" || userRole === "revops";
+  const surfaces: AgentType[] = isLeader
+    ? ["pipeline-coach", "account-strategist", "leadership-lens", "onboarding-coach"]
+    : ["pipeline-coach", "account-strategist", "onboarding-coach"];
+
+  return (
+    <div
+      role="tablist"
+      aria-label="Agent surface"
+      className="flex shrink-0 gap-1 border-t border-zinc-800 px-4 py-2"
+    >
+      {surfaces.map((surface) => {
+        const meta = SURFACE_LABELS[surface];
+        const active = surface === current;
+        return (
+          <button
+            key={surface}
+            role="tab"
+            aria-selected={active}
+            type="button"
+            onClick={() => onChange(surface)}
+            className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+              active
+                ? "bg-violet-600/20 text-violet-200"
+                : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            }`}
+            title={meta.tag}
+          >
+            {meta.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 const fallbackPrompts = [
@@ -90,6 +161,7 @@ function ChatSidebarChat({
   accessToken,
   agentType,
   activeUrn,
+  userRole,
 }: ChatSidebarProps & {
   initialMessages: Message[];
   accessToken: string | null;
@@ -100,9 +172,19 @@ function ChatSidebarChat({
     page: pathname ?? "",
     activeUrn: activeUrn ?? undefined,
   };
+  // Local override on top of the page-derived agentType. Lets the user pick
+  // a different surface for this conversation. Reset to undefined when the
+  // page (and therefore the prop default) changes so navigation doesn't
+  // strand the user on a stale surface.
+  const [surfaceOverride, setSurfaceOverride] = useState<AgentType | null>(null);
+  useEffect(() => {
+    setSurfaceOverride(null);
+  }, [agentType]);
+  const effectiveAgentType: AgentType = surfaceOverride ?? agentType ?? "pipeline-coach";
+
   const { messages, input, setInput, handleSubmit, append, isLoading, error, interactionId } =
     useAgentChat({
-      agentType,
+      agentType: effectiveAgentType,
       initialMessages,
       initialAccessToken: accessToken,
       pageContext,
@@ -215,6 +297,12 @@ function ChatSidebarChat({
         </div>
       )}
 
+      <SurfacePicker
+        current={effectiveAgentType}
+        onChange={setSurfaceOverride}
+        userRole={userRole}
+      />
+
       <form
         onSubmit={handleSubmit}
         className="flex shrink-0 gap-2 border-t border-zinc-800 p-4"
@@ -256,6 +344,7 @@ export function ChatSidebar({
   onPromptConsumed,
   agentType,
   activeUrn,
+  userRole,
 }: ChatSidebarProps) {
   const [historyReady, setHistoryReady] = useState(false);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
@@ -343,6 +432,7 @@ export function ChatSidebar({
       accessToken={accessToken}
       agentType={agentType}
       activeUrn={activeUrn ?? null}
+      userRole={userRole}
     />
   );
 }

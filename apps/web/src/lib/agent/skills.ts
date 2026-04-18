@@ -31,7 +31,12 @@ export const INBOX_SKILLS: Skill[] = [
     id: 'inbox-why-hot',
     agent: 'pipeline-coach',
     label: 'Why is my top account hot?',
-    prompt: 'Explain why my top-priority account is hot right now. Use explain_score and active_signals.',
+    // Tool names quoted in the prompt MUST match registered slugs in
+    // `tool_registry`. Previously this referenced `active_signals` which
+    // doesn't exist — the registered tool is `get_active_signals`. The
+    // model would either skip the call or guess (and a guessed tool name
+    // = no signal data fetched = no real reason returned).
+    prompt: 'Explain why my top-priority account is hot right now. Use explain_score and get_active_signals.',
     description: 'Walk through the score breakdown',
   },
   {
@@ -333,6 +338,89 @@ export const OBJECTS_TRANSCRIPTS_SKILLS: Skill[] = [
   },
 ]
 
+// ── Settings & admin skills ──────────────────────────────────────────────
+//
+// Previously these routes returned `[]` from `getSkillsForPath`, so the
+// "Ask AI about this page" header button silently fell back to opening
+// the empty chat sidebar. That violated the UX gate "every empty state
+// is an opportunity state". Settings and admin pages are exactly where
+// reps need agent help (re-tuning ICP, reading their own ROI numbers).
+
+export const SETTINGS_SKILLS: Skill[] = [
+  {
+    id: 'settings-tone',
+    agent: 'onboarding-coach',
+    label: 'Tune my outreach tone',
+    prompt:
+      'I want to change how the agent drafts emails for me. Walk me through my current outreach tone, comm style, and alert frequency, and propose changes if my recent thumbs-up history suggests they would help.',
+  },
+  {
+    id: 'settings-explain-config',
+    agent: 'onboarding-coach',
+    label: 'What does each setting do?',
+    prompt:
+      'Explain in plain English what each preference on this page controls and how it changes the agent behaviour. Cover alert_frequency, comm_style, outreach_tone, focus_stage.',
+  },
+  {
+    id: 'settings-skip-baseline',
+    agent: 'onboarding-coach',
+    label: 'Help me complete onboarding',
+    prompt:
+      'Check my onboarding state — baseline survey, CRM connection, ICP config, funnel config — and tell me which steps are still incomplete and how to finish them.',
+  },
+]
+
+export const ADMIN_ROI_SKILLS: Skill[] = [
+  {
+    id: 'admin-roi-explain',
+    agent: 'leadership-lens',
+    label: 'Explain this ROI number',
+    prompt:
+      "Walk me through how the time-saved and influenced-ARR numbers on this page are computed. Which `agent_events` and `outcome_events` feed each metric? What's the holdout cohort lift saying right now, and is it statistically meaningful?",
+  },
+  {
+    id: 'admin-roi-low',
+    agent: 'leadership-lens',
+    label: 'Why is influenced ARR low?',
+    prompt:
+      'Look at the influenced ARR for this quarter. If it is below target, what are the top 3 reasons (low adoption, low cited-answer rate, holdout suppressed too much, attribution confidence too low)? Cite the events table.',
+  },
+]
+
+export const ADMIN_ADAPTATION_SKILLS: Skill[] = [
+  {
+    id: 'admin-adaptation-summary',
+    agent: 'leadership-lens',
+    label: 'What has the OS learned this month?',
+    prompt:
+      'Summarise the calibration_ledger entries for the last 30 days for this tenant. Group by change_type. For each, name the observed lift and whether it was approved or auto-applied.',
+  },
+  {
+    id: 'admin-adaptation-pending',
+    agent: 'leadership-lens',
+    label: 'Show pending proposals',
+    prompt:
+      'List every calibration proposal in status=pending. For each, show the proposed change, the AUC lift, the sample size, and whether shouldAutoApply would have approved it.',
+  },
+]
+
+export const ADMIN_CONFIG_SKILLS: Skill[] = [
+  {
+    id: 'admin-config-icp',
+    agent: 'onboarding-coach',
+    label: 'Re-derive ICP from won deals',
+    prompt:
+      'Run analyze_pipeline_history and analyze_account_distribution for this tenant, then propose_icp_config. Compare the proposal against the current ICP — explain the deltas and whether you recommend applying.',
+  },
+  {
+    id: 'admin-config-funnel',
+    agent: 'onboarding-coach',
+    label: 'Re-derive funnel benchmarks',
+    prompt:
+      'Run analyze_pipeline_history then propose_funnel_config. Compare the proposed median-days against the current stall thresholds and flag any that look mis-tuned.',
+  },
+]
+
 // ── Skill registry by route prefix ───────────────────────────────────────
 
 export function getSkillsForPath(pathname: string): Skill[] {
@@ -351,5 +439,22 @@ export function getSkillsForPath(pathname: string): Skill[] {
   if (pathname === '/objects/contacts') return OBJECTS_CONTACTS_SKILLS
   if (pathname === '/objects/signals') return OBJECTS_SIGNALS_SKILLS
   if (pathname === '/objects/transcripts') return OBJECTS_TRANSCRIPTS_SKILLS
+  // Settings & admin (most-specific match first)
+  if (pathname === '/settings' || pathname.startsWith('/settings/')) return SETTINGS_SKILLS
+  if (pathname.startsWith('/admin/roi')) return ADMIN_ROI_SKILLS
+  if (pathname.startsWith('/admin/adaptation')) return ADMIN_ADAPTATION_SKILLS
+  if (pathname.startsWith('/admin/config')) return ADMIN_CONFIG_SKILLS
+  if (pathname.startsWith('/admin/calibration')) return ADMIN_ADAPTATION_SKILLS
+  if (pathname === '/onboarding' || pathname.startsWith('/onboarding/')) {
+    return [
+      {
+        id: 'onboarding-coach-help',
+        agent: 'onboarding-coach',
+        label: 'Walk me through this step',
+        prompt:
+          'I am on the onboarding wizard. Explain what this step does, why it matters, and what to do next. If you have access to my tenant data, refer to it.',
+      },
+    ]
+  }
   return []
 }

@@ -179,12 +179,25 @@ async function fetchRealData(): Promise<{
       await Promise.all([
         supabase
           .from('companies')
-          .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier, icp_score, signal_score, engagement_score, contact_coverage_score, velocity_score, win_rate_score')
+          .select('id, name, expected_revenue, propensity, urgency_multiplier, priority_tier, priority_reason, icp_tier, icp_score, signal_score, engagement_score, contact_coverage_score, velocity_score, win_rate_score, last_scored_at')
           .eq('tenant_id', profile.tenant_id)
           .eq('owner_crm_id', repCrmId)
           .in('priority_tier', ['HOT', 'WARM'])
-          .order('expected_revenue', { ascending: false })
-          .limit(10),
+          // Pull a generous candidate set ordered by raw expected revenue,
+          // then re-rank in JS by composite priority (`expected_revenue ×
+          // urgency_multiplier`) before slicing. Previously the inbox
+          // ordered by `expected_revenue` alone — a $50K deal with a 1.5×
+          // urgency multiplier (immediate signal + close date near)
+          // sorted BELOW a $200K cold deal. The composite is what
+          // matches `expected-revenue.ts#priority_score` and what the
+          // agent's `priority_queue` reasons about, so the inbox should
+          // agree.
+          //
+          // We fetch 30 (instead of 10) so the JS re-rank has enough
+          // signal to surface the right top-3, then keep 10 to feed
+          // downstream slicing.
+          .order('expected_revenue', { ascending: false, nullsFirst: false })
+          .limit(30),
         supabase
           .from('signals')
           .select('company_id, signal_type, title, urgency')
@@ -225,7 +238,18 @@ async function fetchRealData(): Promise<{
           .eq('is_closed', false),
       ])
 
-    const companies = companiesRes.data ?? []
+    // Re-rank by composite priority score: expected_revenue × urgency_multiplier.
+    // Urgency-driven (immediate signal, close date near) deals push past
+    // pure-revenue rivals, matching what the agent's priority_queue tool
+    // sees and what `expected-revenue.ts#priority_score` computes. Then
+    // trim back to 10 so downstream slicing (UI shows top 3) is consistent.
+    const companies = (companiesRes.data ?? [])
+      .map((c) => ({
+        ...c,
+        _priority: (c.expected_revenue ?? 0) * (c.urgency_multiplier ?? 1),
+      }))
+      .sort((a, b) => b._priority - a._priority)
+      .slice(0, 10)
     if (companies.length === 0) return null
 
     const signals = signalsRes.data ?? []

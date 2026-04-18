@@ -363,6 +363,29 @@ export async function POST(req: Request) {
 
     const toolCallsMade: string[] = []
 
+    // Server-side enforcement of MISSION's "≤ 150 words short-form" rule
+    // via `maxTokens`. The behaviour-rules block already tells the model
+    // to stay short, but a model with 3000 token budget can drift into
+    // 600-word answers when the prompt rule loses to verbose tool
+    // responses. By scaling the output cap to the rep's `comm_style` we
+    // make the cap structural rather than aspirational:
+    //   - brief  → ~80 words / ~120 tokens × 4 buffer = 480
+    //   - casual → ~150 words / ~225 tokens × 4 buffer = 900
+    //   - formal → ~200 words / ~300 tokens × 4 buffer = 1200
+    //   - default (no rep_profile) → 3000 (legacy behaviour, no regression)
+    // Tool calls + reasoning land in `usage.totalTokens`; this cap only
+    // bounds the final response text. A draft-letter tool returning a
+    // 500-word email body still works because it lives in the tool result.
+    const repCommStyle = agentContext?.rep_profile?.comm_style ?? null
+    const responseTokenCap =
+      repCommStyle === 'brief'
+        ? 480
+        : repCommStyle === 'casual'
+          ? 900
+          : repCommStyle === 'formal'
+            ? 1200
+            : 3000
+
     const result = streamText({
       model: getModel(modelId),
       ...(useCaching ? {} : { system: promptParts.staticPrefix }),
@@ -370,7 +393,7 @@ export async function POST(req: Request) {
       tools,
       maxSteps: 8,
       temperature: 0.3,
-      maxTokens: 3000,
+      maxTokens: responseTokenCap,
       onStepFinish: (step) => {
         const s = step as unknown as {
           toolCalls?: Array<{ toolName: string; args?: unknown }>

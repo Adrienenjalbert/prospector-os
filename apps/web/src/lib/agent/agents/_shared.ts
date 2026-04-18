@@ -1,4 +1,8 @@
-import type { AgentContext, BusinessProfile } from '@prospector/core'
+import type {
+  AgentContext,
+  BusinessProfile,
+  RepProfile,
+} from '@prospector/core'
 
 import {
   renderPlaybook,
@@ -145,6 +149,78 @@ export function commonSalesPlaybook(
 ): string {
   const suggested = selectForAgentContext(ctx, opts)
   return renderPlaybook(suggested)
+}
+
+/**
+ * Render the rep's personalisation preferences into the system prompt.
+ *
+ * `rep_profiles` already stores `comm_style`, `outreach_tone`,
+ * `focus_stage`, and `alert_frequency` per rep, but until now the agent
+ * never saw any of them — so a "casual / brief" rep got the same
+ * formal multi-paragraph drafts as a "formal" rep, and the agent had no
+ * notion of which stage the rep cares most about. The prompt rule is
+ * deliberately concrete (use these words, structure the email like
+ * this) so the model has something tangible to follow rather than a
+ * vague "tailor your tone" instruction.
+ *
+ * Returns an empty string when no rep profile exists (e.g. eval harness
+ * runs, system jobs) so the caller can splice it unconditionally.
+ *
+ * Kept short (≤120 tokens) — this is a hot prompt slot and personalisation
+ * shouldn't crowd out live data or behaviour rules.
+ */
+export function formatRepPreferences(profile: RepProfile | null): string {
+  if (!profile) return ''
+  const parts: string[] = []
+  parts.push('## Rep Preferences (apply to every draft & response)')
+
+  // comm_style: drives response register and length defaults.
+  switch (profile.comm_style) {
+    case 'formal':
+      parts.push('- **Tone:** Formal. Use full sentences, avoid contractions, no slang. Address the rep by first name only when greeting.')
+      break
+    case 'casual':
+      parts.push('- **Tone:** Casual. Conversational, contractions OK, drop the title formalities. Talk to the rep like a peer.')
+      break
+    case 'brief':
+      parts.push('- **Tone:** Brief. Bullets > prose. Cut every word that does not add information. ≤ 80 words for short-form replies (overrides the 150-word default).')
+      break
+  }
+
+  // outreach_tone: drives the *external* draft register (emails to prospects).
+  switch (profile.outreach_tone) {
+    case 'professional':
+      parts.push('- **Outreach drafts:** Professional. Crisp subject lines, full sentences, single ask, no exclamation marks.')
+      break
+    case 'consultative':
+      parts.push('- **Outreach drafts:** Consultative. Lead with a relevant insight from the prospect\'s context, then a soft ask. Reference one cited signal.')
+      break
+    case 'direct':
+      parts.push('- **Outreach drafts:** Direct. ≤ 5 sentences. State the relevance, the ask, the suggested time. No throat-clearing.')
+      break
+  }
+
+  // focus_stage: ranks priority when the rep asks "what should I do?".
+  if (profile.focus_stage) {
+    parts.push(`- **Focus stage:** ${profile.focus_stage}. When ranking next actions, prefer deals or accounts at this stage all else equal — that's where this rep currently delivers the most value.`)
+  }
+
+  // alert_frequency: this is enforced server-side in the push-budget gate,
+  // but surfacing it in the prompt lets the agent self-bundle suggestions
+  // (don't recommend 3 separate Slack pushes if the budget allows 1).
+  switch (profile.alert_frequency) {
+    case 'high':
+      parts.push('- **Alert appetite:** High (3 proactive pushes/day). You can suggest follow-up Slack briefs liberally.')
+      break
+    case 'medium':
+      parts.push('- **Alert appetite:** Medium (2 proactive pushes/day). Bundle related items into a single brief when possible.')
+      break
+    case 'low':
+      parts.push('- **Alert appetite:** Low (1 proactive push/day). Suggest only the single most-important push; defer the rest to next digest.')
+      break
+  }
+
+  return parts.join('\n')
 }
 
 /**

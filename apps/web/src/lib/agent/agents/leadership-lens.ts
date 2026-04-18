@@ -6,6 +6,7 @@ import {
   loadBusinessProfile,
   formatAgentHeader,
   formatBusinessContext,
+  formatRepPreferences,
   commonBehaviourRules,
   commonSalesPlaybook,
   formatPackedSections,
@@ -373,6 +374,10 @@ You report to a sales leader. Your job is to synthesise across reps and stages, 
   const dynamicParts: string[] = []
   const packedSection = formatPackedSections(packed)
   if (packedSection) dynamicParts.push(packedSection)
+  // Leaders also have rep_profile preferences (comm_style esp.); a "brief"
+  // CRO does not want a 4-paragraph forecast write-up. Same helper.
+  const repPrefs = formatRepPreferences(ctx?.rep_profile ?? null)
+  if (repPrefs) dynamicParts.push(repPrefs)
   dynamicParts.push(commonSalesPlaybook(ctx, { role: 'leader' }))
   dynamicParts.push(commonBehaviourRules())
 

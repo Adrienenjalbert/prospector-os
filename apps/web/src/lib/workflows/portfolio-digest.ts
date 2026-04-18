@@ -89,18 +89,29 @@ export async function runPortfolioDigest(
           }>
         }
 
-        // High-risk: churn_risk_score >= 60 or priority_tier = MONITOR
+        // High-risk: churn_risk_score >= 60 or priority_tier = MONITOR.
+        // Capped at 3 per MISSION's "≤ 3 items per list section" rule —
+        // a Slack digest with 5 accounts per section is the kind of
+        // information dump that kills adoption. Anything beyond the top
+        // 3 should bundle into next week's digest, not pile into this
+        // one. Sort by churn_risk_score DESC first so the top 3 are
+        // genuinely the most critical, not just the first 3 pulled.
         const highRiskAccounts = accounts
           .filter((a) => (a.churn_risk_score ?? 0) >= 60 || a.priority_tier === 'MONITOR')
-          .slice(0, 5)
+          .sort((a, b) => (b.churn_risk_score ?? 0) - (a.churn_risk_score ?? 0))
+          .slice(0, 3)
           .map((a) => ({
             name: a.name,
             reason: a.priority_reason ?? `Churn risk ${a.churn_risk_score?.toFixed(0) ?? 'unknown'}`,
           }))
 
+        // Same MISSION cap applies to the watch section. WARM accounts
+        // are sorted by expected_revenue so the largest at-risk-but-not-
+        // critical accounts show up.
         const watchAccounts = accounts
           .filter((a) => a.priority_tier === 'WARM')
-          .slice(0, 5)
+          .sort((a, b) => (b.expected_revenue ?? 0) - (a.expected_revenue ?? 0))
+          .slice(0, 3)
           .map((a) => ({ name: a.name, reason: a.priority_reason ?? 'Watch' }))
 
         // Signals-derived themes; keep to top 3 distinct titles.
@@ -122,7 +133,10 @@ export async function runPortfolioDigest(
         }
         const themes = Array.from(themeCounts.entries())
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
+          // MISSION cap: ≤ 3 per list section. Same reasoning as the
+          // accounts arrays above — the digest must add to the rep's
+          // day, not occupy it.
+          .slice(0, 3)
           .map(([t, n]) => `${t} (${n})`)
 
         return { highRiskAccounts, watchAccounts, themes }

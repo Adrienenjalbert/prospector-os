@@ -273,9 +273,14 @@ export async function runChurnEscalation(
         const slackToken = process.env.SLACK_BOT_TOKEN
         if (!slackToken) throw new Error('SLACK_BOT_TOKEN not set')
 
+        // Pull `user_id` and `alert_frequency` alongside the Slack ID so we
+        // can pass them into the push-budget gate. Without these, the
+        // dispatcher can't enforce the per-rep daily cap and an escalation
+        // storm (10 risky accounts in one day) would blast the CSM with 10
+        // DMs in a row, exactly the noise pattern MISSION forbids.
         const { data: owner } = await ctx.supabase
           .from('rep_profiles')
-          .select('id, slack_user_id, name')
+          .select('id, user_id, slack_user_id, name, alert_frequency')
           .eq('id', owner_id)
           .eq('tenant_id', evidence.tenant_id)
           .maybeSingle()
@@ -284,9 +289,14 @@ export async function runChurnEscalation(
           return { skipped: true, reason: 'owner_no_slack' }
         }
 
+        // Pass `ctx.supabase` as the third arg so the dispatcher can read
+        // and write `agent_events.proactive_push_sent`. Without this the
+        // push-budget guard short-circuits to "allow" because it can't
+        // count today's pushes — defeating the whole gate.
         const dispatcher = new SlackDispatcher(
           slackToken,
           new SupabaseCooldownStore(ctx.supabase),
+          ctx.supabase,
         )
 
         const interactionId = crypto.randomUUID()
@@ -296,6 +306,13 @@ export async function runChurnEscalation(
         // shape. summary is the opening line, recommendation carries the
         // full letter body so the CSM can copy-paste; risk factors list
         // the evidence URNs inline for click-through.
+        //
+        // Push budget IS applied here (no `bypass: true`) — escalations
+        // count against the daily cap. Even at-risk accounts can't
+        // override the rep's "low" alert preference; the deferred ones
+        // surface in `/admin/adaptation` (the `escalation_needs_review`
+        // event the previous step would emit on quality-gate failure also
+        // covers the budget-skipped case via `result.skippedReason`).
         const result = await dispatcher.sendEscalation(
           {
             slackUserId: owner.slack_user_id,
@@ -310,6 +327,13 @@ export async function runChurnEscalation(
             tenantId: evidence.tenant_id,
             subjectKey: `churn_escalation:${companyUrn}`,
           },
+          owner.user_id
+            ? {
+                tenantId: evidence.tenant_id,
+                repUserId: owner.user_id,
+                frequency: owner.alert_frequency ?? 'medium',
+              }
+            : undefined,
         )
 
         await emitAgentEvent(ctx.supabase, {
