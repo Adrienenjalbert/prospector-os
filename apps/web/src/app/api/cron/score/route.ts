@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
-import type { CRMActivity } from '@prospector/core'
+import { emitAgentEvent, type CRMActivity } from '@prospector/core'
 
 const ACTIVITIES_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const ACTIVITIES_LOOKBACK_DAYS = 30
@@ -56,8 +56,18 @@ export async function GET(req: Request) {
 
     let totalScored = 0
     let totalBenchmarks = 0
+    const tenantErrors: { tenant_id: string; error: string }[] = []
 
     for (const tenant of tenants) {
+      // Per-tenant try/catch — one tenant's bad config / bad data must
+      // never block scoring for the rest of the fleet. Without this,
+      // a single Salesforce org with rotated credentials could leave
+      // every other tenant unscored until ops noticed.
+      const tenantStart = Date.now()
+      let tenantScored = 0
+      let tenantBenchmarksLocal = 0
+
+      try {
       // --- Phase 1: Score all companies ---
       const [companiesRes, benchmarksRes, wonRes, closedRes] = await Promise.all([
         supabase.from('companies').select('*').eq('tenant_id', tenant.id),
@@ -80,7 +90,16 @@ export async function GET(req: Request) {
       ])
 
       const companies = companiesRes.data
-      if (!companies?.length) continue
+      if (!companies?.length) {
+        // Closes this iteration's try/catch + telemetry block.
+        await emitTenantScoringEvent(supabase, tenant.id, {
+          companies_scored: 0,
+          benchmarks_written: 0,
+          duration_ms: Date.now() - tenantStart,
+          status: 'no_companies',
+        })
+        continue
+      }
 
       const tenantBenchmarks = benchmarksRes.data ?? []
       const wonCount = wonRes.count ?? 0
@@ -105,6 +124,59 @@ export async function GET(req: Request) {
       })
       const tenantMedianActivities30d = median(counts30d)
 
+      // Pass the tenant's actual active-stage count from funnel_config
+      // so the velocity scorer's stage_progress denominator matches the
+      // tenant's real funnel (not a hardcoded 4-stage AE shape).
+      const funnelConfigForScoring = tenant.funnel_config as {
+        stages?: { name: string; stage_type: string }[]
+      } | null
+      const activeStageCount = (funnelConfigForScoring?.stages ?? []).filter(
+        (s) => !['closed_won', 'closed_lost'].includes(s.stage_type),
+      ).length || 4
+
+      // Pull tenant-wide closed-deal history once so the win-rate sub-
+      // scorer can blend across the tenant's full sample (not just this
+      // company's own closed opps). Drives the `profile_match` Bayesian
+      // blend in `composite-scorer.ts`.
+      const lookbackMonths =
+        (tenant.scoring_config as { profile_match?: { lookback_months?: number } } | null)
+          ?.profile_match?.lookback_months ?? 24
+      const lookbackSince = new Date(
+        Date.now() - lookbackMonths * 30 * 24 * 60 * 60 * 1000,
+      ).toISOString()
+      const { data: historicalDealsData } = await supabase
+        .from('opportunities')
+        .select('company_id, is_won, value, closed_at')
+        .eq('tenant_id', tenant.id)
+        .eq('is_closed', true)
+        .gte('closed_at', lookbackSince)
+
+      // Map deal → company industry/size/market for similarity matching.
+      const histCompanyIds = [
+        ...new Set(
+          (historicalDealsData ?? []).map((d) => d.company_id).filter(Boolean),
+        ),
+      ] as string[]
+      const { data: histCompaniesData } = histCompanyIds.length
+        ? await supabase
+            .from('companies')
+            .select('id, industry_group, employee_range, hq_country')
+            .in('id', histCompanyIds)
+        : { data: [] as Array<{ id: string; industry_group: string | null; employee_range: string | null; hq_country: string | null }> }
+      const histCompanyMap = new Map(
+        (histCompaniesData ?? []).map((c) => [c.id, c] as const),
+      )
+      const historicalDeals = (historicalDealsData ?? []).flatMap((d) => {
+        if (!d.company_id) return []
+        const c = histCompanyMap.get(d.company_id)
+        return [{
+          industry_group: c?.industry_group ?? null,
+          employee_range: c?.employee_range ?? null,
+          market: c?.hq_country ?? null,
+          is_won: d.is_won === true,
+        }]
+      })
+
       for (const company of companies) {
         const [contactsRes, signalsRes, oppsRes] = await Promise.all([
           supabase.from('contacts').select('*').eq('company_id', company.id),
@@ -124,18 +196,36 @@ export async function GET(req: Request) {
             benchmarks: tenantBenchmarks,
             previousSignalScore: company.signal_score ?? null,
             companyWinRate,
+            historicalDeals,
             tenantMedianActivities30d,
           },
           {
             icpConfig: tenant.icp_config,
             scoringConfig: tenant.scoring_config,
             signalConfig: tenant.signal_config,
+            activeStageCount,
           }
         )
 
-        await supabase.from('companies').update({
+        // Resolve the deal-value the composite scorer used, so we can
+        // persist it on the snapshot honestly. Previously the snapshot
+        // stored `expected_revenue` in BOTH `deal_value` and
+        // `expected_revenue` columns — the calibration analyser then
+        // saw a deal_value that scaled with propensity, which is
+        // backwards.
+        const topOpp = (oppsRes.data ?? []).find((o) => !o.is_closed)
+        const snapshotDealValue = result.expected_revenue > 0 && result.propensity > 0
+          ? Math.round(result.expected_revenue / (result.propensity / 100))
+          : Number(topOpp?.value ?? 0)
+
+        const { error: updateErr } = await supabase.from('companies').update({
           icp_score: result.icp_score,
           icp_tier: result.icp_tier,
+          // Persist the rich per-dimension breakdown the ICP scorer
+          // already computes — without this the explain_score tool +
+          // /admin/adaptation page have no way to show "why this ICP
+          // tier" beyond the single top_reason string.
+          icp_dimensions: result.icp_dimensions ?? null,
           signal_score: result.signal_score,
           engagement_score: result.engagement_score,
           contact_coverage_score: result.contact_coverage_score,
@@ -146,7 +236,16 @@ export async function GET(req: Request) {
           urgency_multiplier: result.urgency_multiplier,
           priority_tier: result.priority_tier,
           priority_reason: result.priority_reason,
+          // Honest staleness signal — UI / agent / workflows can now
+          // tell a "scored 30 minutes ago" company from a "scored 5
+          // days ago" one.
+          last_scored_at: new Date().toISOString(),
         }).eq('id', company.id)
+
+        if (updateErr) {
+          console.warn(`[cron/score] company update failed (${company.id}):`, updateErr.message)
+          continue
+        }
 
         await supabase.from('scoring_snapshots').insert({
           tenant_id: tenant.id,
@@ -159,22 +258,30 @@ export async function GET(req: Request) {
           stage_velocity: result.velocity_score,
           profile_win_rate: result.win_rate_score,
           propensity: result.propensity,
-          deal_value: result.expected_revenue,
+          deal_value: snapshotDealValue,
           expected_revenue: result.expected_revenue,
           snapshot_trigger: 'weekly',
-          config_version: tenant.scoring_config?.version ?? '3.0',
+          config_version: (tenant.scoring_config as { version?: string } | null)?.version ?? '3.0',
         })
 
+        tenantScored++
         totalScored++
       }
 
       // --- Phase 2: Compute funnel benchmarks ---
-      const funnelConfig = tenant.funnel_config as { stages?: { name: string; stage_type: string }[] } | null
-      const stages = (funnelConfig?.stages ?? [])
+      const stages = (funnelConfigForScoring?.stages ?? [])
         .filter(s => !['closed_won', 'closed_lost'].includes(s.stage_type))
         .map(s => s.name)
 
-      if (stages.length === 0) continue
+      if (stages.length === 0) {
+        await emitTenantScoringEvent(supabase, tenant.id, {
+          companies_scored: tenantScored,
+          benchmarks_written: tenantBenchmarksLocal,
+          duration_ms: Date.now() - tenantStart,
+          status: 'no_active_stages',
+        })
+        continue
+      }
 
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
       const { data: allOpps } = await supabase
@@ -183,7 +290,15 @@ export async function GET(req: Request) {
         .eq('tenant_id', tenant.id)
         .gte('created_at', ninetyDaysAgo)
 
-      if (!allOpps?.length) continue
+      if (!allOpps?.length) {
+        await emitTenantScoringEvent(supabase, tenant.id, {
+          companies_scored: tenantScored,
+          benchmarks_written: tenantBenchmarksLocal,
+          duration_ms: Date.now() - tenantStart,
+          status: 'no_recent_opps',
+        })
+        continue
+      }
 
       const period = new Date().toISOString().slice(0, 7)
 
@@ -201,6 +316,7 @@ export async function GET(req: Request) {
           { onConflict: 'tenant_id,stage_name,period,scope,scope_id' }
         )
         totalBenchmarks++
+        tenantBenchmarksLocal++
       }
 
       const { data: reps } = await supabase
@@ -227,6 +343,7 @@ export async function GET(req: Request) {
             { onConflict: 'tenant_id,stage_name,period,scope,scope_id' }
           )
           totalBenchmarks++
+          tenantBenchmarksLocal++
         }
 
         const impacts = computeImpactScores(
@@ -247,15 +364,70 @@ export async function GET(req: Request) {
             .eq('scope_id', rep.crm_id)
         }
       }
+
+      await emitTenantScoringEvent(supabase, tenant.id, {
+        companies_scored: tenantScored,
+        benchmarks_written: tenantBenchmarksLocal,
+        duration_ms: Date.now() - tenantStart,
+        status: 'success',
+      })
+      } catch (tenantErr) {
+        const message = tenantErr instanceof Error ? tenantErr.message : 'Unknown error'
+        console.error(`[cron/score] tenant ${tenant.id} failed:`, message)
+        tenantErrors.push({ tenant_id: tenant.id, error: message })
+        await emitTenantScoringEvent(supabase, tenant.id, {
+          companies_scored: tenantScored,
+          benchmarks_written: tenantBenchmarksLocal,
+          duration_ms: Date.now() - tenantStart,
+          status: 'error',
+          error: message,
+        })
+      }
     }
 
-    await recordCronRun('/api/cron/score', 'success', Date.now() - startTime, totalScored + totalBenchmarks)
-    return NextResponse.json({ scored: totalScored, benchmarks: totalBenchmarks })
+    await recordCronRun(
+      '/api/cron/score',
+      tenantErrors.length === 0 ? 'success' : tenantErrors.length === tenants.length ? 'error' : 'partial',
+      Date.now() - startTime,
+      totalScored + totalBenchmarks,
+      tenantErrors.length > 0 ? `${tenantErrors.length}/${tenants.length} tenants failed` : undefined,
+    )
+    return NextResponse.json({
+      scored: totalScored,
+      benchmarks: totalBenchmarks,
+      tenants_total: tenants.length,
+      tenants_failed: tenantErrors.length,
+      errors: tenantErrors,
+    })
   } catch (err) {
     console.error('[cron/score]', err)
     await recordCronRun('/api/cron/score', 'error', Date.now() - startTime, 0, err instanceof Error ? err.message : 'Unknown error')
     return NextResponse.json({ error: 'Scoring failed' }, { status: 500 })
   }
+}
+
+/**
+ * Emit a per-tenant scoring telemetry event so /admin/adaptation and the
+ * self-improve workflow can detect tenants whose scoring is consistently
+ * failing or stalling. Without this, a tenant whose nightly scoring has
+ * been throwing for a week is invisible to operators.
+ */
+async function emitTenantScoringEvent(
+  supabase: ReturnType<typeof getServiceSupabase>,
+  tenantId: string,
+  payload: {
+    companies_scored: number
+    benchmarks_written: number
+    duration_ms: number
+    status: 'success' | 'error' | 'no_companies' | 'no_recent_opps' | 'no_active_stages'
+    error?: string
+  },
+): Promise<void> {
+  await emitAgentEvent(supabase, {
+    tenant_id: tenantId,
+    event_type: 'scoring_run_completed',
+    payload,
+  })
 }
 
 type CompanyRow = {

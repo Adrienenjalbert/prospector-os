@@ -32,9 +32,17 @@ export function getServiceSupabase() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
+/**
+ * `partial` is for fan-out crons (e.g. /api/cron/score) where some
+ * tenants succeed and others fail — the run as a whole is neither
+ * fully successful nor a total failure, so an honest summary needs a
+ * third status. Operators reading `cron_runs` can then alert on
+ * status='error' OR status='partial' to catch real degradation
+ * without false positives from a single tenant blip.
+ */
 export async function recordCronRun(
   route: string,
-  status: 'success' | 'error',
+  status: 'success' | 'error' | 'partial',
   durationMs: number,
   recordsProcessed: number,
   error?: string

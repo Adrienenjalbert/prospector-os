@@ -41,6 +41,15 @@ export interface CompositeScoreInput {
 export interface CompositeScoreResult {
   icp_score: number
   icp_tier: string
+  /**
+   * Per-dimension breakdown of the ICP score (industry / size / geography
+   * / etc.) with score, weight, weighted contribution, and label. Persisted
+   * onto `companies.icp_dimensions` (JSONB) so the explain_score tool and
+   * /admin/adaptation can show "why this ICP tier" beyond the single
+   * top-line reason. The shape mirrors `ScoringResult.dimensions` from
+   * the ICP scorer.
+   */
+  icp_dimensions: { name: string; score: number; weight: number; weighted_score: number; label: string }[]
   signal_score: number
   engagement_score: number
   contact_coverage_score: number
@@ -119,13 +128,24 @@ export function computeCompositeScore(
   const urgencyComponents = deriveUrgency(signals, topOpportunity, velocityResult.score)
 
   const revenueResult: ExpectedRevenueResult = computeExpectedRevenue(
-    { deal_value: dealValue, propensity, urgency_components: urgencyComponents },
+    {
+      deal_value: dealValue,
+      propensity,
+      urgency_components: urgencyComponents,
+      // Pass the sub-scores + tenant weights so the priority_reason
+      // surfaces the top-3 dimension drivers, not just urgency
+      // triggers (per the MISSION's "score AND its reason — top 3
+      // only" promise).
+      sub_scores: subScores,
+      propensity_weights: scoringConfig.propensity_weights,
+    },
     scoringConfig,
   )
 
   return {
     icp_score: icpResult.score,
     icp_tier: icpResult.tier ?? 'D',
+    icp_dimensions: icpResult.dimensions,
     signal_score: signalResult.score,
     engagement_score: engagementResult.score,
     contact_coverage_score: contactResult.score,

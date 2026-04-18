@@ -64,6 +64,12 @@ export type AgentEventType =
   | 'onboarding_config_applied'
   | 'onboarding_completed'
   | 'baseline_submitted'
+  // Scoring lifecycle. Emitted per tenant by the nightly cron at
+  // `apps/web/src/app/api/cron/score/route.ts` so /admin/adaptation
+  // and the self-improve workflow can detect tenants whose scoring
+  // has been silently failing. Payload:
+  // { companies_scored, benchmarks_written, duration_ms, status, error? }
+  | 'scoring_run_completed'
   | 'error'
 
 /**

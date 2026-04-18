@@ -8,7 +8,16 @@ export interface WinRateScorerInput {
 }
 
 export function computeProfileWinRate(input: WinRateScorerInput): ScoringResult {
-  const { similar_won, similar_lost, company_win_rate, blend_threshold } = input
+  const { similar_won, similar_lost, blend_threshold } = input
+  // Guard against NaN / undefined `company_win_rate` — bad config or a
+  // tenant with zero closed deals can pass NaN here, which would
+  // propagate through `computePropensity` and yield a NaN priority
+  // score. Default to the same 15% the cron route uses when no closed
+  // deals exist.
+  const company_win_rate =
+    typeof input.company_win_rate === 'number' && Number.isFinite(input.company_win_rate)
+      ? input.company_win_rate
+      : 15
   const sampleSize = similar_won + similar_lost
 
   let score: number

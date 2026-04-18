@@ -111,15 +111,75 @@ export async function POST(req: Request) {
     const currentConfig = (tenant as Record<string, unknown>)[configField] as Record<string, unknown>
 
     if (proposal.config_type === 'scoring') {
-      const updatedConfig = {
-        ...currentConfig,
-        propensity_weights: proposal.proposed_config,
+      // The proposal stores `{ propensity_weights: { icp_fit, ... } }` —
+      // see scoring-calibration workflow. Extract the inner weights and
+      // validate them before merging. Without validation a malformed
+      // proposal could overwrite scoring_config with garbage and brick
+      // every priority score for the tenant.
+      const proposed = (proposal.proposed_config as { propensity_weights?: Record<string, number> } | null)?.propensity_weights
+      const proposedWeights = ProposedWeightsSchema.safeParse(proposed)
+      if (!proposedWeights.success) {
+        return NextResponse.json(
+          {
+            error: 'Proposal has invalid proposed_config shape',
+            issues: proposedWeights.error.issues.map((i) => i.message),
+          },
+          { status: 400 },
+        )
       }
 
-      await supabase
+      const beforeWeights =
+        (currentConfig as { propensity_weights?: Record<string, number> }).propensity_weights ?? null
+
+      const updatedConfig = {
+        ...currentConfig,
+        propensity_weights: proposedWeights.data,
+      }
+
+      const { error: updateErr } = await supabase
         .from('tenants')
         .update({ [configField]: updatedConfig })
         .eq('id', profile.tenant_id)
+
+      if (updateErr) {
+        return NextResponse.json(
+          { error: `Failed to apply proposal: ${updateErr.message}` },
+          { status: 500 },
+        )
+      }
+
+      // Audit trail — `/admin/adaptation` reads from this table to show
+      // the operator every weight change, the lift the calibration
+      // analyser observed, and a one-click rollback path. Skipping this
+      // write was the silent bug: the previous version applied the
+      // weight change but left no trace.
+      const observedLift =
+        proposal.analysis &&
+        typeof (proposal.analysis as { proposed_auc?: number }).proposed_auc === 'number' &&
+        typeof (proposal.analysis as { model_auc?: number }).model_auc === 'number'
+          ? (proposal.analysis as { proposed_auc: number; model_auc: number }).proposed_auc -
+            (proposal.analysis as { proposed_auc: number; model_auc: number }).model_auc
+          : null
+
+      const { error: ledgerErr } = await supabase
+        .from('calibration_ledger')
+        .insert({
+          tenant_id: profile.tenant_id,
+          change_type: 'scoring_weights',
+          target_path: 'tenants.scoring_config.propensity_weights',
+          before_value: beforeWeights,
+          after_value: proposedWeights.data,
+          observed_lift: observedLift,
+          applied_by: user.id,
+          notes: `Approved from calibration_proposals.${proposal_id}`,
+        })
+
+      if (ledgerErr) {
+        // Don't block the approval — the change is already applied — but
+        // surface the audit-failure prominently so ops can backfill if
+        // the ledger insert is failing repeatedly.
+        console.error('[admin/calibration] ledger insert failed', ledgerErr)
+      }
     }
 
     await supabase
@@ -138,3 +198,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
 }
+
+/**
+ * Schema for the inner `proposed_config.propensity_weights` shape. Same
+ * weight-sum invariant as `applyIcpConfig` in onboarding actions — we
+ * never want a calibration approval to land weights that don't sum to 1.
+ */
+const ProposedWeightsSchema = z
+  .object({
+    icp_fit: z.number().min(0).max(1),
+    signal_momentum: z.number().min(0).max(1),
+    engagement_depth: z.number().min(0).max(1),
+    contact_coverage: z.number().min(0).max(1),
+    stage_velocity: z.number().min(0).max(1),
+    profile_win_rate: z.number().min(0).max(1),
+  })
+  .refine(
+    (w) => {
+      const sum =
+        w.icp_fit +
+        w.signal_momentum +
+        w.engagement_depth +
+        w.contact_coverage +
+        w.stage_velocity +
+        w.profile_win_rate
+      return Math.abs(sum - 1) < 0.005
+    },
+    { message: 'propensity_weights must sum to 1.0 (within 0.005)' },
+  )

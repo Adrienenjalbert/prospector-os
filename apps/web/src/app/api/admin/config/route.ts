@@ -14,17 +14,106 @@ const CONFIG_TYPE_TO_COLUMN = {
   signals: 'signal_config',
 } as const
 
-// `config_data` itself is JSONB — we don't lock the inner shape because
-// each config type has its own schema in `packages/core/src/types/config.ts`
-// and the calibration pipeline will validate downstream. We do require it
-// to be a plain object (not array, not primitive) so an attacker can't
-// overwrite the entire column with a string or null.
+// `config_data` itself is JSONB — we don't lock the inner shape for icp /
+// funnel / signals because they each have their own per-tenant schema in
+// `packages/core/src/types/config.ts`. We DO lock the inner shape for
+// `scoring` because the propensity weights drive every priority score
+// downstream — invariants on weights (sum to 1.0, non-negative) and tier
+// thresholds (monotonic) must hold or the inbox + ROI numbers go silently
+// wrong. The check happens HERE rather than at the calibration analyser
+// because admin can edit config directly outside the calibration flow.
 const configDataSchema = z.record(z.unknown())
 
-const requestSchema = z.object({
-  config_type: z.enum(['icp', 'scoring', 'funnel', 'signals']),
-  config_data: configDataSchema,
-})
+/**
+ * Validation specific to the `scoring` config type. Refuses any update
+ * that would corrupt the priority pipeline:
+ *   - `propensity_weights` must sum to 1.0 (within 0.005 tolerance) and
+ *     each weight must be in [0, 1].
+ *   - `priority_tiers` must be monotonic when sorted by `min_propensity`
+ *     descending (HOT > WARM > COOL > MONITOR), else `assignPriorityTier`
+ *     returns surprising tiers.
+ *   - `urgency_config.max_multiplier` >= `min_multiplier` (otherwise the
+ *     clamp produces inverted bounds).
+ */
+const propensityWeightsSchema = z
+  .object({
+    icp_fit: z.number().min(0).max(1),
+    signal_momentum: z.number().min(0).max(1),
+    engagement_depth: z.number().min(0).max(1),
+    contact_coverage: z.number().min(0).max(1),
+    stage_velocity: z.number().min(0).max(1),
+    profile_win_rate: z.number().min(0).max(1),
+  })
+  .refine(
+    (w) => {
+      const sum =
+        w.icp_fit +
+        w.signal_momentum +
+        w.engagement_depth +
+        w.contact_coverage +
+        w.stage_velocity +
+        w.profile_win_rate
+      return Math.abs(sum - 1) < 0.005
+    },
+    { message: 'propensity_weights must sum to 1.0 (within 0.005)' },
+  )
+
+const priorityTiersSchema = z
+  .record(z.object({ min_propensity: z.number().min(0).max(100) }))
+  .refine(
+    (tiers) => {
+      const entries = Object.entries(tiers)
+      if (entries.length < 2) return true
+      const sorted = [...entries].sort(
+        (a, b) => b[1].min_propensity - a[1].min_propensity,
+      )
+      // Strictly descending — equal mins are ambiguous.
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i][1].min_propensity >= sorted[i - 1][1].min_propensity) {
+          return false
+        }
+      }
+      return true
+    },
+    { message: 'priority_tiers min_propensity values must be strictly descending' },
+  )
+
+const scoringConfigSchema = z
+  .object({
+    propensity_weights: propensityWeightsSchema.optional(),
+    priority_tiers: priorityTiersSchema.optional(),
+    urgency_config: z
+      .object({
+        min_multiplier: z.number().positive(),
+        max_multiplier: z.number().positive(),
+      })
+      .passthrough()
+      .refine((u) => u.max_multiplier >= u.min_multiplier, {
+        message: 'urgency_config.max_multiplier must be ≥ min_multiplier',
+      })
+      .optional(),
+  })
+  .passthrough()
+
+const requestSchema = z
+  .object({
+    config_type: z.enum(['icp', 'scoring', 'funnel', 'signals']),
+    config_data: configDataSchema,
+  })
+  .superRefine((req, ctx) => {
+    if (req.config_type === 'scoring') {
+      const result = scoringConfigSchema.safeParse(req.config_data)
+      if (!result.success) {
+        for (const issue of result.error.issues) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['config_data', ...issue.path],
+            message: issue.message,
+          })
+        }
+      }
+    }
+  })
 
 export async function POST(req: Request) {
   try {

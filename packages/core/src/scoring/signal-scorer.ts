@@ -77,12 +77,21 @@ function computeSignalVelocity(
   currentStrength: number,
   previousScore: number | null
 ): number {
-  if (previousScore == null || previousScore === 0) {
+  // Negative previous score is invalid input (signal scores live in
+  // [0, 100]). Treat as null rather than letting it through — without
+  // this guard the velocity ratio below is computed against a negative
+  // denominator (`Math.max(1, -5)` is 1, so the ratio inflates by the
+  // exact magnitude of the bad value), producing nonsense velocity
+  // labels like "Surging" for a stable account.
+  const sanitisedPrev =
+    previousScore != null && previousScore >= 0 ? previousScore : null
+
+  if (sanitisedPrev == null || sanitisedPrev === 0) {
     return currentStrength > 0 ? 65 : 0
   }
 
   const velocity =
-    (currentStrength - previousScore) / Math.max(1, previousScore)
+    (currentStrength - sanitisedPrev) / Math.max(1, sanitisedPrev)
 
   if (velocity > 0.5) return 95
   if (velocity > 0.2) return 80
