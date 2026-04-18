@@ -1,9 +1,28 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { SignalCard } from '@/components/signals/signal-card'
-import { SignalCharts } from '@/components/signals/signal-charts'
 import { clsx } from 'clsx'
+
+// Recharts is ~70KB gzipped and previously shipped in the initial
+// route bundle for /signals. Lazy-loading the chart container shrinks
+// the first-load payload — the cards above are the primary content,
+// and the chart only renders below the fold. ssr: false because
+// Recharts uses ResizeObserver which has no SSR equivalent.
+// (Vercel react-best-practices: bundle-dynamic-imports.)
+const SignalCharts = dynamic(
+  () => import('@/components/signals/signal-charts').then((m) => ({ default: m.SignalCharts })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid h-48 grid-cols-1 gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 sm:grid-cols-2">
+        <div className="h-full animate-pulse rounded-lg bg-zinc-800/40" />
+        <div className="h-full animate-pulse rounded-lg bg-zinc-800/40" />
+      </div>
+    ),
+  },
+)
 
 interface SignalRow {
   id: string
@@ -88,6 +107,7 @@ export function SignalsFeed({ signals }: SignalsFeedProps) {
           {URGENCY_OPTIONS.map((u) => (
             <button
               key={u}
+              type="button"
               onClick={() => setUrgencyFilter(u)}
               className={clsx(
                 'rounded-md px-2 py-1 text-xs font-medium transition-colors',
@@ -95,6 +115,7 @@ export function SignalsFeed({ signals }: SignalsFeedProps) {
                   ? 'bg-zinc-800 text-zinc-100'
                   : 'text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300',
               )}
+              aria-pressed={urgencyFilter === u}
             >
               {URGENCY_LABELS[u] ?? u}
             </button>
@@ -105,6 +126,7 @@ export function SignalsFeed({ signals }: SignalsFeedProps) {
           {signalTypes.map((t) => (
             <button
               key={t}
+              type="button"
               onClick={() => setTypeFilter(t)}
               className={clsx(
                 'rounded-md px-2 py-1 text-xs font-medium transition-colors',
@@ -112,6 +134,7 @@ export function SignalsFeed({ signals }: SignalsFeedProps) {
                   ? 'bg-zinc-800 text-zinc-100'
                   : 'text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300',
               )}
+              aria-pressed={typeFilter === t}
             >
               {t === 'all' ? 'All' : (t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))}
             </button>
@@ -141,7 +164,11 @@ export function SignalsFeed({ signals }: SignalsFeedProps) {
         {filtered.length === 0 && (
           <div className="text-center py-12">
             <p className="text-zinc-500">No signals match your filters.</p>
-            <button onClick={() => { setUrgencyFilter('all'); setTypeFilter('all') }} className="mt-2 text-sm text-zinc-400 underline hover:text-zinc-200">
+            <button
+              type="button"
+              onClick={() => { setUrgencyFilter('all'); setTypeFilter('all') }}
+              className="mt-2 text-sm text-zinc-400 underline hover:text-zinc-200"
+            >
               Clear filters
             </button>
           </div>

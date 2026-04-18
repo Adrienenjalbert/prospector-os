@@ -8,6 +8,11 @@ import { INBOX_SKILLS } from '@/lib/agent/skills'
 import { isDemoTenantSlug } from '@/lib/demo-tenant'
 import { WelcomeBanner } from '@/components/welcome/welcome-banner'
 
+export const metadata = {
+  title: 'Inbox',
+  description: "Today's prioritised accounts, signals, and stalled deals.",
+}
+
 interface SubScore {
   name: string
   score: number

@@ -11,6 +11,32 @@ import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { ChatMessage } from "./chat-message";
 import { SuggestedPrompts } from "./suggested-prompts";
 
+/**
+ * The id the dashboard header's "open chat" button refers to via
+ * `aria-controls`. Centralised so the trigger button and the panel
+ * can never drift out of sync. (WCAG 4.1.2 — name/role/value.)
+ */
+const CHAT_PANEL_ID = "ai-chat-sidebar";
+
+/**
+ * Close the chat panel on Escape — the modal-like keyboard contract
+ * users expect from any slide-in/dialog surface (WCAG 2.1.2 keyboard
+ * trap avoidance + standard dialog behaviour).
+ */
+function useEscapeToClose(isOpen: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [isOpen, onClose]);
+}
+
 export interface ChatSidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -84,6 +110,19 @@ function ChatSidebarChat({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const promptSentRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEscapeToClose(isOpen, onClose);
+
+  // When the panel opens, focus the chat input so screen-reader and
+  // keyboard users land in a useful place rather than having to tab in
+  // from the trigger. WCAG 2.4.3 (focus order).
+  useEffect(() => {
+    if (isOpen) {
+      const t = window.setTimeout(() => inputRef.current?.focus(), 50);
+      return () => window.clearTimeout(t);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (initialPrompt && isOpen && initialPrompt !== promptSentRef.current) {
@@ -109,6 +148,10 @@ function ChatSidebarChat({
 
   return (
     <div
+      id={CHAT_PANEL_ID}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ai-chat-sidebar-title"
       className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-300 ease-out ${
         isOpen ? "translate-x-0" : "pointer-events-none translate-x-full"
       }`}
@@ -116,7 +159,7 @@ function ChatSidebarChat({
     >
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">
+          <h2 id="ai-chat-sidebar-title" className="text-sm font-semibold tracking-tight text-zinc-100">
             Ask anything
           </h2>
           <p className="text-[11px] text-zinc-500">
@@ -180,6 +223,7 @@ function ChatSidebarChat({
           Message
         </label>
         <input
+          ref={inputRef}
           id="agent-chat-input"
           type="text"
           value={input}
@@ -282,32 +326,10 @@ export function ChatSidebar({
 
   if (!historyReady) {
     return (
-      <div
-        className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-300 ease-out ${
-          isOpen ? "translate-x-0" : "pointer-events-none translate-x-full"
-        }`}
-        aria-hidden={!isOpen}
-      >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">
-            Prospector OS
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-            aria-label="Close chat"
-          >
-            <X className="size-5" />
-          </button>
-        </header>
-        <div className="flex flex-1 items-center justify-center px-4 py-8">
-          <div className="flex items-center gap-2 text-sm text-zinc-500">
-            <Loader2 className="size-5 animate-spin" />
-            Loading conversation…
-          </div>
-        </div>
-      </div>
+      <ChatSidebarLoading
+        isOpen={isOpen}
+        onClose={onClose}
+      />
     );
   }
 
@@ -323,4 +345,45 @@ export function ChatSidebar({
       activeUrn={activeUrn ?? null}
     />
   );
+}
+
+function ChatSidebarLoading({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  // The loading state is its own dialog instance so id, role, and Escape
+  // wiring all work the moment the panel becomes visible — even before
+  // history finishes loading. Without this, opening the chat and pressing
+  // Escape during the load would do nothing.
+  useEscapeToClose(isOpen, onClose);
+
+  return (
+    <div
+      id={CHAT_PANEL_ID}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ai-chat-sidebar-loading-title"
+      className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-300 ease-out ${
+        isOpen ? "translate-x-0" : "pointer-events-none translate-x-full"
+      }`}
+      aria-hidden={!isOpen}
+    >
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+        <h2 id="ai-chat-sidebar-loading-title" className="text-sm font-semibold tracking-tight text-zinc-100">
+          Prospector OS
+        </h2>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+          aria-label="Close chat"
+        >
+          <X className="size-5" />
+        </button>
+      </header>
+      <div className="flex flex-1 items-center justify-center px-4 py-8">
+        <div className="flex items-center gap-2 text-sm text-zinc-500">
+          <Loader2 className="size-5 animate-spin" />
+          Loading conversation…
+        </div>
+      </div>
+    </div>
+  )
 }

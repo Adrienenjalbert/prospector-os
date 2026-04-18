@@ -5,6 +5,11 @@ import { AccountsKpiStrip } from './accounts-kpi-strip'
 import { SkillBar } from '@/components/agent/skill-bar'
 import { ACCOUNTS_SKILLS } from '@/lib/agent/skills'
 
+export const metadata = {
+  title: 'Accounts',
+  description: 'All accounts in your book, scored and tiered for priority.',
+}
+
 const DEMO_ROWS: AccountRow[] = [
   {
     id: 'demo-001',

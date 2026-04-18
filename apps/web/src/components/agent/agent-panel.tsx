@@ -10,6 +10,27 @@ import { cn } from "@/lib/utils";
 
 import { ChatMessage } from "./chat-message";
 
+/**
+ * Standard dialog Escape-to-close. The agent panel renders as an aside
+ * with a backdrop scrim, but doesn't have explicit dialog semantics yet
+ * — adding Escape closes the most common keyboard accessibility gap
+ * (WCAG 2.1.2). We listen on document so focus inside the panel still
+ * triggers the close.
+ */
+function useEscapeToClose(isOpen: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [isOpen, onClose]);
+}
+
 export interface AgentPanelContext {
   page: string;
   accountId?: string;
@@ -59,6 +80,8 @@ export function AgentPanel({
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const promptSentRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEscapeToClose(isOpen, onClose);
 
   useEffect(() => {
     const supabase = createSupabaseBrowser();
@@ -138,26 +161,34 @@ export function AgentPanel({
   return (
     <>
       {isOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50"
+        // The backdrop is purely cosmetic dim; clicking it closes the
+        // panel. We expose it as a button-with-no-label so screen
+        // readers don't think it's navigable content, but keyboard
+        // users have Escape (above) and the explicit close button.
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          className="fixed inset-0 z-40 cursor-default bg-black/50"
           onClick={onClose}
-          aria-hidden
         />
       )}
       <aside
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="agent-panel-title"
         className={cn(
           "fixed inset-y-0 right-0 z-50 flex w-full max-w-[480px] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-300 ease-out",
           isOpen ? "translate-x-0" : "pointer-events-none translate-x-full",
         )}
         aria-hidden={!isOpen}
-        aria-label={title}
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
           <div className="flex items-center gap-2">
             <div className="flex size-7 items-center justify-center rounded-md bg-violet-500/15">
               <Sparkles className="size-4 text-violet-300" />
             </div>
-            <h2 className="text-sm font-semibold tracking-tight text-zinc-100">
+            <h2 id="agent-panel-title" className="text-sm font-semibold tracking-tight text-zinc-100">
               {title}
             </h2>
           </div>
@@ -230,7 +261,11 @@ export function AgentPanel({
             onSubmit={handleSubmit}
             className="flex shrink-0 gap-2 border-t border-zinc-800 p-3"
           >
+            <label htmlFor="agent-panel-followup" className="visually-hidden">
+              Follow-up question
+            </label>
             <input
+              id="agent-panel-followup"
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}

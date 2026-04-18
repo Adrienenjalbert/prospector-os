@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import { X, Mail, Phone, Linkedin, Calendar, MessageSquare, Crown, Shield, Users as UsersIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -60,14 +61,38 @@ export function ContactPanel({ contact, companyName, onClose }: ContactPanelProp
   const SeniorityIcon = seniorityInfo?.icon ?? UsersIcon
   const initials = contact.name.split(' ').map(n => n[0]).join('').slice(0, 2)
 
+  // Standard dialog Escape-to-close. Without this the only way to dismiss
+  // the contact panel was clicking the X or the backdrop, neither of
+  // which is keyboard-discoverable.
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
   return (
     <>
-      <div
-        className="fixed inset-0 z-50 bg-black/50"
+      {/*
+        Cosmetic backdrop. Render as a button (not a div) so the
+        click-to-dismiss behaviour is exposed semantically — but hide
+        it from the AT tree because Escape and the close button
+        already cover the dismiss affordance.
+      */}
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="fixed inset-0 z-50 cursor-default bg-black/50"
         onClick={onClose}
-        aria-hidden
       />
-      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl sm:w-[400px]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="contact-panel-title"
+        className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl sm:w-[400px]"
+      >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-zinc-800 p-5">
           <div className="flex items-start gap-3">
@@ -75,7 +100,7 @@ export function ContactPanel({ contact, companyName, onClose }: ContactPanelProp
               {initials}
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-zinc-50">{contact.name}</h2>
+              <h2 id="contact-panel-title" className="text-lg font-semibold text-zinc-50">{contact.name}</h2>
               <p className="text-sm text-zinc-400">{contact.title}</p>
               <p className="text-xs text-zinc-500">{companyName}</p>
             </div>

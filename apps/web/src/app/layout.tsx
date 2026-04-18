@@ -13,8 +13,30 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Prospector OS",
+  metadataBase: process.env.NEXT_PUBLIC_APP_URL
+    ? new URL(process.env.NEXT_PUBLIC_APP_URL)
+    : undefined,
+  title: {
+    default: "Prospector OS",
+    template: "%s — Prospector OS",
+  },
   description: "Sales intelligence — cut the noise, surface the signal.",
+  applicationName: "Prospector OS",
+  openGraph: {
+    title: "Prospector OS",
+    description:
+      "A multi-tenant Sales Operating System. Turn your CRM, calls, and context into one self-improving research engine.",
+    type: "website",
+    siteName: "Prospector OS",
+  },
+  twitter: {
+    card: "summary",
+    title: "Prospector OS",
+    description: "Sales intelligence — cut the noise, surface the signal.",
+  },
+  // Robots default — keep the dashboard out of search indexes; per-route
+  // metadata can override for marketing pages if/when they ship.
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({

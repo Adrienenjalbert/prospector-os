@@ -58,17 +58,22 @@ export function MessageFeedback({ interactionId, isStreaming }: MessageFeedbackP
   return (
     <div className="ml-11 mt-1 flex flex-col gap-1.5">
       {!feedback && (
+        // Thumbs targets: WCAG 2.5.8 (new in 2.2) requires interactive
+        // targets ≥ 24×24 CSS px. Old version was rounded-p-1 (~22px);
+        // bumped to inline-flex with size-6 (24×24) wrapping the icons.
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={() => handleFeedback('positive')}
-            className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-400"
+            className="inline-flex size-6 items-center justify-center rounded text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-400"
             aria-label="Helpful"
           >
             <ThumbsUpIcon />
           </button>
           <button
+            type="button"
             onClick={() => handleFeedback('negative')}
-            className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-400"
+            className="inline-flex size-6 items-center justify-center rounded text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-400"
             aria-label="Not helpful"
           >
             <ThumbsDownIcon />
@@ -81,6 +86,7 @@ export function MessageFeedback({ interactionId, isStreaming }: MessageFeedbackP
           {NEGATIVE_REASONS.map((r) => (
             <button
               key={r.id}
+              type="button"
               onClick={() => handleReason(r.id)}
               className={cn(
                 'rounded-full border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400',

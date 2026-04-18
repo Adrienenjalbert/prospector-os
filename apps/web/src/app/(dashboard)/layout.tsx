@@ -181,6 +181,15 @@ export default function DashboardLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-950">
+      {/*
+        WCAG 2.4.1 — Bypass Blocks. The skip link is the first focusable
+        element on the page; pressing Tab once reveals it via the
+        `.skip-link:focus` styles in globals.css. Without it a keyboard
+        user has to tab through the full sticky nav on every page.
+      */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <header className="sticky top-0 z-40 border-b border-zinc-800 bg-zinc-900">
         <div className="flex h-14 items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-8">
@@ -296,7 +305,7 @@ export default function DashboardLayout({
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+        <main id="main-content" className="min-w-0 flex-1 overflow-auto" tabIndex={-1}>{children}</main>
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-40 bg-black/50 sm:hidden"

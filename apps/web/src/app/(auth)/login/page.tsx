@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 
+// Page metadata is set in the sibling (auth)/layout.tsx server
+// component because this file is a client component and Next.js does
+// not allow `export const metadata` from "use client" modules.
+
 function createSupabaseBrowserClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -90,7 +94,16 @@ export default function LoginPage() {
             />
           </div>
           {message ? (
-            <p className="text-sm text-zinc-400" role="status">
+            // role="alert" + aria-live="assertive" so screen readers
+            // announce auth failures immediately. role="status" was used
+            // before, but it's polite-by-default so a failed sign-in
+            // could be missed by a user already focused on the form.
+            // (WCAG 3.3.1 — error identification.)
+            <p
+              className="text-sm text-rose-300"
+              role="alert"
+              aria-live="assertive"
+            >
               {message}
             </p>
           ) : null}

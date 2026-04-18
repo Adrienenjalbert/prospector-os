@@ -52,6 +52,16 @@ export function ChatMessage({
           </div>
         )}
         <div
+          // Polite live region for the assistant message bubble. Screen
+          // readers announce streaming updates without interrupting
+          // whatever the user is doing. WCAG 4.1.3 (status messages).
+          // We mark only the assistant bubble — user input is already
+          // their own text, no need to re-announce.
+          {...(!isUser && {
+            role: 'status',
+            'aria-live': 'polite' as const,
+            'aria-atomic': 'false' as const,
+          })}
           className={cn(
             "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
             isUser ? "bg-zinc-700 text-zinc-50" : "bg-zinc-800 text-zinc-100",

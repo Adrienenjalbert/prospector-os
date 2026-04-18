@@ -2,6 +2,11 @@ import { createSupabaseServer } from '@/lib/supabase/server'
 import { PipelineClient } from '@/components/pipeline/pipeline-client'
 import type { StageMetric } from '@/components/pipeline/pipeline-funnel-chart'
 
+export const metadata = {
+  title: 'Pipeline',
+  description: 'Live funnel volume and stall detection across every active deal.',
+}
+
 const STAGE_ORDER = ['Lead', 'Qualified', 'Proposal', 'Negotiation']
 
 function normalizePipelineStage(raw: string | null): string {

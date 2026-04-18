@@ -18,6 +18,7 @@ export default function DashboardError({
           temporarily unreachable. Try again in a moment.
         </p>
         <button
+          type="button"
           onClick={reset}
           className="mt-6 rounded-lg bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 transition-colors hover:bg-white"
         >

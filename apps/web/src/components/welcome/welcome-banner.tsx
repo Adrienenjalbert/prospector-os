@@ -3,6 +3,7 @@ import { Sparkles, Database, MessageSquare, BarChart3, ArrowRight } from 'lucide
 
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { hasSubmittedBaseline } from '@/app/actions/baseline-survey'
+import { OpenChatStep } from './open-chat-step'
 
 interface WelcomeState {
   show: boolean
@@ -68,8 +69,10 @@ export async function WelcomeBanner() {
 
   const greeting = state.userName ? `Welcome, ${state.userName.split(' ')[0]}.` : 'Welcome.'
 
-  // Three core onboarding steps. Each is a checkbox + link.
-  const steps: { done: boolean; label: string; sub: string; href: string; cta: string }[] = [
+  // Three core onboarding steps. The first two are real navigation
+  // links; the third opens the chat sidebar via a custom event so the
+  // user lands directly in the chat input rather than a new route.
+  const linkSteps: { done: boolean; label: string; sub: string; href: string; cta: string }[] = [
     {
       done: state.hasBaseline,
       label: 'Set your time-saved baseline',
@@ -84,14 +87,14 @@ export async function WelcomeBanner() {
       href: '/onboarding',
       cta: state.hasCompanies ? 'Connected' : 'Connect',
     },
-    {
-      done: state.hasInteractions,
-      label: 'Ask the agent your first question',
-      sub: 'Try "what should I focus on today?" — the answer cites every claim.',
-      href: '#',
-      cta: state.hasInteractions ? 'Done' : 'Open chat',
-    },
   ]
+
+  const chatStep = {
+    done: state.hasInteractions,
+    label: 'Ask the agent your first question',
+    sub: 'Try "what should I focus on today?" — the answer cites every claim.',
+    cta: state.hasInteractions ? 'Done' : 'Open chat',
+  }
 
   return (
     <section className="mb-4 overflow-hidden rounded-xl border border-violet-700/40 bg-gradient-to-br from-violet-950/50 via-zinc-900 to-zinc-900 p-5">
@@ -107,9 +110,9 @@ export async function WelcomeBanner() {
             One context layer over your CRM and calls. Two jobs:{' '}
             <span className="text-zinc-200">build pipeline</span> and{' '}
             <span className="text-zinc-200">manage existing customers</span>. Every answer is cited.
-            The system gets smarter for you every night — see how at{' '}
+            The system gets smarter for you every night —{' '}
             <Link href="/admin/adaptation" className="text-sky-300 hover:underline">
-              adaptation
+              see what the OS has learned about your business
             </Link>
             .
           </p>
@@ -117,7 +120,7 @@ export async function WelcomeBanner() {
       </div>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        {steps.map((s, i) => (
+        {linkSteps.map((s, i) => (
           <Link
             key={i}
             href={s.href}
@@ -151,6 +154,13 @@ export async function WelcomeBanner() {
             </div>
           </Link>
         ))}
+        <OpenChatStep
+          done={chatStep.done}
+          label={chatStep.label}
+          sub={chatStep.sub}
+          cta={chatStep.cta}
+          index={2}
+        />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px] text-zinc-500">
