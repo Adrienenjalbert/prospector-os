@@ -241,6 +241,34 @@ export async function loadToolsForDispatch(opts: {
 }): Promise<Record<string, Tool>> {
   registerBuiltinToolHandlers()
 
+  // Wire `business_profiles.role_definitions[role].default_tools` as a
+  // per-role allow-list. Pre-this-change `default_tools` was dead config:
+  // every tenant's seed declared "AE only gets these 6 tools" but the
+  // loader never read it, so AE actually got every tool whose
+  // `available_to_roles` mentioned 'ae'. Now if `default_tools` is set
+  // for the role, we constrain the loader's allowlist to that subset
+  // (intersected with the registry's role + enabled filter). Tenants
+  // who haven't configured `default_tools` keep the old behaviour.
+  let allowlist: string[] | undefined
+  try {
+    const { data: profile } = await opts.supabase
+      .from('business_profiles')
+      .select('role_definitions')
+      .eq('tenant_id', opts.tenantId)
+      .maybeSingle()
+    const roles = (profile?.role_definitions as
+      | Array<{ slug?: string; default_tools?: string[] }>
+      | null) ?? null
+    const roleDef = roles?.find((r) => r?.slug === opts.role)
+    if (roleDef?.default_tools && roleDef.default_tools.length > 0) {
+      allowlist = roleDef.default_tools
+    }
+  } catch (err) {
+    // Non-fatal: missing profile / shape drift falls back to the
+    // role-based filter only. Don't break tool load over a config gap.
+    console.warn('[tools] role_definitions read failed:', err)
+  }
+
   const { tools, loaded } = await loadToolsForAgent({
     supabase: opts.supabase,
     tenantId: opts.tenantId,
@@ -250,6 +278,7 @@ export async function loadToolsForDispatch(opts: {
     activeUrn: opts.activeUrn ?? null,
     interactionId: opts.interactionId ?? null,
     conversationId: opts.conversationId ?? null,
+    allowlist,
   })
 
   const baseTools =
@@ -360,6 +389,8 @@ function wrapStaticToolsWithMiddleware(
       tool_type: 'builtin',
       execution_config: { handler: slug },
       citation_config: null,
+      deprecated_at: null,
+      deprecation_replacement: null,
     }
 
     const ctx: ToolMiddlewareCtx = {

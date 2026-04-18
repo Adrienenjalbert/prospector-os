@@ -399,7 +399,13 @@ const BUILTIN_TOOLS: ToolSeed[] = [
       'Persist the proposed ICP config to tenants.icp_config. Side-effect tool; gated by write-approval middleware.',
     category: 'action',
     tool_type: 'builtin',
-    execution_config: { handler: 'apply_icp_config' },
+    // `mutates_crm: true` is what the writeApprovalGate middleware
+    // (`tools/middleware.ts#isWriteTool`) actually checks for. The
+    // tool description claimed "gated by write-approval middleware"
+    // but the gate was inert because this flag wasn't set — the agent
+    // could overwrite tenant ICP config without the rep ever seeing
+    // a [DO] approval chip. Same story for apply_funnel_config below.
+    execution_config: { handler: 'apply_icp_config', mutates_crm: true },
     parameters_schema: {
       type: 'object',
       properties: { config: { type: 'object' } },
@@ -416,7 +422,7 @@ const BUILTIN_TOOLS: ToolSeed[] = [
       'Persist the proposed funnel config to tenants.funnel_config. Side-effect tool; gated by write-approval middleware.',
     category: 'action',
     tool_type: 'builtin',
-    execution_config: { handler: 'apply_funnel_config' },
+    execution_config: { handler: 'apply_funnel_config', mutates_crm: true },
     parameters_schema: {
       type: 'object',
       properties: { config: { type: 'object' } },

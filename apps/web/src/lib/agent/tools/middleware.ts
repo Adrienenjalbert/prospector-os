@@ -330,6 +330,71 @@ export const telemetryEmitter: ToolMiddleware = {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in middleware 5: resultSizeGuard
+// Caps the size of any list-shaped tool result so the model isn't drowned
+// by a tool that legitimately returned 500 rows but only needs the top 20
+// for the answer.
+//
+// Why declare a framework-level cap rather than per-tool?
+//   - Every tool author would otherwise have to remember to cap. They don't.
+//     `find_contacts` returned up to 25 contacts; `search_transcripts`
+//     used to return 50; `team_patterns` 100+ rows in some tenants.
+//   - With this in place, ANY new tool that ships a `results` / `rows` /
+//     top-level array exceeding the cap is auto-truncated and tagged
+//     with a warning the agent can quote ("showing first 20 of 250").
+//   - The agent_events bandit reads `payload.row_count` to learn that
+//     bigger isn't better — long lists tend to negatively correlate with
+//     thumbs-up.
+//
+// The cap is intentionally conservative (50). Tools that legitimately need
+// more (e.g. `analyze_account_distribution` returning bucket counts)
+// should declare a non-array shape so the cap doesn't apply.
+// ---------------------------------------------------------------------------
+
+const RESULT_ROW_CAP = 50
+
+function findArrayField(
+  obj: Record<string, unknown>,
+): { key: string; arr: unknown[] } | null {
+  // Common conventions across our tool corpus, in priority order.
+  const candidates = [
+    'rows', 'results', 'contacts', 'deals', 'opportunities', 'signals',
+    'companies', 'accounts', 'transcripts', 'items',
+  ]
+  for (const key of candidates) {
+    const value = obj[key]
+    if (Array.isArray(value)) return { key, arr: value }
+  }
+  return null
+}
+
+export const resultSizeGuard: ToolMiddleware = {
+  name: 'resultSizeGuard',
+  async postToolUse(_ctx, _args, result) {
+    if (!result || typeof result !== 'object') return { result }
+    const obj = result as Record<string, unknown>
+    const found = findArrayField(obj)
+    if (!found) return { result }
+    if (found.arr.length <= RESULT_ROW_CAP) return { result }
+
+    // Truncate + add a warning the agent can quote so the rep knows
+    // there's more available. The original count is preserved in
+    // `_truncated_from` for telemetry / debugging.
+    const truncated = found.arr.slice(0, RESULT_ROW_CAP)
+    const next: Record<string, unknown> = {
+      ...obj,
+      [found.key]: truncated,
+      _truncated_from: found.arr.length,
+      _truncation_warning: `Returned the first ${RESULT_ROW_CAP} of ${found.arr.length} ${found.key}; tell the rep there's more if it matters.`,
+    }
+    return {
+      result: next,
+      warnings: [`tool result truncated: ${found.key} ${found.arr.length} -> ${RESULT_ROW_CAP}`],
+    }
+  },
+}
+
+// ---------------------------------------------------------------------------
 // Chain composition
 // ---------------------------------------------------------------------------
 
@@ -342,13 +407,19 @@ export const telemetryEmitter: ToolMiddleware = {
  *     3. writeApprovalGate (block writes without approval)
  *
  *   postToolUse (reverse of pre for symmetry):
- *     1. citationEnforcer (annotate missing citations)
- *     2. telemetryEmitter (emit tool_called event)
+ *     1. resultSizeGuard (truncate large arrays before downstream sees them)
+ *     2. citationEnforcer (annotate missing citations)
+ *     3. telemetryEmitter (emit tool_called event)
+ *
+ * `resultSizeGuard` runs FIRST in post so the citation enforcer + telemetry
+ * see the truncated row count, not the original — otherwise the bandit
+ * would credit/punish based on the un-truncated payload.
  */
 export const DEFAULT_MIDDLEWARE: ToolMiddleware[] = [
   telemetryEmitter,
   connectorFreshness,
   writeApprovalGate,
+  resultSizeGuard,
   citationEnforcer,
 ]
 

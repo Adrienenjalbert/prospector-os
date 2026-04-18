@@ -60,6 +60,17 @@ export interface ToolRegistryRow {
   tool_type: string
   execution_config: { handler?: string } | null
   citation_config: Record<string, unknown> | null
+  /**
+   * Soft-deprecation timestamp (migration 012). When set, the loader
+   * silently drops the tool from the per-turn list so the agent stops
+   * calling it — without hard-deleting the row, which would cascade
+   * into orphan `agent_events.tool_called` rows the bandit reads from.
+   * The optional `deprecation_replacement` slug surfaces in the agent's
+   * error message when an old call is attempted, nudging the model
+   * toward the new tool.
+   */
+  deprecated_at: string | null
+  deprecation_replacement: string | null
 }
 
 // --------------------------------------------------------------------------
@@ -99,6 +110,14 @@ export interface LoadToolsOptions {
    * Optional slug allow-list. If passed, only tools matching are returned —
    * used when the agent route wants to constrain to "just the tools needed
    * for this role-preset".
+   *
+   * The agent route also passes the role's `default_tools` array from
+   * `business_profiles.role_definitions[role]` here. Pre-this-change
+   * `default_tools` was dead config (defined in the seed, never read at
+   * runtime) so a tenant who set "AE only gets these 6 tools" still saw
+   * every registry row matching the AE role. Now the loader honours the
+   * intersection of: (registry row enabled, deprecated_at null,
+   * available_to_roles ∋ role, slug ∈ allowlist if set).
    */
   allowlist?: string[]
   /**
@@ -144,10 +163,14 @@ export async function loadToolsForAgent(opts: LoadToolsOptions): Promise<{
   const { data, error } = await supabase
     .from('tool_registry')
     .select(
-      'slug, display_name, description, available_to_roles, enabled, is_builtin, tool_type, execution_config, citation_config',
+      'slug, display_name, description, available_to_roles, enabled, is_builtin, tool_type, execution_config, citation_config, deprecated_at, deprecation_replacement',
     )
     .eq('tenant_id', tenantId)
     .eq('enabled', true)
+    // Skip soft-deprecated rows. The partial index added in
+    // migration 012 means this filter costs nothing on rows with
+    // `deprecated_at IS NULL`.
+    .is('deprecated_at', null)
 
   if (error) {
     console.warn('[tool-loader] tool_registry query failed:', error.message)

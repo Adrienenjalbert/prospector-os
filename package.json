@@ -13,6 +13,8 @@
     "type-check": "turbo type-check",
     "validate:workflows": "tsx scripts/validate-workflows.ts",
     "validate:workflows:warn": "tsx scripts/validate-workflows.ts --warn",
+    "validate:tools": "tsx scripts/validate-tools.ts",
+    "validate:tools:warn": "tsx scripts/validate-tools.ts --warn",
     "evals": "npm run evals --workspace=@prospector/web",
     "evals:smoke": "npm run evals:smoke --workspace=@prospector/web"
   },
