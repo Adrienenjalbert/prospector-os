@@ -55,10 +55,17 @@ export class SlackAdapter implements NotificationAdapter {
       },
     ]
 
+    // Metadata threaded into Slack action button `value` payloads. Used
+    // when the user clicks Draft/Snooze/👍/👎 — the slack-events route
+    // (`apps/web/src/app/api/slack/events/route.ts`) parses this and
+    // routes feedback into the right tenant + notification + trigger.
+    // `account_id` and `trigger_event_id` are the current canonical
+    // fields on `NotificationRecord`; older drafts called these
+    // `company_id` and `alert_type` respectively.
     const meta = JSON.stringify({
       tenant_id: notification.tenant_id,
-      company_id: notification.company_id,
-      alert_type: notification.alert_type,
+      account_id: notification.account_id,
+      trigger_event_id: notification.trigger_event_id,
       notification_id: notification.id,
     })
 

@@ -37,29 +37,47 @@ export async function GET(req: Request) {
       .eq('active', true)
 
     let enqueued = 0
-    for (const tenant of tenants ?? []) {
-      try {
-        await enqueueEvalGrowth(supabase, tenant.id)
-        await enqueueExemplarMiner(supabase, tenant.id)
-        await enqueueSelfImprove(supabase, tenant.id)
-        await enqueueAttribution(supabase, tenant.id)
-        // Weekly jobs — the workflow-level idempotency key includes the
-        // ISO week/day, so enqueuing daily is safe.
-        await enqueuePromptOptimizer(supabase, tenant.id)
-        await enqueueScoringCalibration(supabase, tenant.id)
-        // Context-slice calibration (Phase 3) — updates the per-tenant
-        // bandit priors that the selector reads on the next turn. Daily
-        // cadence with a 3-day look-back window for resilience to slip.
-        await enqueueContextSliceCalibration(supabase, tenant.id)
-        // Champion alumni detector (Phase 3.5) — refreshes won-deal
-        // champions via Apollo, emits champion_alumni signals when they
-        // turn up at a new company in the tenant's CRM. Generates net-
-        // new pipeline from the existing contacts.previous_companies
-        // data that no other caller touches.
-        await enqueueChampionAlumniDetector(supabase, tenant.id)
-        enqueued += 8
-      } catch (err) {
-        console.warn(`[cron/learning] tenant ${tenant.id} enqueue failed:`, err)
+
+    // Per-tenant enqueueing previously ran fully sequential — 8 awaits ×
+    // N tenants → cron timeout for fleets > a few hundred tenants on
+    // Vercel's default function budget. We now:
+    //   1. Run the 8 enqueue calls for one tenant in parallel (they are
+    //      independent — different workflow types, different idempotency
+    //      keys).
+    //   2. Process tenants in chunks of TENANT_CHUNK so we don't fan out
+    //      thousands of concurrent Postgres writes against the connection
+    //      pool. Each chunk awaits before the next starts.
+    // Idempotency keys still include tenant + day, so partial progress
+    // resumes cleanly on the next run.
+    const TENANT_CHUNK = 10
+    const tenantList = tenants ?? []
+
+    async function enqueueAllForTenant(tenantId: string): Promise<number> {
+      const results = await Promise.allSettled([
+        enqueueEvalGrowth(supabase, tenantId),
+        enqueueExemplarMiner(supabase, tenantId),
+        enqueueSelfImprove(supabase, tenantId),
+        enqueueAttribution(supabase, tenantId),
+        enqueuePromptOptimizer(supabase, tenantId),
+        enqueueScoringCalibration(supabase, tenantId),
+        enqueueContextSliceCalibration(supabase, tenantId),
+        enqueueChampionAlumniDetector(supabase, tenantId),
+      ])
+      let ok = 0
+      for (const r of results) {
+        if (r.status === 'fulfilled') ok++
+        else console.warn(`[cron/learning] tenant ${tenantId} enqueue partial failure:`, r.reason)
+      }
+      return ok
+    }
+
+    for (let i = 0; i < tenantList.length; i += TENANT_CHUNK) {
+      const slice = tenantList.slice(i, i + TENANT_CHUNK)
+      const chunkResults = await Promise.allSettled(
+        slice.map((t) => enqueueAllForTenant(t.id)),
+      )
+      for (const r of chunkResults) {
+        if (r.status === 'fulfilled') enqueued += r.value
       }
     }
 

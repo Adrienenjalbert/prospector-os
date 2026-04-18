@@ -7,7 +7,18 @@ export interface EnrichmentProvider {
     domain: string,
     filters?: ContactSearchFilters
   ): Promise<ContactEnrichmentResult[]>
-  getJobPostings(domain: string): Promise<JobPosting[]>
+  /**
+   * Fetch open job postings for a company.
+   *
+   * `flexKeywords`: optional list of role-type keywords (e.g. "temp",
+   * "contract", "shift", "locum"). The adapter ships with no defaults so
+   * non-staffing tenants do not get false-positive `is_temp_flex`
+   * postings. Keywords typically come from the per-tenant signal config.
+   */
+  getJobPostings(
+    domain: string,
+    flexKeywords?: string[]
+  ): Promise<JobPosting[]>
 }
 
 export interface CompanyEnrichmentResult {

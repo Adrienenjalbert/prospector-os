@@ -29,11 +29,7 @@ export function computeICPScore(
       job_postings: company.job_postings as { is_temp_flex: boolean }[] | undefined,
       hq_country: company.hq_country as string | undefined,
       locations: company.locations as CompanyLocation[] | undefined,
-      high_turnover_industries: [
-        'Warehousing', 'Logistics', 'Light Industrial', 'Manufacturing',
-        'Distribution', 'Hospitality', 'Food Service', 'Facilities Management',
-        'Retail', 'Wholesale',
-      ],
+      high_turnover_industries: (dim as ICPDimension & { high_turnover_industries?: string[] }).high_turnover_industries,
     }
 
     const match = matchScoringTier(value, dim.scoring_tiers, context)

@@ -168,7 +168,10 @@ export class ApolloAdapter implements EnrichmentProvider {
     }))
   }
 
-  async getJobPostings(domain: string): Promise<JobPosting[]> {
+  async getJobPostings(
+    domain: string,
+    flexKeywords: string[] = [],
+  ): Promise<JobPosting[]> {
     await this.throttle()
 
     const res = await fetch(`${APOLLO_BASE}/organizations/jobs`, {
@@ -182,24 +185,23 @@ export class ApolloAdapter implements EnrichmentProvider {
     const data = await res.json()
     const jobs: Record<string, unknown>[] = data.jobs ?? []
 
-    const tempKeywords = [
-      'temp', 'temporary', 'flexible', 'flex', 'contract', 'agency',
-      'seasonal', 'short-term', 'part-time', 'casual',
-    ]
+    // No vertical-specific defaults — staffing tenants pass keywords like
+    // ['temp', 'contract', 'shift'] from their signal config; tenants in
+    // other verticals pass an empty list and get is_temp_flex=false.
+    const lowered = flexKeywords.map((kw) => kw.toLowerCase())
 
     return jobs.map((j) => {
       const title = (j.title as string) ?? ''
-      const isTempFlex = tempKeywords.some((kw) =>
-        title.toLowerCase().includes(kw)
-      )
+      const titleLower = title.toLowerCase()
+      const matchedKeywords = lowered.filter((kw) => titleLower.includes(kw))
 
       return {
         title,
         location: (j.location as string) ?? null,
         posted_at: (j.posted_at as string) ?? null,
         url: (j.url as string) ?? null,
-        is_temp_flex: isTempFlex,
-        keywords: tempKeywords.filter((kw) => title.toLowerCase().includes(kw)),
+        is_temp_flex: matchedKeywords.length > 0,
+        keywords: matchedKeywords,
       }
     })
   }

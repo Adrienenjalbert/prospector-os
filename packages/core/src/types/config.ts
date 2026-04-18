@@ -26,13 +26,26 @@ export interface ScoringTier {
   min_count?: number
 }
 
+/**
+ * Conditions a scoring tier can match on.
+ *
+ * `active_flex_postings` / `historical_flex_postings` are the
+ * vertical-neutral names — they evaluate against the
+ * `is_temp_flex` flag on `JobPosting`, which itself is driven by the
+ * per-tenant `flex_keywords` list on the `temp_job_posting` signal type
+ * (see `SignalTypeConfig.flex_keywords`). The `active_temp_postings` and
+ * `historical_temp_postings` names are retained as aliases so existing
+ * tenant config JSON keeps working unchanged.
+ */
 export type TierCondition =
   | 'in'
   | 'between'
   | 'uses_any'
   | 'locations_in_operating_regions'
+  | 'active_flex_postings'
   | 'active_temp_postings'
   | 'hq_in_country'
+  | 'historical_flex_postings'
   | 'historical_temp_postings'
   | 'high_turnover_industry'
   | 'default'
@@ -134,6 +147,13 @@ export interface SignalConfig {
     max_signals_per_company: number
     description: string
   }
+  /**
+   * Multiplier applied after raw weighted sum + stacking bonus, before the
+   * 0–100 clamp in `computeSignalStrength`. Documented in
+   * `docs/prd/01-scoring-engine.md`. Defaults to 33 when unset so existing
+   * configs continue to score identically.
+   */
+  normalisation_factor?: number
   deep_research_config: {
     model: string
     temperature: number
@@ -155,6 +175,13 @@ export interface SignalTypeConfig {
   min_relevance_threshold: number
   urgency_default: string
   enrichment_depth: 'standard' | 'deep'
+  /**
+   * Optional per-signal-type metadata. Used by the `temp_job_posting`
+   * detector to flag job postings whose titles contain any of these
+   * keywords. Empty / undefined means "do not flag any postings as
+   * is_temp_flex" — non-staffing tenants should leave this unset.
+   */
+  flex_keywords?: string[]
 }
 
 export interface FunnelConfig {

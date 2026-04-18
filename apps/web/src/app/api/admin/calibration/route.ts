@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { z } from 'zod'
 
 function getServiceSupabase() {
   return createClient(
@@ -8,6 +9,11 @@ function getServiceSupabase() {
     { auth: { persistSession: false } }
   )
 }
+
+const requestSchema = z.object({
+  proposal_id: z.string().uuid('proposal_id must be a UUID'),
+  action: z.enum(['approve', 'reject']),
+})
 
 export async function POST(req: Request) {
   try {
@@ -34,12 +40,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const body = await req.json()
-    const { proposal_id, action } = body as { proposal_id: string; action: 'approve' | 'reject' }
-
-    if (!proposal_id || !['approve', 'reject'].includes(action)) {
-      return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    let body: unknown
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
     }
+
+    const parsed = requestSchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'Invalid request shape',
+          issues: parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+        },
+        { status: 400 },
+      )
+    }
+    const { proposal_id, action } = parsed.data
 
     const { data: proposal } = await supabase
       .from('calibration_proposals')
@@ -82,7 +103,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
     }
 
-    const currentConfig = tenant[configField] as Record<string, unknown>
+    // `tenant` is a discriminated union of `{icp_config}` | `{scoring_config}`
+    // | `{signal_config}` based on which configField was selected. Once we
+    // know configField at runtime, the corresponding key is present —
+    // narrow via a single cast through `Record<string, unknown>` so the
+    // type system stops complaining about the dynamic index.
+    const currentConfig = (tenant as Record<string, unknown>)[configField] as Record<string, unknown>
 
     if (proposal.config_type === 'scoring') {
       const updatedConfig = {

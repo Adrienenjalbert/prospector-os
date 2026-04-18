@@ -58,7 +58,8 @@ function computeQuality(
   for (const act of activities) {
     totalPoints += pointMap[act.type] ?? 1
   }
-  const normaliser = 143
+  const maxPointsPerActivity = Math.max(...Object.values(pointMap), 1)
+  const normaliser = Math.max(1, activities.length * maxPointsPerActivity)
   return Math.min(100, Math.round((totalPoints / normaliser) * 100))
 }
 

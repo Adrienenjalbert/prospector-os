@@ -4,12 +4,7 @@
     { "path": "/api/cron/enrich", "schedule": "0 4 * * *" },
     { "path": "/api/cron/score", "schedule": "0 5 * * *" },
     { "path": "/api/cron/signals", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/notify", "schedule": "30 7 * * 1-5" },
-    { "path": "/api/cron/benchmarks", "schedule": "0 1 * * 1" },
-    { "path": "/api/cron/adoption", "schedule": "0 22 * * *" },
-    { "path": "/api/cron/outcomes", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/calibrate", "schedule": "0 2 * * 0" },
-    { "path": "/api/cron/recalibrate", "schedule": "0 4 1 * *" },
-    { "path": "/api/cron/signal-roi", "schedule": "0 3 * * 0" }
+    { "path": "/api/cron/workflows", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/learning", "schedule": "0 2 * * *" }
   ]
 }

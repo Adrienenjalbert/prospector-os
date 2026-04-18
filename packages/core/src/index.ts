@@ -1,10 +1,13 @@
 // Types
 export * from './types/ontology'
+export * from './types/urn'
+export * from './types/schemas'
 export * from './types/config'
 export * from './types/scoring'
 export * from './types/enrichment'
 export * from './types/notifications'
 export * from './types/agent'
+export * from './types/platform'
 
 // Scoring Engine
 export { computeICPScore } from './scoring/icp-scorer'
@@ -51,9 +54,38 @@ export type { BriefingInput } from './prioritisation/briefing-assembler'
 export { detectRelationshipEvents } from './relationships/event-detector'
 export type { RelationshipEventInput } from './relationships/event-detector'
 
-// Notification Engine
-export { evaluateTriggers } from './notifications/trigger-engine'
-export type { TriggerEvaluationInput, TriggerConfig } from './notifications/trigger-engine'
-export { CooldownManager, TRIGGER_COOLDOWNS } from './notifications/cooldown-manager'
-export { aggregateFeedback, shouldDisableTrigger, shouldRaiseThreshold } from './notifications/feedback-tracker'
-export type { FeedbackSummary } from './notifications/feedback-tracker'
+// Citation Engine
+export { CitationCollector, extractCitationsFromToolResult, formatCitationFooter } from './citations'
+export type { PendingCitation, CitationConfig } from './citations'
+
+// Business skills (Phase 7 — modular business_profiles replacement)
+export {
+  loadActiveBusinessSkills,
+  composeSkillsForPrompt,
+  promoteBusinessSkill,
+} from './business-skills'
+export type {
+  BusinessSkillType,
+  BusinessSkillRow,
+  ActiveBusinessSkills,
+} from './business-skills'
+
+// Telemetry (event sourcing for self-improvement loop)
+export {
+  emitAgentEvent,
+  emitOutcomeEvent,
+  emitAgentEvents,
+} from './telemetry'
+export type {
+  AgentEventType,
+  OutcomeEventType,
+  AgentEventInput,
+  OutcomeEventInput,
+} from './telemetry'
+
+// Notification Engine — production cooldown/dispatch lives in
+// `@prospector/adapters/notifications/slack-dispatcher` +
+// `SupabaseCooldownStore`. The legacy in-memory CooldownManager,
+// trigger-engine, and feedback-tracker were removed in B10 because nothing
+// in app code consumed them. Notification *types* (TriggerType,
+// NotificationAdapter, etc.) remain in `./types/notifications`.

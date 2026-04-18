@@ -114,11 +114,12 @@ export function OverviewTab({ company, expectedRevenue, dealValue, propensity, s
       </div>
       </div>
 
-      {/* MSP Intelligence */}
+      {/* Vertical-specific enrichment (rendered only when the tenant's
+          enrichment pipeline has populated industry-specific signals) */}
       {mspData && (
         <div className="rounded-lg border border-violet-900/40 bg-violet-950/10 p-5">
-          <h3 className="text-sm font-semibold text-violet-300">MSP Intelligence</h3>
-          <p className="mt-1 text-xs text-zinc-500">Indeed Flex ICP-specific workforce data</p>
+          <h3 className="text-sm font-semibold text-violet-300">Vertical intelligence</h3>
+          <p className="mt-1 text-xs text-zinc-500">Industry-specific enrichment from your tenant&apos;s connectors</p>
           <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
             {[
               { label: 'Agency Spend', value: mspData.currentAgencySpend as string },

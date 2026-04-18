@@ -3,29 +3,34 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, MessageSquare } from "lucide-react";
+import { Bell, MessageCircleQuestion, Sparkles } from "lucide-react";
 import { ChatSidebar } from "@/components/agent/chat-sidebar";
+import { AgentPanel, type AgentPanelContext } from "@/components/agent/agent-panel";
+import type { AgentType } from "@/lib/hooks/use-agent-chat";
 import { NotificationList } from "@/components/notifications/notification-list";
 import { NavDropdown } from "@/components/nav/nav-dropdown";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { getSkillsForPath, resolveSkillPrompt } from "@/lib/agent/skills";
 import { clsx } from "clsx";
 
 type NavItem = { href: string; label: string; roles?: string[] };
-type NavDropdownDef = { label: string; items: { href: string; label: string }[]; roles?: string[] };
+type NavDropdownItem = { href: string; label: string; roles?: string[] };
+type NavDropdownDef = { label: string; items: NavDropdownItem[]; roles?: string[] };
 type NavEntry = (NavItem & { type: 'link' }) | (NavDropdownDef & { type: 'dropdown' });
 
 const allNavEntries: NavEntry[] = [
   { type: 'link', href: "/inbox", label: "Inbox" },
   { type: 'link', href: "/pipeline", label: "Pipeline" },
   { type: 'link', href: "/accounts", label: "Accounts" },
+  { type: 'link', href: "/objects/companies", label: "Objects" },
   { type: 'link', href: "/signals", label: "Signals" },
   {
     type: 'dropdown',
     label: 'Analytics',
-    roles: ["manager", "admin", "revops"],
     items: [
-      { href: "/analytics/team", label: "Team Performance" },
-      { href: "/analytics/forecast", label: "Forecast" },
+      { href: "/analytics/my-funnel", label: "My Funnel" },
+      { href: "/analytics/forecast", label: "Forecast", roles: ["manager", "admin", "revops"] },
+      { href: "/analytics/team", label: "Team", roles: ["manager", "admin", "revops"] },
     ],
   },
   { type: 'link', href: "/settings", label: "Settings" },
@@ -33,7 +38,15 @@ const allNavEntries: NavEntry[] = [
 ];
 
 function getNavForRole(role: string): NavEntry[] {
-  return allNavEntries.filter((entry) => !entry.roles || entry.roles.includes(role));
+  return allNavEntries
+    .filter((entry) => !entry.roles || entry.roles.includes(role))
+    .map((entry) => {
+      if (entry.type !== 'dropdown') return entry
+      const items = entry.items.filter((i) => !i.roles || i.roles.includes(role))
+      if (items.length === 0) return null
+      return { ...entry, items }
+    })
+    .filter((e): e is NavEntry => e != null)
 }
 
 export default function DashboardLayout({
@@ -44,10 +57,19 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatInitialPrompt, setChatInitialPrompt] = useState<string | null>(null);
+  const [chatActiveUrn, setChatActiveUrn] = useState<string | null>(null);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [userRole, setUserRole] = useState<string>("rep");
   const bellContainerRef = useRef<HTMLDivElement>(null);
+
+  const [agentPanel, setAgentPanel] = useState<{
+    isOpen: boolean;
+    agentType: AgentType;
+    prompt: string | null;
+    context?: AgentPanelContext;
+    title?: string;
+  }>({ isOpen: false, agentType: "pipeline-coach", prompt: null });
 
   const refreshUnreadCount = useCallback(async () => {
     const supabase = createSupabaseBrowser();
@@ -127,13 +149,34 @@ export default function DashboardLayout({
   useEffect(() => {
     function handleOpenChat(e: Event) {
       const detail = (e as CustomEvent).detail;
-      if (detail?.prompt) {
-        setChatInitialPrompt(detail.prompt);
-      }
+      if (detail?.prompt) setChatInitialPrompt(detail.prompt);
+      if (detail?.activeUrn) setChatActiveUrn(detail.activeUrn);
       setSidebarOpen(true);
     }
     window.addEventListener("prospector:open-chat", handleOpenChat);
     return () => window.removeEventListener("prospector:open-chat", handleOpenChat);
+  }, []);
+
+  useEffect(() => {
+    function handleOpenPanel(e: Event) {
+      const detail = (e as CustomEvent).detail as {
+        agent: AgentType;
+        prompt: string;
+        pageContext?: AgentPanelContext;
+        panelTitle?: string;
+      };
+      if (!detail?.agent || !detail?.prompt) return;
+      setAgentPanel({
+        isOpen: true,
+        agentType: detail.agent,
+        prompt: detail.prompt,
+        context: detail.pageContext,
+        title: detail.panelTitle,
+      });
+    }
+    window.addEventListener("prospector:open-agent-panel", handleOpenPanel);
+    return () =>
+      window.removeEventListener("prospector:open-agent-panel", handleOpenPanel);
   }, []);
 
   return (
@@ -211,18 +254,42 @@ export default function DashboardLayout({
             </div>
             <button
               type="button"
+              onClick={() => {
+                const skills = getSkillsForPath(pathname);
+                const primary = skills[0];
+                if (primary) {
+                  setAgentPanel({
+                    isOpen: true,
+                    agentType: primary.agent,
+                    prompt: resolveSkillPrompt(primary, {}),
+                    context: { page: pathname },
+                    title: primary.label,
+                  });
+                } else {
+                  setSidebarOpen(true);
+                }
+              }}
+              className={clsx(
+                "flex items-center gap-2 rounded-md bg-violet-600/15 px-3 py-2 text-sm font-medium text-violet-200 transition-colors hover:bg-violet-600/25 hover:text-violet-100",
+              )}
+              aria-label="Ask AI about this page"
+            >
+              <Sparkles className="size-4" />
+              <span className="hidden sm:inline">Ask AI</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setSidebarOpen((o) => !o)}
               className={clsx(
-                "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                sidebarOpen
-                  ? "bg-zinc-800 text-zinc-50"
-                  : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
+                "rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200",
+                sidebarOpen && "bg-zinc-800 text-zinc-100",
               )}
               aria-expanded={sidebarOpen}
               aria-controls="ai-chat-sidebar"
+              aria-label="Ask anything (free-form chat)"
+              title="Ask anything (free-form chat)"
             >
-              <MessageSquare className="size-4" />
-              <span className="hidden sm:inline">AI chat</span>
+              <MessageCircleQuestion className="size-5" />
             </button>
           </div>
         </div>
@@ -242,6 +309,22 @@ export default function DashboardLayout({
           onClose={() => setSidebarOpen(false)}
           initialPrompt={chatInitialPrompt}
           onPromptConsumed={() => setChatInitialPrompt(null)}
+          activeUrn={chatActiveUrn}
+          agentType={
+            pathname.startsWith('/objects/deals') || pathname.startsWith('/pipeline')
+              ? 'pipeline-coach'
+              : pathname.startsWith('/objects/companies') || pathname.startsWith('/accounts')
+                ? 'account-strategist'
+                : 'pipeline-coach'
+          }
+        />
+        <AgentPanel
+          isOpen={agentPanel.isOpen}
+          onClose={() => setAgentPanel((s) => ({ ...s, isOpen: false }))}
+          agentType={agentPanel.agentType}
+          initialPrompt={agentPanel.prompt}
+          context={agentPanel.context}
+          panelTitle={agentPanel.title}
         />
       </div>
     </div>

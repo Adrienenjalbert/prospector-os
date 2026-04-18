@@ -70,12 +70,19 @@ Synthesised from `docs/adoption-research-report.md`. **Every UI decision must pa
 ```
 prospector-os/
 ├── apps/web/                   ← Next.js 16, React 19, AI SDK, Supabase
-├── packages/core/              ← Scoring, funnel, prioritisation, notifications, types
-├── packages/db/                ← Supabase client
-├── packages/adapters/          ← Apollo, CRM, Slack adapters
-├── config/                     ← ICP, funnel, signal, scoring JSON configs
+├── packages/core/              ← Scoring, funnel, prioritisation, citations, telemetry, business-skills, types
+├── packages/db/                ← Supabase migrations + client
+├── packages/adapters/          ← Apollo, CRM, transcripts, notifications, connectors
+├── config/                     ← ICP, funnel, signal, scoring JSON defaults
 └── docs/                       ← PRDs, adoption research, deployment guide
 ```
+
+> **Note on the notifications subsystem.** The runtime (Slack dispatcher,
+> cooldown store, push-budget gate) lives in
+> `packages/adapters/src/notifications/`. Only the *type* definitions
+> (`TriggerType`, `NotificationAdapter`) remain in
+> `packages/core/src/types/notifications.ts`. Older docs that point at
+> `packages/core/src/notifications/*` for runtime are superseded.
 
 ### Key Dependencies (`apps/web/package.json`)
 
@@ -792,7 +799,7 @@ const DEMO_ITEMS: PriorityItem[] = [
 | AI chat sidebar | `apps/web/src/components/agent/chat-sidebar.tsx` |
 | AI agent tools | `apps/web/src/lib/agent/tools/index.ts` |
 | AI context builder | `apps/web/src/lib/agent/context-builder.ts` |
-| AI prompt builder | `apps/web/src/lib/agent/prompt-builder.ts` |
+| AI prompt builders | `apps/web/src/lib/agent/agents/*.ts` (`build*Prompt`) |
 | Account detail page | `apps/web/src/app/(dashboard)/accounts/[accountId]/page.tsx` |
 | Pipeline page | `apps/web/src/app/(dashboard)/pipeline/page.tsx` |
 | Deal detail page | `apps/web/src/app/(dashboard)/pipeline/[dealId]/page.tsx` |
@@ -806,6 +813,7 @@ const DEMO_ITEMS: PriorityItem[] = [
 | Scoring types | `packages/core/src/types/scoring.ts` |
 | Agent types | `packages/core/src/types/agent.ts` |
 | Notification types | `packages/core/src/types/notifications.ts` |
+| Notification dispatcher (Slack + push budget) | `packages/adapters/src/notifications/` |
 | Scoring config | `config/scoring-config.json` |
 | Funnel config | `config/funnel-config.json` |
 | ICP config | `config/icp-config.json` |

@@ -10,10 +10,15 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
-    "type-check": "turbo type-check"
+    "type-check": "turbo type-check",
+    "validate:workflows": "tsx scripts/validate-workflows.ts",
+    "validate:workflows:warn": "tsx scripts/validate-workflows.ts --warn",
+    "evals": "npm run evals --workspace=@prospector/web",
+    "evals:smoke": "npm run evals:smoke --workspace=@prospector/web"
   },
   "devDependencies": {
     "dotenv": "^17.3.1",
+    "ts-morph": "^28.0.0",
     "tsx": "^4.21.0",
     "turbo": "^2",
     "typescript": "^5.7"

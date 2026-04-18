@@ -1,1151 +1,795 @@
-# Prospector OS — Product Requirements Document
+# Revenue AI OS — Product Requirements Document
 
-> **Codename:** Prospector OS
-> **Version:** 2.0 — Cursor Development Build
-> **Last Updated:** March 2026
-> **Author:** Adrien Englibert — Head of Digital & Applied AI, Indeed Flex
-> **Mission:** Cut the noise. Surface the signal. Empower action.
-
----
-
-## Table of Contents
-
-1. [Project Overview](#1-project-overview)
-2. [Architecture Philosophy](#2-architecture-philosophy)
-3. [Tool Stack](#3-tool-stack)
-4. [Ontology — Core Objects](#4-ontology--core-objects)
-5. [Database Schema](#5-database-schema)
-6. [Scoring System](#6-scoring-system)
-7. [Funnel Intelligence Engine](#7-funnel-intelligence-engine)
-8. [Enrichment Pipeline](#8-enrichment-pipeline)
-9. [AI Agent Design](#9-ai-agent-design)
-10. [Auto-Trigger System](#10-auto-trigger-system)
-11. [Make.com Scenarios](#11-makecom-scenarios)
-12. [Relevance AI Agent Specs](#12-relevance-ai-agent-specs)
-13. [API Specifications](#13-api-specifications)
-14. [Config-Driven Replicability](#14-config-driven-replicability)
-15. [Feedback Loop & Self-Improvement](#15-feedback-loop--self-improvement)
-16. [File Structure](#16-file-structure)
-17. [Phased Build Plan](#17-phased-build-plan)
-18. [Environment Variables](#18-environment-variables)
-19. [Success Metrics](#19-success-metrics)
+> **Version:** 2.0
+> **Last Updated:** April 2026
+> **Status:** Active product spec
+> **Source of truth for *why* we build this:** [`MISSION.md`](MISSION.md)
+> **Source of truth for *how* we build it:** [`docs/PROCESS.md`](docs/PROCESS.md)
+>
+> v1.0 (April 2026) framed this product as a six-initiative programme for one
+> customer's revenue org. v2.0 keeps the engineering substance and re-frames
+> it as the **universal product** it is becoming: a multi-tenant Sales
+> Operating System that any B2B revenue team can deploy. The previous v1.0
+> initiative table is preserved as a delivery roadmap in §16; everything
+> upstream of that has been rewritten.
 
 ---
 
-## 1. Project Overview
+## Table of contents
 
-### Problem
-
-Sales reps at Indeed Flex spend ~40% of selling time on manual research, CRM admin, and figuring out which accounts to work next. They lack visibility into buying signals, pipeline health, and which of their deals are stalling relative to team benchmarks.
-
-### Solution
-
-An ontology-driven AI sales intelligence system that:
-
-- **Enriches** CRM accounts with external firmographic and signal data (Apollo, Claude API)
-- **Scores** every account with a configurable ICP model + composite priority ranking
-- **Diagnoses** funnel health using drop rate × volume analysis at company, team, and individual rep levels
-- **Assists** each rep with a contextualised AI assistant (single agent template, parameterised per rep)
-- **Proactively pushes** prioritised actions via Slack auto-triggers (stall alerts, signal alerts, daily briefings)
-
-### Design Principles
-
-1. **CRM is the single source of truth** — system reads from and writes back to CRM. No shadow databases.
-2. **One agent, many contexts** — single Relevance AI agent template parameterised per rep at runtime, not cloned per rep.
-3. **Config-driven replicability** — ICP dimensions, funnel stages, and signal sources are JSON config files, not code.
-4. **Drop rate × volume = impact** — the funnel engine ranks stages by both conversion rate delta AND deal count.
-5. **Feedback loops retrain scoring** — win/loss outcomes and stage velocity data continuously recalibrate weights.
-6. **Simple and useful > comprehensive and complex** — every output answers "what should I do next and why?"
-
-### Key Metrics (Targets at 6 months)
-
-| Metric | Current | Target |
-|--------|---------|--------|
-| Rep time on research/admin | ~40% | < 15% |
-| Pipeline forecast accuracy | 55-60% | > 80% |
-| Avg days before stall intervention | 18 days | < 7 days |
-| ICP-qualified pipeline ratio | ~35% | > 65% |
-| System deployment time (new org) | N/A | < 2 weeks |
-
-### Indeed Flex Context
-
-Indeed Flex is a digital staffing platform connecting businesses with temporary flexible workers.
-
-**UK operating cities:** Birmingham, Brighton, Bristol, Cardiff, Coventry, Edinburgh, Glasgow, Leeds, Liverpool, London, Manchester, York
-
-**US operating locations:** Austin TX, Dallas TX, Houston TX, Nashville TN, Atlanta GA, Cincinnati OH, Columbus OH, Ontario CA
-
-**Baseline metrics (Jan-Oct 2025):** £37.7M closed-won, 89-day avg sales cycle, 12.3% win rate, £82k avg deal size.
+1. [Product vision](#1-product-vision)
+2. [Who it is for and what it guarantees](#2-who-it-is-for-and-what-it-guarantees)
+3. [The product in one diagram — the four loops](#3-the-product-in-one-diagram--the-four-loops)
+4. [Architecture — three layers that compound](#4-architecture--three-layers-that-compound)
+5. [Pipeline-as-signal — the prioritisation engine](#5-pipeline-as-signal--the-prioritisation-engine)
+6. [The knowledge layer — a sales-aware assistant](#6-the-knowledge-layer--a-sales-aware-assistant)
+7. [The agent — one runtime, four surfaces](#7-the-agent--one-runtime-four-surfaces)
+8. [Customisation without code — per-tenant everything](#8-customisation-without-code--per-tenant-everything)
+9. [Onboarding — five minutes, agent-assisted, derived from your data](#9-onboarding--five-minutes-agent-assisted-derived-from-your-data)
+10. [Signal-over-noise — the gates that protect adoption](#10-signal-over-noise--the-gates-that-protect-adoption)
+11. [Manager and leadership reporting — defensible ROI](#11-manager-and-leadership-reporting--defensible-roi)
+12. [Cost discipline — how it stays cheap](#12-cost-discipline--how-it-stays-cheap)
+13. [Trust and audit — every output carries its receipts](#13-trust-and-audit--every-output-carries-its-receipts)
+14. [Multi-tenant by design](#14-multi-tenant-by-design)
+15. [Success metrics and guarantees](#15-success-metrics-and-guarantees)
+16. [Roadmap — current state and delivery sequence](#16-roadmap--current-state-and-delivery-sequence)
+17. [What we will not do](#17-what-we-will-not-do)
+18. [Document tree](#18-document-tree)
 
 ---
 
-## 2. Architecture Philosophy
+## 1. Product vision
 
-### Palantir-Inspired Ontology Approach
+**Revenue AI OS is a Sales Operating System for B2B revenue teams.**
 
-Instead of building point-to-point integrations, the system defines a graph of **typed objects** with **computed properties** and **relationships**. Every component reads from and writes to the ontology. Adding a new data source requires only mapping its output to existing object properties, not rewiring pipelines.
+It turns a company's CRM, calls, and context into one self-improving research
+engine — so reps spend their day selling, not searching, and leaders see ROI in
+weeks, not quarters.
 
-### Four-Column Pipeline
+It is not "an AI feature on top of a CRM." It is the missing operating layer
+*between* the CRM (system of record) and the rep (the human doing the work).
+Three things sit in that layer and compound on each other:
 
-```
-INGEST          →   ENRICH           →   SCORE            →   ACT
-─────────────       ─────────────        ─────────────        ─────────────
-HubSpot/SFDC        Apollo.io            ICP Scorer           Priority Queue
-Activity Logs       Signal Scraper       Funnel Engine        AI Assistant
-                    Claude API           Priority Score       Slack Alerts
-                                                              ↑
-                         ┌──────────────────────────────────────┘
-                         │  FEEDBACK LOOP
-                         │  Win/loss → Stage velocity → Drop patterns
-                         └──────────────────────────────────────
-```
+1. A **canonical context layer** — every account, deal, signal, transcript,
+   contact, and outcome lives in one ontology with stable URN addressing
+   (`urn:rev:company:…`, `urn:rev:deal:…`). One vector store. One source of
+   truth a rep, an agent, and a workflow can all cite.
+2. A **universal agent** — one runtime, presented through role-shaped
+   *surfaces* (pipeline coach, account strategist, leadership lens, onboarding
+   coach). Same model, same tools, same telemetry — different prompt + tool
+   subset depending on `(role, active object)`. New roles and new
+   capabilities are configuration, not new codebases.
+3. A **learning layer** — every interaction, citation click, action
+   invocation, and CRM outcome is event-sourced. Nightly workflows mine
+   exemplars, propose prompt diffs, calibrate scoring weights, cluster
+   failures, write attributions. The OS gets measurably better every week,
+   per tenant, on that tenant's data.
 
-### Key Architectural Decision: One Agent, Not N Agents
-
-**DO NOT clone agents per rep.** Use ONE agent template with dynamic context injection:
-
-- Same logic, different data (account portfolio, KPIs, preferences)
-- Maintenance at O(1) not O(n)
-- Knowledge shared, context private
-- Relevance AI supports this via dynamic variables + CRM lookup on rep ID
-
----
-
-## 3. Tool Stack
-
-| Layer | Tool | Role | Integration Method |
-|-------|------|------|--------------------|
-| **Source of Truth** | HubSpot + Salesforce | CRM data, pipeline, activity | Make.com webhooks + scheduled syncs |
-| **Enrichment** | Apollo.io | Firmographics, contacts, signals, waterfall enrichment | Apollo API via Make.com |
-| **Orchestration** | Make.com | Data pipelines, scheduled syncs, webhook triggers, CRM write-back | Native integrations + HTTP modules |
-| **Agent Runtime** | Relevance AI | AI agent hosting, tools, triggers, multi-agent workforce | Relevance AI platform + Slack trigger |
-| **Intelligence** | Claude API | Deep research, signal reports, account plans, outreach drafts | Via Relevance AI tools or Make.com HTTP |
-| **Interface** | Slack | Rep notifications, AI assistant interaction | Relevance AI native Slack integration |
-| **Contact Discovery** | Apollo.io | Contact enrichment, waterfall data, org charts | Apollo API |
-
-### What We DON'T Build
-
-- No custom database (CRM is the store)
-- No custom frontend app (Slack is the interface)
-- No custom hosting (Relevance AI hosts the agent, Make.com hosts the pipelines)
-- No multi-agent coordination overhead (single agent with context)
+The headline promise: **minimum input from the rep, maximum outcome from the
+system, in a cost-disciplined AI footprint.**
 
 ---
 
-## 4. Ontology — Core Objects
+## 2. Who it is for and what it guarantees
 
-### Object Map
+### Who it is for
 
-```
-                    ┌──────────┐
-         ┌─────────│ Contact  │
-         │         └──────────┘
-         │ has_many      │ belongs_to
-         ▼               ▼
-    ┌──────────┐   ┌─────────────┐   ┌──────────┐
-    │  Signal  │──▶│   Company   │◀──│ ICP Score│
-    └──────────┘   └─────────────┘   └──────────┘
-                         │
-                    has_many
-                         ▼
-                   ┌─────────────┐   ┌────────────────┐
-                   │ Opportunity │──▶│ Funnel Analytics│
-                   └─────────────┘   └────────────────┘
-```
+Two end-user shapes and one operator shape:
 
-### Object Definitions
+| Persona | Job to be done | Where they live |
+|---|---|---|
+| **Account Executive / NAE / AE** | Build pipeline. Find, prioritise, and engage net-new accounts that match this company's ICP. | Slack DMs + the Inbox + the chat sidebar |
+| **Customer Success Manager / Account Director** | Manage existing customers. Catch churn signals early, draft escalations, write weekly portfolio digests. | Slack DMs + per-account views + chat |
+| **Sales Leader / RevOps / Admin** | See team performance, defend ROI, tune the system. | The Forecast / Team analytics + `/admin/roi` + `/admin/adaptation` |
 
-#### Company (Central Entity)
+Everything we ship has to advance one of the **two product jobs**:
 
-```typescript
-interface Company {
-  // Identity
-  id: string;                    // CRM record ID
-  name: string;
-  domain: string;
-  crm_source: 'hubspot' | 'salesforce';
-  
-  // Firmographics (from Apollo enrichment)
-  industry: string;
-  industry_group: string;
-  employee_count: number;
-  employee_range: string;        // "250-500", "500-1000", etc.
-  annual_revenue: number;
-  revenue_range: string;
-  founded_year: number;
-  hq_city: string;
-  hq_country: string;
-  location_count: number;
-  locations: Location[];         // Array of office locations
-  tech_stack: string[];          // Technologies in use
-  
-  // Ownership
-  owner_id: string;              // Rep CRM ID
-  owner_name: string;
-  owner_email: string;
-  
-  // Computed Scores (0-100)
-  icp_score: number;
-  icp_tier: 'A' | 'B' | 'C' | 'D';
-  signal_score: number;
-  engagement_score: number;
-  composite_priority_score: number;
-  priority_tier: 'HOT' | 'WARM' | 'COOL' | 'MONITOR';
-  priority_reason: string;       // Human-readable top reason
-  
-  // Enrichment metadata
-  enriched_at: Date;
-  enrichment_source: string;
-  last_signal_check: Date;
-  
-  // Temporal
-  created_at: Date;
-  updated_at: Date;
-  last_activity_date: Date;
-}
-```
+1. **Build pipeline** — find, prioritise, engage net-new accounts.
+2. **Manage existing customers** — portfolio health, churn signals, weekly
+   theme digests.
 
-#### Contact
+If a feature does not advance one of those two jobs, it gets cut.
 
-```typescript
-interface Contact {
-  id: string;
-  company_id: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  title: string;
-  seniority: 'c-level' | 'vp' | 'director' | 'manager' | 'individual';
-  department: string;
-  phone: string;
-  linkedin_url: string;
-  
-  // Engagement
-  engagement_score: number;      // 0-100 based on activity
-  last_activity_date: Date;
-  last_activity_type: string;    // 'email_open', 'meeting', 'call', etc.
-  total_touches: number;
-  
-  // Flags
-  is_champion: boolean;
-  is_decision_maker: boolean;
-  
-  // Source
-  apollo_id: string;
-  crm_id: string;
-  enriched_at: Date;
-}
-```
+### What we guarantee (non-negotiable promises)
 
-#### Signal
+These are the contract terms with every tenant. Every release is checked
+against them in CI and in production telemetry.
 
-```typescript
-interface Signal {
-  id: string;
-  company_id: string;
-  
-  // Signal data
-  type: 'hiring_surge' | 'funding' | 'leadership_change' | 'expansion' | 'news' | 'competitor_mention' | 'job_posting';
-  title: string;
-  description: string;
-  source_url: string;
-  source: 'apollo' | 'claude_research' | 'make_webhook';
-  
-  // Scoring
-  relevance_score: number;       // 0-1
-  weight_multiplier: number;     // From signal config
-  recency_days: number;          // Days since signal detected
-  weighted_score: number;        // relevance × weight × recency_decay
-  
-  // Action
-  recommended_action: string;
-  urgency: 'immediate' | 'this_week' | 'this_month';
-  
-  // Temporal
-  detected_at: Date;
-  expires_at: Date;
-}
-```
+1. **Median time from question to cited answer ≤ 30 seconds. P95 ≤ 60 seconds.**
+2. **Cited-answer rate ≥ 95%** — every numeric claim, every account
+   reference, every recommendation has a citation pill linking to the
+   source object.
+3. **Thumbs-up rate ≥ 80%** in production sampling.
+4. **No demo data in analytics.** Either real numbers or an empty state.
+   Never plausible-but-fake.
+5. **Daily push budget capped per rep** by their `alert_frequency`
+   preference: high = 3, medium = 2 (default), low = 1. Bundled digest, not
+   four separate pings.
+6. **Every adaptation auditable and reversible.** Prompt diffs, scoring
+   weight changes, tool prior updates all land in the calibration ledger
+   with a human approval trail.
+7. **Every proactive push respects the holdout cohort.** Without this no
+   ROI claim is defensible.
 
-#### ICP Score
-
-```typescript
-interface ICPScore {
-  id: string;
-  company_id: string;
-  
-  // Dimension scores (0-100 each)
-  dimensions: {
-    name: string;
-    score: number;
-    weight: number;
-    reasoning: string;
-  }[];
-  
-  // Composite
-  total_score: number;           // Weighted sum, 0-100
-  tier: 'A' | 'B' | 'C' | 'D';
-  
-  // Audit trail
-  computed_at: Date;
-  config_version: string;        // Which ICP config was used
-}
-```
-
-#### Opportunity
-
-```typescript
-interface Opportunity {
-  id: string;
-  company_id: string;
-  owner_id: string;              // Rep ID
-  
-  // Deal info
-  name: string;
-  value: number;
-  currency: 'GBP' | 'USD';
-  stage: string;                 // From funnel config
-  stage_order: number;
-  probability: number;
-  
-  // Velocity
-  days_in_stage: number;
-  stage_entered_at: Date;
-  expected_close_date: Date;
-  
-  // Flags
-  is_stalled: boolean;           // days_in_stage > 1.5× stage median
-  stall_reason: string;
-  next_best_action: string;
-  
-  // Outcome (for feedback loop)
-  outcome: 'open' | 'won' | 'lost';
-  closed_at: Date;
-  lost_reason: string;
-  won_factors: string[];
-  
-  // Computed
-  win_probability_ai: number;    // AI-predicted, not CRM default
-  similar_won_deals: string[];   // IDs of similar won deals
-}
-```
-
-#### Funnel Analytics
-
-```typescript
-interface FunnelAnalytics {
-  id: string;
-  stage_name: string;
-  period: string;                // "2026-Q1", "2026-W12", etc.
-  scope: 'company' | 'team' | 'rep';
-  scope_id: string;              // 'all', 'uk', 'us', or rep_id
-  
-  // Rate metrics
-  conversion_rate: number;       // % advancing to next stage
-  drop_rate: number;             // % exiting funnel at this stage
-  
-  // Volume metrics
-  deal_count: number;
-  total_value: number;
-  avg_deal_value: number;
-  
-  // Velocity
-  avg_days_in_stage: number;
-  median_days_in_stage: number;
-  
-  // Benchmark comparison
-  benchmark_conv_rate: number;   // Company-level benchmark
-  benchmark_drop_rate: number;
-  delta_conv: number;            // conv_rate - benchmark (positive = outperforming)
-  delta_drop: number;            // drop_rate - benchmark (positive = underperforming)
-  
-  // Impact ranking
-  impact_score: number;          // |delta_drop| × deal_count × avg_deal_value
-  
-  // Stalls
-  stall_count: number;           // Deals where days > 1.5× median
-  stall_value: number;           // Total value of stalled deals
-  
-  computed_at: Date;
-}
-```
+These guarantees are visible to operators at `/admin/roi` (ROI metrics) and
+`/admin/adaptation` (what the system has learned and how).
 
 ---
 
-## 5. Database Schema
+## 3. The product in one diagram — the four loops
 
-The system does NOT maintain its own database. All persistent data lives in the CRM (HubSpot/Salesforce) via custom fields and objects. However, the following CRM custom fields need to be created:
-
-### Salesforce Custom Fields on Account
-
-```
-ICP_Score__c                    Number(5,2)     // 0-100
-ICP_Tier__c                     Picklist        // A, B, C, D
-Signal_Score__c                 Number(5,2)     // 0-100
-Engagement_Score__c             Number(5,2)     // 0-100
-Composite_Priority_Score__c     Number(5,2)     // 0-100
-Priority_Tier__c                Picklist        // HOT, WARM, COOL, MONITOR
-Priority_Reason__c              Text(255)
-Enriched_At__c                  DateTime
-Enrichment_Source__c            Text(50)
-Last_Signal_Check__c            DateTime
-Location_Count__c               Number(4,0)
-Tech_Stack__c                   LongTextArea
-ICP_Config_Version__c           Text(20)
-```
-
-### Salesforce Custom Fields on Opportunity
+The product is four nested loops, each with a different cadence. Reps see
+loop 3; leaders see loops 3 and 4; the platform runs all four.
 
 ```
-Days_In_Stage__c                Formula(Number)  // TODAY() - Stage_Entered_At__c
-Stage_Entered_At__c             DateTime
-Is_Stalled__c                   Formula(Checkbox) // Days_In_Stage__c > Stall_Threshold__c
-Stall_Reason__c                 Text(255)
-Next_Best_Action__c             LongTextArea
-Win_Probability_AI__c           Number(5,2)
+┌─────────────────────────────────────────────────────────────────────┐
+│  LOOP 4 — Learn (nightly + weekly)                                  │
+│  exemplar miner · prompt optimizer · scoring calibration ·           │
+│  bandit updates · eval growth · failure cluster reports              │
+│  → calibration_ledger (human-approved adaptations)                   │
+└──────────────────────────────▲──────────────────────────────────────┘
+                               │ event stream (every interaction)
+┌──────────────────────────────┴──────────────────────────────────────┐
+│  LOOP 3 — Act (every chat turn, every Slack push)                   │
+│  Slack DMs · Inbox queue · Action panel · Chat sidebar               │
+│  Sales-aware agent + 22 tools + sales frameworks                     │
+│  → cited responses, suggested next steps, write-back to CRM          │
+└──────────────────────────────▲──────────────────────────────────────┘
+                               │ priority signals
+┌──────────────────────────────┴──────────────────────────────────────┐
+│  LOOP 2 — Score (nightly cron + on-write)                           │
+│  7 sub-scorers · funnel benchmarks · stall detection · forecast      │
+│  → priority_score, urgency_multiplier, expected_revenue              │
+└──────────────────────────────▲──────────────────────────────────────┘
+                               │ canonical objects
+┌──────────────────────────────┴──────────────────────────────────────┐
+│  LOOP 1 — Capture (every 6h CRM sync, transcript webhook)           │
+│  HubSpot / Salesforce sync · transcript ingest · enrichment ·        │
+│  signal detection                                                    │
+│  → ontology (companies, contacts, deals, signals, transcripts,       │
+│     activities, health snapshots) with vector embeddings             │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Salesforce Custom Object: Signal__c
-
-```
-Name                            Text(255)        // Signal title
-Company__c                      Lookup(Account)
-Signal_Type__c                  Picklist         // hiring_surge, funding, etc.
-Description__c                  LongTextArea
-Source_URL__c                   URL
-Relevance_Score__c              Number(3,2)      // 0-1
-Weighted_Score__c               Number(5,2)
-Recommended_Action__c           LongTextArea
-Urgency__c                      Picklist         // immediate, this_week, this_month
-Detected_At__c                  DateTime
-Expires_At__c                   DateTime
-```
-
-### Salesforce Custom Object: Funnel_Benchmark__c
-
-```
-Stage_Name__c                   Text(100)
-Period__c                       Text(20)         // 2026-Q1, 2026-W12
-Scope__c                        Picklist         // company, team_uk, team_us, rep
-Scope_Id__c                     Text(50)
-Conversion_Rate__c              Number(5,2)
-Drop_Rate__c                    Number(5,2)
-Deal_Count__c                   Number(6,0)
-Total_Value__c                  Currency
-Avg_Days_In_Stage__c            Number(5,1)
-Impact_Score__c                 Number(10,2)
-Stall_Count__c                  Number(4,0)
-Computed_At__c                  DateTime
-```
-
-### HubSpot Equivalent Properties
-
-Create the same properties as HubSpot custom properties on Company and Deal objects. Use property groups "Prospector OS Scores" and "Prospector OS Signals".
-
-### Google Sheets: Rep Config
-
-A Google Sheet acts as the rep preference/config store (simpler than CRM custom objects for iteration speed):
-
-| Column | Type | Description |
-|--------|------|-------------|
-| rep_id | Text | CRM user ID |
-| rep_name | Text | Full name |
-| rep_email | Text | Email |
-| slack_user_id | Text | Slack member ID |
-| market | Text | uk / us |
-| team | Text | Team name |
-| comm_style | Text | formal / casual / brief |
-| alert_frequency | Text | high / medium / low |
-| focus_stage | Text | Stage name they're working to improve |
-| kpi_meetings_monthly | Number | Target meetings per month |
-| kpi_proposals_monthly | Number | Target proposals per month |
-| kpi_pipeline_value | Number | Target pipeline value |
-| kpi_win_rate | Number | Target win rate % |
-| outreach_tone | Text | professional / consultative / direct |
-| active | Boolean | true / false |
+Each loop is independent — if loop 3 is down, loop 1 keeps capturing data;
+if loop 4 is down, loops 1–3 still ship value.
 
 ---
 
-## 6. Scoring System
+## 4. Architecture — three layers that compound
 
-### ICP Score (Config-Driven)
+The four loops above run on three architectural layers. **Adding a layer is a
+once-a-year decision; adding a row in any layer is an afternoon.**
 
-The ICP score is computed from a config file (`config/icp-config.json`). See the config file for the full Indeed Flex-specific configuration.
+### Layer 1 — Context (the canonical ontology)
 
-**Formula:** `ICP_Score = Σ (dimension_score × dimension_weight)`
+Postgres + pgvector + Row Level Security on every table. Stable
+`urn:rev:<type>:<id>` addressing for every object. One canonical record per
+account, deal, contact, signal, transcript, activity, health snapshot.
 
-**Tier assignment:**
-- A: ≥ 80
-- B: 60–79
-- C: 40–59
-- D: < 40
+| Object | What it stores | Why it matters |
+|---|---|---|
+| `companies` | Firmographics, ICP scoring, propensity, priority tier | The unit of prioritisation |
+| `contacts` | Decision makers, champions, notes, relationship events | Stakeholder mapping |
+| `opportunities` | Stage, amount, expected close, stall flags | The unit of forecasting |
+| `signals` | Buying intent, hiring, funding, churn, competitor mentions | The trigger for action |
+| `transcripts` | Call/meeting transcripts with embeddings + chunked references | The cite-able truth source for objections, MEDDPICC, themes |
+| `activities` | CRM emails, calls, meetings, tasks | Engagement depth scoring |
+| `health_snapshots` | Account health over time | Churn detection |
+| `business_skills` | Per-tenant prompt skills (replaces the old monolithic `business_profiles`) | How the agent sounds in this tenant |
 
-### Signal Score
+**Every fact the system uses is one of these objects, and every claim it
+makes cites one of these by URN.** No bespoke tables, no shadow data, no
+"AI memory" living somewhere only the model can read.
 
-**Formula:** `Signal_Score = Σ (signal.relevance × signal.weight_multiplier × recency_decay(signal.days_old))`
+Embeddings live in pgvector against transcripts and notes; retrieval is
+account-scoped and cited.
 
-**Recency decay:** `decay = max(0.1, 1 - (days_old / signal_config.recency_decay_days))`
+### Layer 2 — Agent (one runtime, many surfaces)
 
-Normalised to 0–100 scale.
+A single agent runtime in `apps/web/src/app/api/agent/route.ts` powers:
+- the in-app chat sidebar on every page,
+- proactive Slack DMs,
+- the Action Panel on object pages,
+- pre-call brief workflows,
+- onboarding co-pilot,
+- admin chat for operators.
 
-### Engagement Score
+**Surfaces are presets, not separate agents.** A surface is a `(prompt
+template, tool subset)` pair scoped by `(role, active object)`. Today we
+ship four surfaces:
 
-Computed from CRM activity data:
+| Surface | When it activates | Tool subset |
+|---|---|---|
+| **pipeline-coach** | Default for AE/NAE/Growth-AE on Inbox, Pipeline, Account views | priority queue, account research, outreach drafter, stall detection, signal triage, score explanation, framework consult |
+| **account-strategist** | Active on Deal pages and CSM portfolio views | deal strategy, MEDDPICC extractor, stakeholder mapper, transcript search, theme extractor, escalation drafter |
+| **leadership-lens** | Active for managers/RevOps on Forecast and Team analytics | funnel diagnosis, forecast questions, theme summariser across reps, win/loss analysis |
+| **onboarding-coach** | Active for new tenants and during the onboarding wizard | configuration helper, ICP/funnel proposal explainer, baseline survey nudge |
 
-```
-Engagement_Score = (
-  email_opens_30d × 2 +
-  email_replies_30d × 5 +
-  meetings_30d × 15 +
-  calls_30d × 8 +
-  proposals_sent × 20
-) × recency_boost
+Every surface goes through:
+- **Tool dispatch** via a per-tenant tool registry (Thompson bandit ranks
+  tools per intent class).
+- **Citation collection** — every tool returns `{ data, citations }`; if it
+  cannot cite, it does not return.
+- **Behaviour rules** that mandate a `## Next Steps` section with 2–3
+  click-to-prompt buttons and inline citation tags.
+- **Cost-aware model selection** — Sonnet by default, Haiku at 90% of
+  monthly budget, hard cap at 100%.
 
-recency_boost = 1.5 if last_activity < 7 days
-              = 1.0 if last_activity < 30 days
-              = 0.5 if last_activity < 90 days
-              = 0.2 if last_activity > 90 days
-```
+### Layer 3 — Learning (the self-improvement loop)
 
-Capped at 100, normalised.
+Event-sourced: `agent_events`, `outcome_events`, `agent_interaction_outcomes`.
+Nightly + weekly workflows in `apps/web/src/lib/workflows/`:
 
-### Composite Priority Score
+| Workflow | Cadence | What it does |
+|---|---|---|
+| `exemplar-miner` | Nightly | Promotes high-thumb-up responses to per-tenant exemplars |
+| `prompt-optimizer` | Weekly (Wed 02:00 UTC) | Proposes prompt diffs; needs human approval |
+| `scoring-calibration` | Weekly (Fri 02:00 UTC) | Proposes weight updates; lift on holdout shown |
+| `eval-growth` | Continuous | Promotes failures into pending eval cases |
+| `self-improve` | Weekly (Mon 02:00 UTC) | Posts the weekly improvement report to engineering Slack |
+| `attribution` | Per CRM outcome | Writes attributions linking outcomes back to AI interactions |
+| `pre-call-brief` | T-15 before meetings | Drafts the brief; pushes to Slack DM |
+| `transcript-ingest` | On webhook | Ingests, chunks, embeds, signals |
+| `portfolio-digest` | Weekly | Per-CSM theme digest |
+| `churn-escalation` | On signal | Drafts escalation when churn signal fires |
+| `holdout` | On every push | Suppresses for control-cohort users |
 
-```
-Priority_Score = (ICP_Score × 0.35) + (Signal_Score × 0.30) + (Engagement_Funnel_Score × 0.35)
-
-Engagement_Funnel_Score = (
-  engagement_score × 0.4 +
-  stage_position_score × 0.3 +  // Later stages = higher
-  (100 / max(1, days_in_stage)) × 0.2 +
-  historical_win_rate_at_stage × 0.1
-)
-```
-
-**Tier assignment:**
-- HOT: ≥ 80
-- WARM: 60–79
-- COOL: 40–59
-- MONITOR: < 40
-
-**Priority Reason:** The system generates a human-readable reason by identifying which dimension contributed most to the score. E.g., "Funding round detected + strong ICP fit (Tier A)" or "Deal stalled 22 days at Proposal — below team benchmark".
-
----
-
-## 7. Funnel Intelligence Engine
-
-### Drop Rate × Volume Matrix
-
-The funnel engine evaluates every stage on two dimensions:
-
-|  | **Low Volume** (< median) | **High Volume** (≥ median) |
-|--|---|---|
-| **Drop rate above benchmark (≥ +5pts)** | MONITOR: Track weekly | CRITICAL: Immediate action |
-| **Drop rate at or below benchmark** | HEALTHY: No intervention | OPPORTUNITY: Accelerate |
-
-### Impact Score
-
-```
-Impact_Score = |delta_drop_from_benchmark| × deal_count × avg_deal_value
-```
-
-This ranks which stages need attention across the entire funnel, regardless of position.
-
-### Three-Level Benchmarks
-
-| Level | Definition | Refresh | Use |
-|-------|-----------|---------|-----|
-| Company | Rolling 90-day avg, all reps, all markets | Weekly | Truth baseline |
-| Team/Market | Rolling 90-day avg for UK and US separately | Weekly | Market-specific diagnosis |
-| Individual Rep | Rolling 90-day avg per rep + personal targets | Weekly | Powers auto-triggers and coaching |
-
-### Stall Detection
-
-A deal is flagged as stalled when `days_in_stage > 1.5 × median_days_in_stage` for that stage. The stall multiplier is configurable in `config/funnel-config.json`.
-
-### Funnel Computation Flow (Make.com)
-
-```
-1. Pull all Opportunities from SFDC (last 90 days, all stages)
-2. Group by stage → compute conversion_rate, drop_rate, deal_count, avg_value, avg_days
-3. Store as company-level benchmark
-4. Filter by market (UK/US) → store as team benchmarks
-5. Filter by rep → store as rep benchmarks
-6. Compute delta (rep vs company) per stage
-7. Compute impact_score per stage per rep
-8. Flag stalled deals (days > 1.5× median)
-9. Write results to Funnel_Benchmark__c custom object
-10. Push to Relevance AI knowledge base
-```
+The learning layer is **never opaque**. Every change lands in
+`calibration_ledger` with a human-readable diff, observed lift on a holdout
+sub-suite, and one-click rollback.
 
 ---
 
-## 8. Enrichment Pipeline
+## 5. Pipeline-as-signal — the prioritisation engine
 
-### Stage 1: Firmographic Enrichment (Apollo)
+> *Volume and drop-out at every pipeline stage are the strongest signals we
+> have for what a rep should do next. The funnel engine and the seven-way
+> scorer make those signals actionable.*
 
-- **Trigger:** New account in CRM OR weekly sweep of un-enriched records
-- **Make.com scenario:** `01-apollo-enrichment`
-- **Process:**
-  1. Get account domain/name from CRM
-  2. Apollo Organization Enrichment API call
-  3. Map response to Company object properties
-  4. Compute ICP Score using `config/icp-config.json`
-  5. Write enriched data + ICP score back to CRM
-- **Apollo endpoints used:**
-  - `POST /v1/organizations/enrich` — company data
-  - `POST /v1/people/match` — contact matching
-  - `POST /v1/mixed_people/search` — contact discovery
+Most CRMs treat the pipeline as a record-keeping artefact. We treat it as
+the primary *source of action*. Two engines work together:
 
-### Stage 2: Signal Intelligence (Apollo + Claude)
+### 5.1 The funnel engine (volume + drop-out)
 
-- **Trigger:** Daily sweep of Tier A & B accounts
-- **Make.com scenario:** `02-signal-detection`
-- **Process:**
-  1. Query Apollo for intent signals and job posting data
-  2. For Tier A accounts only: Claude API deep research (news, funding, leadership)
-  3. Score each signal: `relevance × type_weight × recency_decay`
-  4. Create Signal__c records in CRM
-  5. Recompute composite priority score
-  6. If signal urgency = "immediate" → trigger Slack alert via Relevance AI
+Implemented in `packages/core/src/funnel/`:
 
-### Stage 3: Deep Account Reports (Claude)
+| Sub-engine | What it computes | What it tells the rep |
+|---|---|---|
+| `benchmark-engine` | Per-stage median days, drop-out rate, win rate from this tenant's own won/lost history | "You usually take 14 days at Proposal; this deal is at 28 days — that's 2× your norm" |
+| `stall-detector` | Per-deal flag: is this slower than the tenant's benchmark for this stage? | Surfaces stalled deals into the priority queue |
+| `impact-scorer` | Which stage is bleeding the most expected revenue? | Tells leaders where the funnel needs surgery |
+| `forecast` | Roll-up with confidence band (NOT an AI confidence score — it's a statistical band on stage-by-stage probabilities) | Manager sees risk concentration |
 
-- **Trigger:** On-demand (rep requests via Slack) OR monthly for Tier A
-- **Make.com scenario:** `03-deep-research`
-- **Process:**
-  1. Assemble full Company context (firmographics + signals + CRM activity + opp history)
-  2. Claude API structured research prompt
-  3. Output: Company overview, ICP reasoning, office locations, job openings (temp focus), news, sales triggers, recommended approach
-  4. Store in Relevance AI knowledge base for agent access
+These run nightly per tenant. Benchmarks are **derived from the tenant's
+own pipeline history**, never hardcoded — onboarding bootstraps from the
+sample data, then re-derives every week.
 
-### Signal Report Template (Claude Prompt)
+### 5.2 The composite scorer (seven sub-scores)
 
-```
-You are a B2B sales intelligence analyst for Indeed Flex, a digital staffing platform.
+For every account, every night, the engine in
+`packages/core/src/scoring/` computes:
 
-Given the following company data:
-{company_context}
+| Sub-score | Source | Range |
+|---|---|---|
+| **ICP fit** | Firmographics vs the tenant's ICP dimensions | 0–100 |
+| **Signal momentum** | Recent buying signals weighted by recency + type | 0–100 |
+| **Engagement depth** | CRM activity volume vs tenant median | 0–100 |
+| **Contact coverage** | Champion + decision-maker mapping completeness | 0–100 |
+| **Stage velocity** | Days-in-stage vs benchmark for this tenant | 0–100 |
+| **Profile win rate** | Historical win rate of similar deals (industry × size × geo) | 0–100 |
+| **Composite propensity** | Weighted blend of the six above | 0–100 |
 
-Generate a structured signal report with these sections:
+Then the urgency multiplier kicks in when any of: an immediate signal fires,
+the close date is within 30 days, competitive pressure is detected, signal
+surge in the last 7 days, or stall-going-dark.
 
-1. COMPANY OVERVIEW: 2-3 sentence summary of what this company does
-2. QUALIFICATION SCORE: Rate 1-10 with reasoning against Indeed Flex ICP
-3. OFFICE LOCATIONS: List relevant UK/US locations, flag Indeed Flex operating areas
-4. JOB OPENINGS: Focus on temp/flex/agency worker roles — count and locations
-5. RECENT NEWS & SIGNALS (2024-2026): Funding, expansion, leadership changes, staffing challenges
-6. SALES TRIGGERS & OPPORTUNITIES: Specific reasons this company needs Indeed Flex now
-7. RECOMMENDED APPROACH: Who to contact, what angle, what timing
+The output: `expected_revenue = deal_value × propensity × urgency_multiplier`,
+and a `priority_tier` (HOT / WARM / COOL / COLD) with a one-line
+`priority_reason` that the agent can quote verbatim.
 
-Be specific and factual. Include sources where available.
-```
+**This scoring stack means the Inbox always answers "what should I do next,
+and why."** No twenty-row tables, no "score = 87" with no because-clause.
+The score *and* its reason — top 3 only — driven by funnel volume + drop-out
++ six other empirical signals.
 
----
+### 5.3 Calibration (the score gets better every week)
 
-## 9. AI Agent Design
-
-### Architecture: Single Agent Template
-
-```
-┌─────────────────────────────────────────┐
-│        RELEVANCE AI AGENT TEMPLATE      │
-│                                         │
-│  System Prompt (fixed)                  │
-│  + Dynamic Variables (per rep):         │
-│    - {{rep_profile}}                    │
-│    - {{account_portfolio_top20}}        │
-│    - {{rep_funnel_benchmarks}}          │
-│    - {{active_signals}}                 │
-│    - {{company_benchmark}}              │
-│                                         │
-│  Tools:                                 │
-│    - priority_queue                     │
-│    - account_research                   │
-│    - outreach_drafter                   │
-│    - funnel_diagnosis                   │
-│    - deal_strategy                      │
-│    - crm_lookup                         │
-│                                         │
-│  Triggers:                              │
-│    - Slack DM (reactive)                │
-│    - Scheduled (daily briefing)         │
-│    - Webhook (stall/signal alerts)      │
-└─────────────────────────────────────────┘
-```
-
-### Context Injection at Runtime
-
-When a rep interacts (or auto-trigger fires), assemble context:
-
-| Context Block | Contents | Source |
-|---------------|----------|--------|
-| Rep Profile | Name, market, KPIs, comm style, focus stage | Google Sheets config |
-| Account Portfolio | Top 20 by priority score with stage, value, days-in-stage | CRM query WHERE owner = rep_id ORDER BY priority DESC |
-| Rep Funnel Benchmarks | Per-stage: conversion, drop rate, volume, delta vs company | Funnel_Benchmark__c WHERE scope = rep |
-| Active Signals | Signals on rep's accounts from last 14 days | Signal__c WHERE company IN rep's accounts AND detected > 14d ago |
-| Company Benchmark | Aggregate funnel metrics across all reps | Funnel_Benchmark__c WHERE scope = company |
-
-### Agent Capabilities
-
-| Capability | Mode | Description |
-|-----------|------|-------------|
-| Daily Priority Queue | Auto (8am) | Top 5 accounts to work today with reason + suggested action |
-| Stall Alert | Auto (on threshold) | Deal stuck > 1.5× median. Diagnosis: "No activity 12 days" |
-| Signal Alert | Auto (on detection) | New signal on rep's account. Recommended action |
-| Funnel Gap Alert | Auto (weekly) | Rep drop rate diverges ≥ 10pts from benchmark |
-| Account Research | On demand | Deep signal report on specific company |
-| Outreach Draft | On demand | Personalised email using account context + rep's style |
-| Deal Strategy | On demand | Win probability, similar deals, recommended actions |
-| Funnel Diagnosis | On demand | Full funnel view: stage-by-stage with benchmarks |
+`scoring-calibration` workflow analyses the tenant's actual close history
+against the score it predicted, and proposes weight updates. Operators see
+the proposed change, the lift on a hold-out cohort, and approve or reject.
+The change writes to `tenants.scoring_config` (JSONB) and
+`calibration_ledger` for full audit. Rollback = re-applying the
+`before_value` — one DB op.
 
 ---
 
-## 10. Auto-Trigger System
+## 6. The knowledge layer — a sales-aware assistant
 
-### Trigger Definitions
+> *A sales assistant that does not know SPIN, MEDDPICC, Sandler, Challenger,
+> or how to handle an objection is not a sales assistant. It is a chatbot.*
 
-| Trigger | Condition | Cooldown | Priority | Channel |
-|---------|-----------|----------|----------|---------|
-| Deal stall | days_in_stage > 1.5× median | 7 days | High | Slack DM |
-| Signal detected | New signal, relevance > 0.7 | 48 hours | Medium | Slack DM |
-| Priority shift | Score changes by > 15 points | 24 hours | Medium | Slack DM |
-| Funnel gap | Rep drop rate ≥ 10pts above benchmark | 7 days | Low | Slack channel |
-| Win/loss insight | Closed deal matches profile of active deals | None | Low | Slack DM |
-| Daily briefing | Scheduled 8am local | 24 hours | Routine | Slack DM |
+Every agent surface ships with an in-process **sales playbook** — a curated
+library of 16 industry-standard frameworks the model can quote, score
+against, and attribute claims to. Implemented in
+`apps/web/src/lib/agent/knowledge/sales-frameworks/`.
 
-### Alert Fatigue Prevention
+| Framework | Author | Best for |
+|---|---|---|
+| **SPIN Selling** | Neil Rackham | Discovery on complex B2B |
+| **MEDDPICC** | Dick Dunkel / Jay Klauminzer | Enterprise qualification |
+| **Sandler** | David Sandler | Up-front contracts; stalled deals |
+| **Challenger** | CEB / Dixon & Adamson | Reframing in commoditised markets |
+| **Command of the Message** | Force Management | Late-stage value sell |
+| **Value Selling** | Bosworth | ROI-driven proposals |
+| **Solution Selling** | Bosworth (1995) | Pain-led discovery |
+| **JOLT** | Dixon (2022) | Indecision / "no decision" deals |
+| **NEAT Selling** | The Harris Consulting Group | Modern qualification (need-economic-access-timeline) |
+| **RAIN** | RAIN Group | Consultative discovery |
+| **Pain Funnel** | Sandler | Deepening shallow pain |
+| **Three-Why** | Mike Bosworth | Why change, why now, why us |
+| **BANT / ANUM** | IBM legacy | Lightweight qualification |
+| **SNAP Selling** | Jill Konrath | Selling to overwhelmed buyers |
+| **Gap Selling** | Keenan | Current vs future state framing |
+| **Objection handling (LAER)** | Listen, Acknowledge, Explore, Respond — always-on reflex | Universal objection handling |
 
-- Every trigger has a cooldown period
-- Rep preference controls alert frequency (high/medium/low)
-- Low frequency = only high priority triggers
-- Every Slack message includes 👍/👎 reaction for feedback
-- Weekly: analyse reaction data, tune thresholds
+### 6.1 How the agent uses them
 
-### Slack Message Format
+A pure, deterministic **selector**
+(`sales-frameworks/selector.ts`) ranks the top 3 frameworks for the current
+turn based on `(role, active object, deal stage, stall flag, signal types)`.
+The selector picks; the agent decides. The result is spliced into a short
+playbook preamble in the system prompt:
+
+> *Default to these frameworks for this context: **SPIN → MEDDPICC →
+> CHALLENGER**. Pick whichever best fits the question — don't force all
+> three. If you need depth (verbatim questions, scoring scaffolds, pitfall
+> lists), call `consult_sales_framework` with the slug.*
+
+When the agent needs depth (full SPIN question scaffold, MEDDPICC scoring
+prompts, Sandler up-front contract template), it calls
+`consult_sales_framework` with a slug and an optional section focus
+(`mental_model`, `scaffold`, `prospector_application`, `pitfalls`,
+`attribution`). The framework body is markdown so the agent can quote
+verbatim.
+
+### 6.2 Always-on objection reflex
+
+LAER — Listen, Acknowledge, Explore, Respond — is in the always-on
+playbook preamble. The agent never opens an objection response with a
+discount or a feature; it explores first.
+
+### 6.3 Mandatory framework attribution
+
+Every substantive recommendation ends with an inline tag the UI parses and
+the telemetry pipeline counts:
 
 ```
-🔥 *Deal Stall Alert — Acme Corp*
-
-Your deal "Acme Corp - Q2 Temp Staffing" has been at *Proposal* stage for *22 days*
-(team median: 14 days).
-
-*Diagnosis:* No contact activity in the last 12 days. Decision-maker Sarah Chen (VP Ops) hasn't responded to last 2 emails.
-
-*Recommended action:*
-Try a different channel — Sarah is active on LinkedIn this week. Or escalate to her direct report James Miller (Dir. Facilities) who opened your last email 3 times.
-
-[📞 View Account] [✉️ Draft Outreach] [📊 Full Funnel View]
+[framework: SPIN]
+[framework: MEDDPICC]
+[framework: LAER]
 ```
+
+Three uses for these tags, all required:
+1. **Teach the rep the methodology as they use it** — every tagged
+   response is also a training moment.
+2. **Power per-tenant attribution** — the nightly attribution workflow
+   counts which frameworks correlate with stage progression for *this*
+   tenant. The selector becomes per-tenant-tuned over time.
+3. **Show customers exactly how the OS reasons** — `/admin/adaptation`
+   surfaces "frameworks most associated with won deals at your tenant."
+
+This is what makes the assistant **trustable and capable**: real,
+attributable, human sales knowledge — not a model riffing.
 
 ---
 
-## 11. Make.com Scenarios
+## 7. The agent — one runtime, four surfaces
 
-### Scenario 01: Apollo Enrichment
+### 7.1 The three-tier harness
 
-```
-Trigger: Salesforce — Watch Account (new or updated, un-enriched)
-    ↓
-Filter: enriched_at is empty OR enriched_at < 30 days ago
-    ↓
-HTTP Module: Apollo Organization Enrichment API
-    POST https://api.apollo.io/api/v1/organizations/enrich
-    Body: { domain: {{account.domain}} }
-    ↓
-Router:
-    Route 1 (Apollo returned data):
-        → Transform: Map Apollo response to CRM fields
-        → Compute: ICP Score using config dimensions
-        → Salesforce: Update Account (firmographics + scores)
-    Route 2 (Apollo no data):
-        → Salesforce: Update Account (enrichment_source = "apollo_no_match")
-```
+The agent uses **structure selectively**. Over-harnessing kills flexibility;
+under-harnessing lets promises drift. Three tiers:
 
-### Scenario 02: Signal Detection
+| Tier | Where | What is harnessed | What is preserved |
+|---|---|---|---|
+| **Tier 1 — Chat loop** | `apps/web/src/app/api/agent/route.ts` | Inputs (typed tools) and outputs (`## Next Steps` + citations) | Conversational flexibility |
+| **Tier 2 — Tools** | `apps/web/src/lib/agent/tools/` | Zod input schema, `{ data, citations }` output, retry classification, cooldowns, telemetry | Nothing — tools are infrastructure |
+| **Tier 3 — Workflows** | `apps/web/src/lib/workflows/` | Idempotency keys, tenant scoping, holdout suppression, DAG with trigger rules | Nothing — workflows are commitments |
 
-```
-Trigger: Schedule — Every day at 6am UTC
-    ↓
-Salesforce: Get Accounts WHERE ICP_Tier = 'A' OR ICP_Tier = 'B'
-    ↓
-Iterator: For each account
-    ↓
-HTTP Module: Apollo Job Postings API (check for temp/flex hiring)
-    ↓
-Router:
-    Route 1 (Tier A accounts):
-        → HTTP Module: Claude API deep research
-        → Transform: Extract signals from Claude response
-    Route 2 (Tier B accounts):
-        → Transform: Use Apollo data only
-    ↓
-Filter: Only signals with relevance > 0.5
-    ↓
-Salesforce: Create Signal__c record
-    ↓
-Aggregator: Recompute composite priority score for account
-    ↓
-Salesforce: Update Account priority fields
-    ↓
-Filter: If signal urgency = "immediate"
-    ↓
-HTTP Module: Relevance AI webhook → trigger signal alert
-```
+`scripts/validate-workflows.ts` enforces every tier-3 rule as an AST check
+in CI. No workflow ships without passing it.
 
-### Scenario 03: Funnel Computation (Weekly)
+### 7.2 The tool catalogue (extensible, per-tenant)
+
+Tools are loaded from `tool_registry` per tenant per call. Operators can
+add or remove tools from `/admin/ontology` without a deploy.
+
+Built-in tools (today, ~22 of them) include:
 
 ```
-Trigger: Schedule — Every Monday at 5am UTC
-    ↓
-Salesforce: SOQL query all Opportunities (last 90 days)
-    ↓
-Array Aggregator: Group by stage
-    ↓
-Math Module: Per stage → conversion_rate, drop_rate, deal_count, avg_value, avg_days
-    ↓
-Salesforce: Upsert Funnel_Benchmark__c (scope = company)
-    ↓
-Router: Split by market (UK/US)
-    → Salesforce: Upsert Funnel_Benchmark__c (scope = team_uk, team_us)
-    ↓
-Router: Split by rep (owner_id)
-    → Salesforce: Upsert Funnel_Benchmark__c (scope = rep, scope_id = rep_id)
-    ↓
-Math Module: Compute delta (rep vs company) per stage
-    ↓
-Math Module: Compute impact_score per stage
-    ↓
-Filter: If delta_drop ≥ 10 for any stage
-    → HTTP Module: Relevance AI webhook → trigger funnel gap alert
-    ↓
-HTTP Module: Push funnel data to Relevance AI knowledge base
+priority_queue            account_research          outreach_drafter
+funnel_diagnosis          deal_strategy             stakeholder_mapper
+contact_finder            relationship_notes        explain_score
+detect_stalls             active_signals            transcript_search
+transcript_summarise      theme_extractor           account_health_snapshot
+escalation_drafter        meddpicc_extractor        narrative_critic
+forecast_question_gen     consult_sales_framework   record_conversation_note
+crm_write
 ```
 
-### Scenario 04: Daily Briefing
+Connector-backed tools (Tableau query, Snowflake query, HubSpot note
+write, ticket lookup) reference a `requires_connector_id` row in
+`connector_registry`. Adding a new external system = one adapter file +
+one registry row + one tool row. No new pages, no new agent code path.
 
-```
-Trigger: Schedule — Every day at 7:30am UTC
-    ↓
-Google Sheets: Get active reps from config sheet
-    ↓
-Iterator: For each rep
-    ↓
-Salesforce: Get top 5 accounts by priority score WHERE owner = rep_id
-    ↓
-Salesforce: Get stalled deals for rep
-    ↓
-Salesforce: Get new signals (last 24h) for rep's accounts
-    ↓
-HTTP Module: Relevance AI — trigger daily briefing for rep
-    Body: { rep_id, top_accounts, stalled_deals, new_signals }
-```
+### 7.3 The inbox skill chips (zero-typing UX)
+
+Every page renders 3–5 **skill chips** — one-click prefilled prompts
+scoped to the active surface and object. The Inbox shows: "Why is my top
+account hot?", "What should I do today?", "Show stalled deals", "What
+changed this week?". Account pages show: "Find the champion", "Draft a
+re-engagement email", "Pressure-test the deal." Empty states become
+opportunity states. The user does not need to know what to ask.
 
 ---
 
-## 12. Relevance AI Agent Specs
+## 8. Customisation without code — per-tenant everything
 
-### Agent: Prospector OS Assistant
+The OS is designed to be modified by **adding rows, not by writing code.**
+This is the recipe for moving fast without breaking trust.
 
-```yaml
-name: "Prospector OS"
-model: claude-sonnet-4
-temperature: 0.3
-max_tokens: 4000
+### 8.1 Six things every tenant gets that are theirs
 
-system_prompt: |
-  You are Prospector OS, an AI sales intelligence assistant for {{rep_name}} 
-  at Indeed Flex. Your role is to help {{rep_name}} prioritise their sales 
-  actions, understand their pipeline health, and close more deals.
+| What | Stored in | How it gets there |
+|---|---|---|
+| **ICP scoring dimensions** | `tenants.icp_config` (JSONB) | Onboarding wizard derives from won-deal history; weekly calibration tunes |
+| **Funnel benchmarks** | `tenants.funnel_config` (JSONB) | Onboarding wizard derives from pipeline history; weekly calibration tunes |
+| **Scoring weights** (six sub-scores blend) | `tenants.scoring_config` (JSONB) | Default uniform; calibration analyser proposes per-tenant updates |
+| **Tool priors** (which tool to call when) | `tool_priors` (Thompson bandit α/β by intent class) | Bandit converges in 2–4 weeks of usage |
+| **Business skills** (prompt voice, value props, target industries) | `business_skills` (modular per-tenant rows) | Set in `/admin/config` or by skill-promotion workflow |
+| **Exemplars + retrieval priors** | `exemplars`, retrieval log | Mined nightly from this tenant's high-thumb-up turns |
 
-  ## Your Context
-  
-  **Rep Profile:**
-  {{rep_profile}}
-  
-  **Top Priority Accounts:**
-  {{account_portfolio_top20}}
-  
-  **Funnel Benchmarks ({{rep_name}} vs Company):**
-  {{rep_funnel_benchmarks}}
-  
-  **Active Signals (Last 14 Days):**
-  {{active_signals}}
-  
-  **Company Benchmarks:**
-  {{company_benchmark}}
+Two new tenants on the same code path produce **two materially different
+agents** within 30 days of usage. That is the product.
 
-  ## Your Behaviour
-  
-  - Always answer "what should I do next and why?"
-  - Reference specific accounts, numbers, and signals — never be vague
-  - Compare rep metrics against company benchmarks to identify gaps
-  - Use {{comm_style}} communication style
-  - Be {{outreach_tone}} in tone
-  - Focus especially on {{focus_stage}} stage — rep is working to improve this
-  - Keep responses concise unless detailed analysis is requested
-  - When recommending actions, suggest specific next steps with specific contacts
-  - When drafting outreach, use Indeed Flex value props relevant to the account's industry
+### 8.2 Adding a new role
 
-triggers:
-  - type: slack_dm
-    description: "Rep messages the agent in Slack"
-  - type: scheduled
-    schedule: "0 8 * * 1-5"  # 8am Mon-Fri
-    action: daily_briefing
-  - type: webhook
-    url: "/api/triggers/stall-alert"
-    action: stall_alert
-  - type: webhook
-    url: "/api/triggers/signal-alert"
-    action: signal_alert
+A new role (e.g. "BDR", "Sales Engineer", "Renewals Specialist") is:
+1. A row in `business_profiles.role_definitions`.
+2. A row in `tool_registry.available_to_roles` for each tool the role
+   should see.
+3. (Optional) A new context strategy if the role needs a different context
+   shape.
 
-tools:
-  - name: priority_queue
-    description: "Get ranked priority queue for the rep"
-    source: make_webhook
-    
-  - name: account_research
-    description: "Run deep research on a specific company"
-    source: claude_api_tool
-    
-  - name: outreach_drafter
-    description: "Draft personalised outreach email"
-    source: claude_api_tool
-    
-  - name: funnel_diagnosis
-    description: "Show full funnel analysis with benchmarks"
-    source: make_webhook
-    
-  - name: deal_strategy
-    description: "Analyse a specific deal and recommend actions"
-    source: claude_api_tool
-    
-  - name: crm_lookup
-    description: "Look up account or contact details in CRM"
-    source: make_webhook
-```
+No new code path. No new agent. The bandit specialises tool priors per role
+automatically.
+
+### 8.3 Adding a new industry
+
+A new value in `business_profiles.target_industries`. The prompt builder
+picks it up on the next request; the exemplar miner specialises naturally
+as the tenant accumulates won deals in that vertical.
 
 ---
 
-## 13. API Specifications
+## 9. Onboarding — five minutes, agent-assisted, derived from your data
 
-### Make.com Webhook Endpoints (for Relevance AI to call)
+Onboarding is itself a product surface. The promise: **first cited answer
+in 5 minutes, no manual configuration required.**
 
-| Endpoint | Method | Purpose | Params |
-|----------|--------|---------|--------|
-| `/webhooks/priority-queue` | POST | Get ranked accounts for rep | `{ rep_id }` |
-| `/webhooks/funnel-diagnosis` | POST | Get funnel analytics for rep | `{ rep_id, stage? }` |
-| `/webhooks/crm-lookup` | POST | Get account/contact detail | `{ account_id?, contact_id? }` |
-| `/webhooks/trigger-alert` | POST | Fire an auto-trigger | `{ type, rep_id, data }` |
-| `/webhooks/deep-research` | POST | Run Claude deep research | `{ company_id }` |
+### 9.1 The wizard (six steps)
 
-### External APIs
-
-| API | Base URL | Auth | Rate Limit |
-|-----|----------|------|------------|
-| Apollo Organization Enrich | `https://api.apollo.io/api/v1/organizations/enrich` | API key header | 100/min |
-| Apollo People Search | `https://api.apollo.io/api/v1/mixed_people/search` | API key header | 100/min |
-| Apollo Job Postings | `https://api.apollo.io/api/v1/organizations/jobs` | API key header | 100/min |
-| Claude API | `https://api.anthropic.com/v1/messages` | API key header | As per plan |
-| Salesforce REST | `https://{instance}.salesforce.com/services/data/v59.0/` | OAuth 2.0 | 15,000/day |
-| HubSpot API | `https://api.hubapi.com/` | Private app token | 500,000/day |
-| Relevance AI | `https://api-{region}.stack.tryrelevance.com/latest/` | API key | As per plan |
-
----
-
-## 14. Config-Driven Replicability
-
-Three JSON config files define a deployment. Change these files to deploy for a different business.
-
-### Config 1: `config/icp-config.json`
-
-See separate file. Defines weighted scoring dimensions.
-
-### Config 2: `config/funnel-config.json`
-
-See separate file. Defines pipeline stages and velocity expectations.
-
-### Config 3: `config/signal-config.json`
-
-See separate file. Defines signal types, sources, and weights.
-
-### Deployment Checklist (New Business)
-
-1. Connect CRM to Make.com
-2. Connect Apollo API
-3. Fill in `icp-config.json` (4-6 weighted dimensions)
-4. Fill in `funnel-config.json` (stage names matching CRM pipeline)
-5. Fill in `signal-config.json` (relevant signal types and weights)
-6. Run initial Apollo enrichment sweep
-7. Compute ICP scores and baseline funnel benchmarks
-8. Configure rep profiles in Google Sheets
-9. Deploy Relevance AI agent with config-driven system prompt
-10. Connect Slack and activate auto-triggers
-
-**Estimated deployment: 10-14 days.**
-
----
-
-## 15. Feedback Loop & Self-Improvement
-
-### Win/Loss Analysis (Automated — every deal close)
-
-1. Pull ICP score at time of deal entry
-2. Pull active signals during deal lifecycle
-3. Pull funnel velocity metrics
-4. Build dataset: winning deal profile vs losing deal profile
-5. Every 90 days: recommend ICP weight adjustments to team lead
-
-### Funnel Benchmark Drift Detection
-
-- Benchmarks recomputed weekly
-- If any stage benchmark shifts > 5 points over 4 weeks → flag for review
-- Catches systemic changes (new competitor, market shift, pricing change)
-
-### Agent Feedback Collection
-
-- Every Slack message includes 👍/👎
-- Weekly: aggregate reactions by trigger type
-- If a trigger type gets > 50% negative → raise threshold
-- If a trigger type gets ignored > 70% → consider disabling or re-tuning
-
----
-
-## 16. File Structure
+Implemented at `/onboarding`:
 
 ```
-prospector-os/
-├── CURSOR_PRD.md              # This file — main reference
-├── .cursorrules               # Cursor AI context rules
-├── config/
-│   ├── icp-config.json        # ICP scoring dimensions + weights
-│   ├── funnel-config.json     # Pipeline stage definitions
-│   └── signal-config.json     # Signal types, sources, weights
-├── schemas/
-│   ├── salesforce-fields.md   # Custom field definitions for SFDC
-│   └── hubspot-properties.md  # Custom property definitions for HubSpot
-├── agents/
-│   ├── system-prompt.md       # Relevance AI agent system prompt
-│   └── tool-specs.md          # Agent tool definitions
-├── make-scenarios/
-│   ├── 01-apollo-enrichment.md
-│   ├── 02-signal-detection.md
-│   ├── 03-funnel-computation.md
-│   └── 04-daily-briefing.md
-└── docs/
-    ├── deployment-guide.md
-    └── rep-config-template.csv
+[ Welcome ] → [ Connect CRM ] → [ Sync data ] → [ ICP fit ] → [ Funnel ] → [ You ]
 ```
 
----
+| Step | What happens | Where the AI helps |
+|---|---|---|
+| **Welcome** | Tour of what the OS will do | — |
+| **Connect CRM** | Paste a HubSpot Private App token *or* Salesforce Connected App credentials. Stored encrypted. | — |
+| **Sync data** | Pull accounts, opportunities, contacts. Enrich firmographics. Score everything. (~30–90 seconds) | — |
+| **ICP fit** | Wizard analyses **your won deals** and **proposes scoring dimensions** with weights + tier labels derived from what actually closed. User accepts or edits per dimension. | Agent-derived from your data |
+| **Funnel** | Wizard reads your pipeline history, **detects your real stages**, and computes median days at each. User accepts or overrides stall thresholds. | Agent-derived from your data |
+| **You** | Role, alert frequency, communication style, outreach tone, focus stage, Slack ID for DMs | — |
 
-## 17. Phased Build Plan
+The "ICP" and "Funnel" steps are the unique bit. **The system never asks
+the user to invent values it can derive.** If the tenant has fewer than 90
+closed deals, the agent surfaces sensible defaults and flags that
+calibration will tighten over the first 90 days.
 
-### Phase 1: Foundation (Weeks 1-3)
+### 9.2 Baseline survey (anchors ROI honestly)
 
-**Goal:** CRM ontology + Apollo enrichment + ICP scoring
+After the wizard, the user gets a **60-second baseline survey**
+(`/onboarding/baseline`): "Roughly how many minutes does each of these tasks
+take you today?" — pre-call brief, outreach draft, account research, QBR
+prep, portfolio review, CRM note. These minutes anchor the time-saved
+calculation on `/admin/roi` later. Without the baseline, time-saved would
+be a guess.
 
-| Week | Deliverable | Tool |
-|------|------------|------|
-| 1 | CRM audit + data mapping + custom field creation | Salesforce/HubSpot |
-| 1 | Apollo API integration + enrichment Make.com scenario | Apollo + Make.com |
-| 2 | ICP config file for Indeed Flex UK & US | Config JSON |
-| 2 | ICP scoring Make.com scenario: compute + write to CRM | Make.com |
-| 3 | Rule of engagement: de-duplicate, owner validation | Make.com |
-| 3 | Prioritised account view in CRM (custom fields visible) | CRM |
+### 9.3 Agent-assisted setup, learning, and improvement
 
-### Phase 2: Signal Intelligence (Weeks 4-6)
+Beyond the wizard, the **onboarding-coach** agent surface is available
+indefinitely. It is the only agent that defaults to long-form (because new
+users need explanation), it knows the schema of every config table, and it
+can:
+- Walk the user through tweaking ICP dimensions in plain English.
+- Explain why a specific account is in a specific tier.
+- Demonstrate features by running them on the user's own data.
+- Suggest the next thing to do ("you haven't filed a baseline yet — that
+  blocks ROI; want to do it now?").
 
-**Goal:** Signal pipeline + composite priority score
-
-| Week | Deliverable | Tool |
-|------|------------|------|
-| 4 | Apollo signal monitoring for Tier A & B | Apollo + Make.com |
-| 4 | Claude API deep research tool setup | Relevance AI |
-| 5 | Signal scoring + Signal__c custom object | Make.com + SFDC |
-| 5 | Composite priority score computation | Make.com |
-| 6 | Signal report template + batch generation (top 50) | Claude API |
-
-### Phase 3: Funnel Engine (Weeks 7-9)
-
-**Goal:** Drop rate × volume analytics at all levels
-
-| Week | Deliverable | Tool |
-|------|------------|------|
-| 7 | Funnel data extraction (stage transitions, timestamps) | Make.com + SFDC |
-| 7 | Company benchmark computation | Make.com |
-| 8 | Rep-level funnel + gap analysis vs benchmark | Make.com |
-| 8 | Drop rate × volume impact scoring | Make.com |
-| 9 | Stall detection + flagging | Make.com |
-| 9 | Funnel data → Relevance AI knowledge base | Relevance AI |
-
-### Phase 4: AI Agent + Auto-Triggers (Weeks 10-12)
-
-**Goal:** Rep-facing assistant with proactive alerts
-
-| Week | Deliverable | Tool |
-|------|------------|------|
-| 10 | Agent template with dynamic context injection | Relevance AI |
-| 10 | Agent tools: priority queue, research, drafter, diagnosis | Relevance AI |
-| 11 | Rep preference config (Google Sheets) | Sheets |
-| 11 | Auto-trigger setup (daily briefing, stall, signal, gap) | Relevance AI |
-| 12 | Slack integration | Relevance AI + Slack |
-| 12 | Pilot with 3 reps: test, feedback, tune | All |
+The user never has to learn the admin pages by themselves.
 
 ---
 
-## 18. Environment Variables
+## 10. Signal-over-noise — the gates that protect adoption
 
-```bash
-# CRM
-SALESFORCE_CLIENT_ID=
-SALESFORCE_CLIENT_SECRET=
-SALESFORCE_INSTANCE_URL=
-HUBSPOT_PRIVATE_APP_TOKEN=
+> *Adoption is the product. A perfect agent that nobody opens is worth zero.*
 
-# Enrichment
-APOLLO_API_KEY=
+Reps already drown in CRM pings, email threads, and Slack chatter. Our job
+is to **subtract from their day**, not add to it. These are not
+preferences; they are **gates** enforced in code review, CI, and runtime.
 
-# Intelligence
-ANTHROPIC_API_KEY=
+| Rule | Where it is enforced | What it looks like |
+|---|---|---|
+| **Daily push budget per rep** by `alert_frequency` | `packages/adapters/src/notifications/push-budget.ts` | High = 3, medium = 2 (default), low = 1. Excess bundles into the next digest. |
+| **Top-N only on lists** | `apps/web/AGENTS.md`, code review | Lists default to 3 rows, expandable on click |
+| **Short-form responses ≤ 150 words** | `agents/_shared.ts` behaviour rules | Long-form only when user says "explain" or "deep dive" |
+| **Bundle similar events** | `cooldown-store.ts` + dispatcher | Three stalled-deal signals in one day = one digest message |
+| **≤ 3 Next-Step buttons per agent reply** | `_shared.ts` behaviour rules + `SuggestedActions` parser | Choice paralysis is noise |
+| **"Just checking in" messages: never** | Code review | If we cannot say what changed, we do not push |
+| **Latency budget** | `route.ts` + agent eval suite | Median ≤ 30s, P95 ≤ 60s |
+| **Error states are honest** | Agent prompt + tool error contracts | "I do not have data on that account" beats a polite hallucination |
 
-# Agent
-RELEVANCE_AI_API_KEY=
-RELEVANCE_AI_REGION=
-
-# Orchestration
-MAKE_WEBHOOK_SECRET=
-
-# Interface
-SLACK_BOT_TOKEN=
-SLACK_SIGNING_SECRET=
-
-# Config
-REP_CONFIG_SHEET_ID=
-ICP_CONFIG_VERSION=v1.0
-```
+When in doubt, cut. A feature that pushes more information has to **show
+it raises thumbs-up % or action rate** before it ships. This gate is
+auditable from `agent_interaction_outcomes`.
 
 ---
 
-## 19. Success Metrics
+## 11. Manager and leadership reporting — defensible ROI
 
-### 90-Day Success Criteria
+Three pages exist for managers, leaders, RevOps, and admins. Every number
+on every page is **sourced from the event log** — there are zero hardcoded
+or demo figures.
 
-1. Reps report < 15% time on research/admin (time-tracking survey)
-2. Pipeline forecast accuracy > 75%
-3. Time-to-intervention on stalled deals < 7 days
-4. ≥ 60% of auto-trigger alerts get positive engagement (👍 or action within 24h)
-5. ICP-qualified pipeline ratio > 60%
+### 11.1 `/admin/roi` — the ROI dashboard
 
-### Progressive KPI Targets
+| Metric | How it is computed | Source |
+|---|---|---|
+| **Time saved** | Σ (action_invoked count × baseline minutes for that task type) | `agent_events` ⨝ `tenant_baselines` |
+| **Influenced ARR** | Σ (deal.value × attribution.confidence) for won deals in the treatment cohort | `attributions` ⨝ `outcome_events` |
+| **Holdout-cohort lift** | (treatment win-rate / win-rate) − 1, with confidence interval | `holdout` workflow + outcomes |
+| **Adoption** | Weekly active users, queries per user, % of meetings with a CRM note in 24h | `agent_events` |
+| **Quality** | Cited %, thumbs-up %, eval pass-rate trend | `agent_events` + eval CI runs |
 
-| Timeframe | Metric | Target |
-|-----------|--------|--------|
-| Month 3 | Opportunity creation increase | +30% |
-| Month 6 | Leads-to-opportunities improvement | +15% |
-| Month 12 | Sales cycle reduction | -25% |
-| Month 18 | Win rate improvement | +20% |
+The **holdout cohort** is the part that makes this defensible against a
+sceptical CFO. A configurable % of users are in a control cohort that does
+not receive proactive pushes. Their outcomes are the counterfactual. The
+lift number is real, not assumed.
+
+### 11.2 `/admin/adaptation` — what the OS has learned
+
+Customer-facing: the calibration ledger, pending proposals, weekly
+improvement reports, and tool priors. Trust grows when the model is not a
+black box. Every adaptation is reversible.
+
+### 11.3 Forecast and team analytics
+
+`/analytics/forecast` and `/analytics/team`. Statistical confidence band on
+the funnel-derived forecast (NOT an AI confidence number — that is
+explicitly out of scope). Per-rep funnel diagnosis (where in the funnel
+this rep is bleeding revenue), win-loss analysis, propensity radar, signal
+timeline. **The leader sees the same data the agent sees**, no parallel
+pipelines.
 
 ---
 
-*This PRD is the single source of truth for the Prospector OS development. All config files, schemas, and specs in this repository are derived from and consistent with this document.*
+## 12. Cost discipline — how it stays cheap
+
+A flexible AI OS is only flexible if it is also **affordable**. Cost
+discipline is built into the runtime, not bolted on.
+
+| Lever | Implementation | Effect |
+|---|---|---|
+| **Default model: Sonnet, fallback to Haiku at 90% budget** | `apps/web/src/lib/agent/model-registry.ts` | Cap monthly spend per tenant; degrade gracefully, do not 500 |
+| **Hard cap at 100% budget** | Agent route returns 429 with a clear message | Operator gets a chance to increase the budget before service stops |
+| **Conversation compaction** | `compaction.ts` keeps the last 8 turns verbatim, Haiku-summarises older ones into a system message | Token use stays roughly flat as conversations grow |
+| **Max steps per agent loop = 8** | `stepCountIs(8)` in `streamText` | Blocks runaway multi-step reasoning at the source |
+| **Max tokens per response = 3000** | Configurable per tenant via `business_profiles.max_tokens_override` | Keeps short-form short |
+| **Eval judge model = Haiku** | `evals/cli.ts` | Eval suite runs cheaply on every PR |
+| **Strong model (Opus) reserved for meta-agents only** | Prompt optimizer + self-improve workflows | One Opus call per tenant per week, not per turn |
+| **Embeddings: text-embedding-3-small (1536 dims)** | Cheap, good enough for transcript retrieval | Bulk ingest stays under cents per transcript |
+| **Tool bandit** | Chooses cheapest tool that solves the intent | Avoids burning a slow expensive tool when a cheap one would do |
+| **AI Gateway when configured** | `AI_GATEWAY_BASE_URL` + `AI_GATEWAY_API_KEY` env | Provider failover, observability, unified billing |
+
+Per-tenant token telemetry rolls up from `agent_events.payload.tokens` and
+is visible to operators. **Cost is never a surprise.**
+
+---
+
+## 13. Trust and audit — every output carries its receipts
+
+> *"Cite or shut up." Every claim links to its source object. No invented
+> numbers, no invented names.*
+
+Implemented as a contract at every level:
+
+1. **Tools return `{ data, citations }`.** A tool that cannot cite cannot
+   return. Enforced at the type level.
+2. **Citations extractor** in `agent/citations.ts` maps every tool result
+   to citation rows in `agent_citations`. Every PR that adds a tool
+   without an extractor is rejected in code review.
+3. **Citation pills render under every assistant message.** Clicking
+   opens the source object and emits a `citation_clicked` event that
+   feeds the retrieval ranker.
+4. **Inline framework attribution tags** (`[framework: SPIN]`) on every
+   substantive recommendation — see §6.3.
+5. **Webhooks verify HMAC + check timestamp window (5 min) + store
+   idempotency keys** in `webhook_deliveries`. Replays do not duplicate
+   work; spoofs do not enter the ontology.
+6. **CRM credentials encrypted at rest** in
+   `tenants.crm_credentials_encrypted` via `apps/web/src/lib/crypto.ts`.
+   The 32-char key lives in `CREDENTIALS_ENCRYPTION_KEY`.
+7. **Every cron route is HMAC-secured** via `CRON_SECRET`. No public
+   cron endpoints.
+8. **Calibration ledger** is the audit log for every adaptation. Roll
+   back = re-apply the `before_value`. One DB op.
+
+---
+
+## 14. Multi-tenant by design
+
+Not "we will add multi-tenancy later." Built in from migration 001:
+
+- `tenant_id` on every table.
+- Postgres Row Level Security inherited from the `tenant_isolation` policy
+  pattern in migration 002 — copied verbatim onto new tables.
+- Every Supabase query in a page or server action includes
+  `.eq('tenant_id', profile.tenant_id)` even though RLS would catch it
+  (defence in depth + index hint).
+- Service-role Supabase client is allowed only inside server actions and
+  API routes; never exposed to the browser.
+- Per-tenant Slack workspace token in `tenants.business_config.slack_*`;
+  the bot token in `SLACK_BOT_TOKEN` is platform-level only.
+- Per-tenant ICP, funnel, scoring, business skills, tool priors, exemplars.
+- Per-tenant token budget + per-tenant Haiku-fallback threshold.
+- Per-tenant calibration ledger.
+
+A second tenant ships with a row insert in `tenants` + `business_profiles`,
+plus the onboarding wizard run-through. **No code changes.**
+
+---
+
+## 15. Success metrics and guarantees
+
+| Metric | Baseline | Target | Source |
+|---|---|---|---|
+| Median question → cited answer | ~15 minutes (survey) | ≤ 30 seconds | `agent_events` durations |
+| P95 question → cited answer | — | ≤ 60 seconds | `agent_events` durations |
+| Cited-answer rate | — | ≥ 95% | `agent_events.payload.citation_count` |
+| Thumbs-up rate | — | ≥ 80% | `agent_interaction_outcomes` |
+| Weekly active users (pilot) | — | ≥ 80% of enrolled | `agent_events` distinct user count |
+| Discovery meetings with CRM note in 24h | unmeasured | ≥ 70% | CRM note timestamp ⨝ meeting timestamp |
+| Time-to-intervention on at-risk accounts | ~18 days | ≤ 7 days | `outcome_events` (signal → CSM action) |
+| Eval pass-rate | — | Monotonically non-decreasing as suite grows 5–10× | CI eval runs |
+| Holdout-cohort win-rate lift | — | Defensible against a CFO | `attributions` ⨝ `holdout` |
+| ROI line item kept in next renewal | — | Yes | Customer success |
+
+If any of those numbers stops moving in the right direction, that is a
+prompt to ship a fix — not to ship a slide.
+
+---
+
+## 16. Roadmap — current state and delivery sequence
+
+### 16.1 What is built today (foundation, GA-ready)
+
+| Capability | Status |
+|---|---|
+| Multi-tenant Postgres + pgvector + RLS | Built (migrations 001–008) |
+| Canonical ontology (companies, contacts, deals, signals, transcripts, activities, health snapshots) | Built |
+| Seven-way scoring engine + composite + tier matcher + calibration analyser | Built (~2,300 LOC, 100+ unit tests) |
+| Funnel engine (benchmark, stall, impact, forecast) | Built |
+| Prioritisation (queue, action generator, briefing assembler) | Built |
+| Citation engine + per-output source links | Built |
+| Universal agent with 4 surfaces + 22 built-in tools | Built |
+| Sales playbook (16 frameworks + selector + always-on preamble + LAER reflex) | Built |
+| Onboarding wizard (6 steps, ICP+funnel auto-derived from data) | Built |
+| Baseline survey | Built |
+| Workflow runner (15 durable workflows) + cron dispatch + AST validation | Built |
+| Slack outbound dispatcher with cooldowns + push-budget gate | Built |
+| HubSpot sync (read) + transcript ingest pipeline | Built |
+| `/admin/roi` (ROI from event log + holdout) | Built |
+| `/admin/adaptation` (calibration ledger, proposals, improvement reports) | Built |
+| Eval suite + auto-promotion of failures | Built |
+| Per-tenant Thompson bandit on tool priors | Built |
+
+### 16.2 What is in flight
+
+| Capability | State |
+|---|---|
+| HubSpot **write-back** (notes, tasks) | Adapter implements `createEngagement`/`createTask`; per-tenant property-mapping wizard pending |
+| Tableau MCP connector | Pending decision on scope |
+| Snowflake MCP connector | Designed, not built |
+| Ticket connector (Zendesk / HubSpot Service) | Designed, not built |
+| Notification subsystem | Runtime lives in `packages/adapters/src/notifications/` (Slack dispatcher + cooldown store + push-budget gate); only types remain in `@prospector/core`. **Move complete.** |
+| Cron consolidation (7 single-purpose crons → `cron/workflows` + `cron/learning`) | Complete |
+| Vercel Workflow DevKit migration path | Pattern-compatible runner shipped; flip is mechanical |
+
+### 16.3 Surface delivery sequence (per tenant)
+
+| Phase | Weeks | Surfaces live |
+|---|---|---|
+| **Phase 0 — Foundation** | 1–2 | Tenant onboarded, scoring + funnel calibrated, agent answers cited questions |
+| **Phase 1 — Pipeline coach** | 3–4 | Inbox + Slack daily digest + pre-call briefs |
+| **Phase 2 — Account strategist** | 5–6 | Per-deal MEDDPICC, transcript synthesis, escalation drafter |
+| **Phase 3 — Leadership lens** | 7–8 | Forecast, team analytics, weekly objection digest |
+| **Phase 4 — CSM portfolio** | 9–10 | Theme summariser, churn signal alerts, weekly portfolio digest |
+| **Phase 5 — Calibration loop live** | 11–12 | First per-tenant prompt + scoring proposals approved |
+| **Phase 6 — Steady state** | 13+ | OS gets measurably better every week on this tenant's data |
+
+Phases are independent — a tenant can stop at any phase and still get
+positive ROI. No phase requires a redeploy; surfaces enable via tool
+registry + role definitions.
+
+### 16.4 Open decisions
+
+| Decision | Why it matters | Owner |
+|---|---|---|
+| Default transcript provider (Gong vs Fireflies vs Otter) per tenant | Drives ingest path | Tenant operator |
+| Default ticket source | Adds churn signals | Tenant operator |
+| Per-tenant token budget envelope | Controls Haiku-fallback threshold | RevOps + tenant admin |
+| HubSpot adapter full-method coverage timeline | Unblocks write-back tools | Engineering |
+
+---
+
+## 17. What we will not do
+
+- **We will not ship fake numbers in analytics.** If the data is not there,
+  the UI says so and links to the ontology browser.
+- **We will not surface AI-generated forecast confidence scores.** Too
+  dangerous. The forecast is statistical, derived from the funnel engine.
+- **We will not auto-act on calibration proposals without a human approval
+  cycle.** Auto-apply mode is available *only* once a tenant has 3+ approved
+  cycles for that change type.
+- **We will not bypass the holdout cohort.** Without it, every ROI claim
+  becomes opinion.
+- **We will not split the product into role-shaped silos.** One ontology,
+  one agent, one event log — role is just a config.
+- **We will not ship a new "agent type."** Surfaces are presets of the one
+  universal agent. New capability = new tool, new context strategy, or a
+  new surface preset (a prompt + tool subset). Never a new runtime.
+- **We will not duplicate CRM data entry.** Edits to source-of-truth fields
+  link to the CRM record. We read and write back via APIs, never ask users
+  to re-enter CRM data.
+- **We will not surface a feature that adds information without showing it
+  raises thumbs-up % or action rate.**
+
+---
+
+## 18. Document tree
+
+| Document | Purpose | Read when |
+|---|---|---|
+| [`MISSION.md`](MISSION.md) | The *why*. Two jobs, three layers, three-tier harness, operating principles, UX gates. | First, before any non-trivial change. |
+| [`CURSOR_PRD.md`](CURSOR_PRD.md) | The *what*. This document — universal product spec. | When scoping a new capability or onboarding a new tenant. |
+| [`docs/PROCESS.md`](docs/PROCESS.md) | The *how*. Add a tool, connector, workflow, eval, tenant. On-call playbook. | When implementing. |
+| [`.cursorrules`](.cursorrules) | Workspace-wide coding rules + complete file map. | Open in Cursor; auto-applied. |
+| [`apps/web/AGENTS.md`](apps/web/AGENTS.md) | Web-app-specific rules (server vs client, tenant scoping, signal-over-noise gates). | When editing `apps/web/`. |
+| [`README.md`](README.md) | Quick start, environment setup, monorepo layout. | First time cloning. |
+| [`apps/web/README.md`](apps/web/README.md) | Web-app dev quick start. | Running the app locally. |
+| [`docs/prd/*.md`](docs/prd/) | Subsystem PRDs (scoring, enrichment, prioritisation, notifications, analytics, UI, agent). | When deep-diving one subsystem. |
+| [`docs/archive/SUPERSEDED.md`](docs/archive/SUPERSEDED.md) | Historical documents kept for context. **Do not implement against these.** | Never, except for archaeology. |
+| [`packages/db/migrations/`](packages/db/migrations/) | SQL schema in order. | When changing the schema. |
+| [`apps/web/src/lib/workflows/`](apps/web/src/lib/workflows/) | Every durable workflow, one file each. | When adding scheduled or webhook-triggered work. |
+
+---
+
+*This PRD is a living document. When the product changes, update this
+document in the same PR. The mission, the process, and the spec stay in
+sync — that is what makes the OS coherent across people, surfaces, and
+weeks.*

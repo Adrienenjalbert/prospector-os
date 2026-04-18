@@ -7,7 +7,24 @@ import { OverviewTab } from '@/components/company/overview-tab'
 import { ContactPanel } from '@/components/company/contact-panel'
 import { OrgChart } from '@/components/company/org-chart'
 import { CoverageMatrix } from '@/components/company/coverage-matrix'
-import { Building2, Users, Target, MapPin, Zap, Brain } from 'lucide-react'
+import { SkillBar } from '@/components/agent/skill-bar'
+import { ACCOUNT_DETAIL_SKILLS } from '@/lib/agent/skills'
+import type { AgentType } from '@/lib/hooks/use-agent-chat'
+import { Building2, Users, Target, Zap, Brain } from 'lucide-react'
+
+function dispatchAgentPanel(agent: AgentType, prompt: string, accountId: string, accountName: string, panelTitle: string) {
+  window.dispatchEvent(
+    new CustomEvent('prospector:open-agent-panel', {
+      detail: {
+        agent,
+        prompt,
+        pageContext: { page: 'account-detail', accountId },
+        panelTitle,
+      },
+    }),
+  )
+  void accountName
+}
 
 interface AccountData {
   company: {
@@ -138,6 +155,14 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
         enrichedAt={company.enriched_at}
       />
 
+      <div className="mx-auto max-w-5xl px-4 pt-4 sm:px-6">
+        <SkillBar
+          skills={ACCOUNT_DETAIL_SKILLS}
+          context={{ accountName: company.name, accountId: company.id }}
+          pageContext={{ page: 'account-detail', accountId: company.id }}
+        />
+      </div>
+
       {isDemo && (
         <div className="mx-auto max-w-5xl px-4 pt-4 sm:px-6">
           <div className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
@@ -209,7 +234,15 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
                 <Users className="mx-auto size-8 text-zinc-600" />
                 <p className="mt-2 text-sm text-zinc-500">No contacts found yet.</p>
                 <button
-                  onClick={() => window.dispatchEvent(new CustomEvent('prospector:open-chat', { detail: { prompt: `Find decision makers at ${company.name} in Operations, HR, and Procurement.` } }))}
+                  onClick={() =>
+                    dispatchAgentPanel(
+                      'account-strategist',
+                      `Find decision makers at ${company.name} in Operations, HR, and Procurement.`,
+                      company.id,
+                      company.name,
+                      'Find decision-makers',
+                    )
+                  }
                   className="mt-3 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
                 >
                   Find Contacts
@@ -401,16 +434,16 @@ export function AccountDetailClient({ data, initialTab, isDemo }: AccountDetailC
             <h2 className="text-lg font-semibold text-zinc-100">AI Tools</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {[
-                { title: 'Deep Research', desc: `Research ${company.name} in detail — news, hiring, signals.`, icon: Brain, prompt: `Research ${company.name} in detail. Find recent news, hiring activity, and sales triggers.` },
-                { title: 'Find Decision Makers', desc: `Find key contacts at ${company.name}.`, icon: Users, prompt: `Find decision makers at ${company.name} in Operations, HR, and Procurement departments.` },
-                { title: 'Draft Outreach', desc: 'Generate a personalised outreach email.', icon: Target, prompt: `Draft an outreach email to the primary contact at ${company.name}. Reference their ICP fit and any recent signals.` },
-                { title: 'Deal Strategy', desc: 'Get AI analysis of the deal health and next steps.', icon: Zap, prompt: `Analyze the deal health for ${company.name}. What are the risks and recommended next actions?` },
+                { title: 'Deep Research', desc: `Research ${company.name} in detail — news, hiring, signals.`, icon: Brain, agent: 'account-strategist' as AgentType, prompt: `Research ${company.name} in detail. Find recent news, hiring activity, and sales triggers.` },
+                { title: 'Find Decision Makers', desc: `Find key contacts at ${company.name}.`, icon: Users, agent: 'account-strategist' as AgentType, prompt: `Find decision makers at ${company.name} in Operations, HR, and Procurement departments.` },
+                { title: 'Draft Outreach', desc: 'Generate a personalised outreach email.', icon: Target, agent: 'account-strategist' as AgentType, prompt: `Draft an outreach email to the primary contact at ${company.name}. Reference their ICP fit and any recent signals.` },
+                { title: 'Deal Strategy', desc: 'Get AI analysis of the deal health and next steps.', icon: Zap, agent: 'pipeline-coach' as AgentType, prompt: `Analyze the deal health for ${company.name}. What are the risks and recommended next actions?` },
               ].map((tool) => {
                 const Icon = tool.icon
                 return (
                   <button
                     key={tool.title}
-                    onClick={() => window.dispatchEvent(new CustomEvent('prospector:open-chat', { detail: { prompt: tool.prompt } }))}
+                    onClick={() => dispatchAgentPanel(tool.agent, tool.prompt, company.id, company.name, tool.title)}
                     className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-700 hover:bg-zinc-800/50"
                   >
                     <div className="flex items-start gap-3">

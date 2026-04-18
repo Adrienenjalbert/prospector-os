@@ -51,12 +51,14 @@ function evaluateCondition(
         context?.operating_regions
       )
 
+    case 'active_flex_postings':
     case 'active_temp_postings':
-      return evaluateTempPostings(context?.job_postings, tier.min_count ?? 1)
+      return evaluateFlexPostings(context?.job_postings, tier.min_count ?? 1)
 
     case 'hq_in_country':
       return evaluateIn(context?.hq_country ?? value, tier.values)
 
+    case 'historical_flex_postings':
     case 'historical_temp_postings':
       return (context?.job_postings?.length ?? 0) > 0
 
@@ -122,11 +124,11 @@ function evaluateLocationsInRegions(
   return matchCount >= minCount
 }
 
-function evaluateTempPostings(
+function evaluateFlexPostings(
   postings: { is_temp_flex: boolean }[] | undefined,
   minCount: number
 ): boolean {
   if (!postings) return false
-  const tempCount = postings.filter((p) => p.is_temp_flex).length
-  return tempCount >= minCount
+  const matched = postings.filter((p) => p.is_temp_flex).length
+  return matched >= minCount
 }

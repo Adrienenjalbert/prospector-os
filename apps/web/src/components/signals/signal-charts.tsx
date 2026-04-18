@@ -2,6 +2,7 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis } from 'recharts'
 import { CHART_COLORS, CHART_THEME } from '@/components/charts/chart-container'
+import { getSignalLabel } from '@/lib/signals/labels'
 
 interface SignalData {
   signalType: string
@@ -23,17 +24,6 @@ const TYPE_COLORS: Record<string, string> = {
   negative_news: CHART_COLORS.zinc500,
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  hiring_surge: 'Hiring',
-  funding: 'Funding',
-  expansion: 'Expansion',
-  leadership_change: 'Leadership',
-  temp_job_posting: 'Temp Jobs',
-  competitor_mention: 'Competitor',
-  seasonal_peak: 'Seasonal',
-  negative_news: 'Risk',
-}
-
 function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number }> }) {
   if (!active || !payload?.[0]) return null
   return (
@@ -50,7 +40,7 @@ export function SignalCharts({ signals }: SignalChartsProps) {
     typeCounts.set(s.signalType, (typeCounts.get(s.signalType) ?? 0) + 1)
   }
   const donutData = Array.from(typeCounts.entries()).map(([type, count]) => ({
-    name: TYPE_LABELS[type] ?? type,
+    name: getSignalLabel(type),
     value: count,
     color: TYPE_COLORS[type] ?? CHART_COLORS.zinc500,
   }))

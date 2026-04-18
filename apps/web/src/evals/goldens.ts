@@ -56,7 +56,7 @@ export const GOLDEN_EVAL_CASES: EvalCase[] = [
     ['Which signals correlate with won deals?', ['get_active_signals'], ['signal']],
     ['How many meetings did I have this week from CRM?', ['get_pipeline_overview'], ['opportunity']],
     ['What deals were affected by leadership changes recently?', ['get_active_signals'], ['signal']],
-    ['Draft a short LinkedIn message to Sarah at Echo Foods.', ['draft_message'], ['contact']],
+    ['Draft a short LinkedIn message to Sarah at Echo Foods.', ['draft_outreach'], ['contact']],
     ['List my territory size and coverage.', ['get_pipeline_overview'], ['company']],
     ['Which accounts have 3+ stakeholders engaged?', ['find_contacts'], ['contact']],
   ]),

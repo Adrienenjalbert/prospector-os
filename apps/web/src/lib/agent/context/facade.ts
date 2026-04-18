@@ -38,8 +38,9 @@ import type { PackedContext, PackedSection } from './types'
  * route: re-read the rows from the section markdown is fragile, so we
  * accept that the facade provides a *minimal* legacy mapping and the
  * legacy builder still ships the full AgentContext today. As slices take
- * over more responsibility (Phase 2 prompt-builder migration), the legacy
- * builder shrinks.
+ * over more responsibility (Phase 2 — see context-builder + the
+ * surface-specific builders in `agent/agents/`), the legacy builder
+ * shrinks.
  */
 
 export interface FacadeInput {

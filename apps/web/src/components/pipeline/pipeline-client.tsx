@@ -7,6 +7,8 @@ import { clsx } from 'clsx'
 import { PipelineFunnelChart, type StageMetric } from './pipeline-funnel-chart'
 import { StageRecoCard } from './stage-reco-card'
 import { SortControl } from '@/components/shared/sort-control'
+import { SkillBar } from '@/components/agent/skill-bar'
+import { PIPELINE_SKILLS } from '@/lib/agent/skills'
 import { sortCompanies, type SortField } from '@/lib/sort-companies'
 
 interface Deal {
@@ -65,7 +67,7 @@ export function PipelineClient({ deals, stageMetrics, kpis, isDemo }: PipelineCl
     <div className="mx-auto max-w-7xl p-6 sm:p-8">
       <div className="flex flex-col gap-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
               Pipeline & Funnel
@@ -74,6 +76,7 @@ export function PipelineClient({ deals, stageMetrics, kpis, isDemo }: PipelineCl
               {kpis.dealCount} deals · {formatGbp(kpis.totalPipeline)} total pipeline
             </p>
           </div>
+          <SkillBar skills={PIPELINE_SKILLS} pageContext={{ page: 'pipeline' }} />
         </div>
 
         {isDemo && (

@@ -5,6 +5,8 @@ import type {
   Signal,
   CRMActivity,
   FunnelBenchmark,
+  ICPTier,
+  PriorityTier,
 } from '@prospector/core'
 import type {
   CRMAdapter,
@@ -25,6 +27,43 @@ export interface SalesforceCredentials {
 
 function escapeSoql(value: string): string {
   return value.replace(/[\\']/g, '\\$&')
+}
+
+const ICP_TIER_VALUES: ReadonlySet<ICPTier> = new Set(['A', 'B', 'C', 'D'])
+const PRIORITY_TIER_VALUES: ReadonlySet<PriorityTier> = new Set([
+  'HOT',
+  'WARM',
+  'COOL',
+  'MONITOR',
+])
+
+/**
+ * Coerce a Salesforce custom-field value into the canonical `ICPTier`
+ * union. Unknown / null / non-string values fall through to 'D' so the
+ * mapper always returns a tier the rest of the platform can score
+ * against.
+ */
+function normalizeIcpTier(raw: unknown): ICPTier {
+  if (typeof raw === 'string') {
+    const upper = raw.trim().toUpperCase()
+    if (ICP_TIER_VALUES.has(upper as ICPTier)) return upper as ICPTier
+  }
+  return 'D'
+}
+
+/**
+ * Same coercion for the `PriorityTier` union. MONITOR is the safe
+ * fallback — it means "not currently surfaced", which is the right
+ * default when the CRM hasn't been scored yet.
+ */
+function normalizePriorityTier(raw: unknown): PriorityTier {
+  if (typeof raw === 'string') {
+    const upper = raw.trim().toUpperCase()
+    if (PRIORITY_TIER_VALUES.has(upper as PriorityTier)) {
+      return upper as PriorityTier
+    }
+  }
+  return 'MONITOR'
 }
 
 export class SalesforceAdapter implements CRMAdapter {
@@ -74,8 +113,12 @@ export class SalesforceAdapter implements CRMAdapter {
       owner_name: (r.Owner as Record<string, string>)?.Name ?? null,
       owner_email: (r.Owner as Record<string, string>)?.Email ?? null,
       icp_score: (r.ICP_Score__c as number) ?? 0,
-      icp_tier: (r.ICP_Tier__c as string) ?? 'D',
-      priority_tier: (r.Priority_Tier__c as string) ?? 'MONITOR',
+      // ICP_Tier__c is a free-text Salesforce field; coerce unknown
+      // values to 'D' so the result satisfies the strict ICPTier union
+      // ('A' | 'B' | 'C' | 'D'). Anything outside that set is treated
+      // as untiered and falls into the catch-all D bucket.
+      icp_tier: normalizeIcpTier(r.ICP_Tier__c),
+      priority_tier: normalizePriorityTier(r.Priority_Tier__c),
       priority_reason: r.Priority_Reason__c as string | null,
       last_activity_date: r.LastActivityDate as string | null,
     }))

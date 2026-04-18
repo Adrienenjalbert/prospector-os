@@ -300,28 +300,43 @@ export class HubSpotAdapter implements CRMAdapter, ConnectorInterface {
       })
     }
 
-    const limit = filters.limit ?? 100
-    const after = filters.offset ? String(filters.offset) : undefined
+    // Same pagination contract as `getOpportunities`: an explicit `limit`
+    // or `offset` returns a single page (legacy for top-N lookups);
+    // omitting both paginates through everything matching `filters`, with
+    // a hard safety cap of 50 pages × 100/page.
+    const explicitLimit = filters.limit
+    const explicitOffset = filters.offset
+    const pageSize = explicitLimit ?? 100
+    const results: Partial<Company>[] = []
+    let after: string | undefined = explicitOffset ? String(explicitOffset) : undefined
+    const maxPages = 50
+    let page = 0
 
-    const body = await this.post<HubSpotListResponse>(
-      '/crm/v3/objects/companies/search',
-      {
-        filterGroups: hsFilters.length
-          ? [{ filters: hsFilters }]
-          : [],
-        properties: [...COMPANY_PROPERTIES],
-        sorts: [
-          {
-            propertyName: 'composite_priority_score',
-            direction: 'DESCENDING',
-          },
-        ],
-        limit,
-        ...(after ? { after } : {}),
-      },
-    )
+    do {
+      const body = await this.post<HubSpotListResponse>(
+        '/crm/v3/objects/companies/search',
+        {
+          filterGroups: hsFilters.length ? [{ filters: hsFilters }] : [],
+          properties: [...COMPANY_PROPERTIES],
+          sorts: [
+            {
+              propertyName: 'composite_priority_score',
+              direction: 'DESCENDING',
+            },
+          ],
+          limit: pageSize,
+          ...(after ? { after } : {}),
+        },
+      )
 
-    return body.results.map(mapCompany)
+      results.push(...body.results.map(mapCompany))
+      after = body.paging?.next?.after
+      page++
+
+      if (explicitLimit !== undefined || explicitOffset !== undefined) break
+    } while (after && page < maxPages)
+
+    return results
   }
 
   /**
@@ -423,21 +438,41 @@ export class HubSpotAdapter implements CRMAdapter, ConnectorInterface {
       })
     }
 
-    const body = await this.post<HubSpotListResponse>(
-      '/crm/v3/objects/deals/search',
-      {
-        filterGroups: hsFilters.length
-          ? [{ filters: hsFilters }]
-          : [],
-        properties: [...DEAL_PROPERTIES],
-        sorts: [
-          { propertyName: 'amount', direction: 'DESCENDING' },
-        ],
-        limit: filters.limit ?? 100,
-      },
-    )
+    // When the caller provides an explicit `limit`, honour it and return a
+    // single page (legacy behaviour for tools that want a top-N slice).
+    // When no limit is given, paginate through all results so nightly sync
+    // does not silently truncate large pipelines at 100 deals.
+    const explicitLimit = filters.limit
+    const pageSize = explicitLimit ?? 100
+    const results: Partial<Opportunity>[] = []
+    let after: string | undefined
+    // Hard safety cap to avoid runaway pagination if HubSpot returns a
+    // pathological cursor — 50 pages × 100/page = 5,000 deals per call,
+    // which covers the 99th percentile of real B2B pipelines.
+    const maxPages = 50
+    let page = 0
 
-    return body.results.map(mapDeal)
+    do {
+      const body = await this.post<HubSpotListResponse>(
+        '/crm/v3/objects/deals/search',
+        {
+          filterGroups: hsFilters.length ? [{ filters: hsFilters }] : [],
+          properties: [...DEAL_PROPERTIES],
+          sorts: [{ propertyName: 'amount', direction: 'DESCENDING' }],
+          limit: pageSize,
+          ...(after ? { after } : {}),
+        },
+      )
+
+      results.push(...body.results.map(mapDeal))
+      after = body.paging?.next?.after
+      page++
+
+      // If the caller asked for a single page, stop here.
+      if (explicitLimit !== undefined) break
+    } while (after && page < maxPages)
+
+    return results
   }
 
   async getActivities(

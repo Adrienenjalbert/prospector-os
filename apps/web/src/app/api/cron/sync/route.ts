@@ -357,7 +357,16 @@ async function syncHubSpot(
   tenantId: string,
   creds: Record<string, string>
 ): Promise<number> {
-  const hs = new HubSpotAdapter(creds)
+  // The decrypted credential blob is a generic string-map. Validate the
+  // shape required by HubSpotAdapter explicitly so a misconfigured tenant
+  // fails fast with a useful message rather than crashing on the first
+  // API call with an opaque "Bearer undefined" 401.
+  if (!creds.private_app_token) {
+    throw new Error(
+      `HubSpot credentials for tenant ${tenantId} are missing 'private_app_token'`,
+    )
+  }
+  const hs = new HubSpotAdapter({ private_app_token: creds.private_app_token })
 
   let synced = 0
 
@@ -453,34 +462,54 @@ async function syncHubSpot(
     }
   }
 
-  // Sync contacts
-  const { data: companies } = await supabase
-    .from('companies')
-    .select('id, crm_id')
-    .eq('tenant_id', tenantId)
-    .not('crm_id', 'is', null)
-    .limit(100)
+  // Sync contacts.
+  // Previously truncated at the first 100 companies — large tenants would
+  // never get contacts past that slice. We now iterate every company that
+  // has a crm_id, in pages, with a per-run cap derived from the function
+  // execution budget. Pagination is keyset on `id` so each run picks up
+  // where the previous one left off if we hit the cap.
+  const CONTACT_PAGE_SIZE = 200
+  const MAX_COMPANIES_PER_RUN = 2000
+  let lastCompanyId: string | null = null
+  let companiesProcessed = 0
 
-  for (const company of companies ?? []) {
-    try {
-      const contacts = await hs.getContacts(company.crm_id)
-      for (const contact of contacts) {
-        await supabase.from('contacts').upsert({
-          tenant_id: tenantId,
-          company_id: company.id,
-          crm_id: contact.crm_id,
-          first_name: contact.first_name,
-          last_name: contact.last_name,
-          title: contact.title,
-          email: contact.email,
-          phone: contact.phone,
-          seniority: contact.seniority,
-          last_crm_sync: new Date().toISOString(),
-        }, { onConflict: 'tenant_id,crm_id' })
-        synced++
+  while (companiesProcessed < MAX_COMPANIES_PER_RUN) {
+    let q = supabase
+      .from('companies')
+      .select('id, crm_id')
+      .eq('tenant_id', tenantId)
+      .not('crm_id', 'is', null)
+      .order('id', { ascending: true })
+      .limit(CONTACT_PAGE_SIZE)
+
+    if (lastCompanyId) q = q.gt('id', lastCompanyId)
+
+    const { data: companies } = await q
+    if (!companies?.length) break
+
+    for (const company of companies) {
+      try {
+        const contacts = await hs.getContacts(company.crm_id)
+        for (const contact of contacts) {
+          await supabase.from('contacts').upsert({
+            tenant_id: tenantId,
+            company_id: company.id,
+            crm_id: contact.crm_id,
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            title: contact.title,
+            email: contact.email,
+            phone: contact.phone,
+            seniority: contact.seniority,
+            last_crm_sync: new Date().toISOString(),
+          }, { onConflict: 'tenant_id,crm_id' })
+          synced++
+        }
+      } catch {
+        // Some companies may not have contacts accessible
       }
-    } catch {
-      // Some companies may not have contacts accessible
+      lastCompanyId = company.id
+      companiesProcessed++
     }
   }
 

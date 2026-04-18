@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Loader2, Send, X } from "lucide-react";
 import type { Message } from "@ai-sdk/react";
 
-import { useAgentChat } from "@/lib/hooks/use-agent-chat";
+import { useAgentChat, type AgentType } from "@/lib/hooks/use-agent-chat";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 
 import { ChatMessage } from "./chat-message";
@@ -16,6 +16,13 @@ export interface ChatSidebarProps {
   onClose: () => void;
   initialPrompt?: string | null;
   onPromptConsumed?: () => void;
+  agentType?: AgentType;
+  /**
+   * URN of the object the user is currently viewing. Flows into the agent
+   * request so the context builder can pick account_deep / deal_deep and
+   * every emitted event gets the subject_urn attached.
+   */
+  activeUrn?: string | null;
 }
 
 const fallbackPrompts = [
@@ -26,7 +33,7 @@ const fallbackPrompts = [
 ] as const;
 
 const WELCOME_MESSAGE =
-  "Hi! I know your accounts, deals, and signals. Ask me anything — I'll give you specific names, numbers, and next steps.";
+  "This is the free-form fallback. For most tasks, use the action chips on each page — they pre-fill context. If you really want to type, go ahead.";
 
 function ContextualSuggestions({ onSelect }: { onSelect: (prompt: string) => void }) {
   const pathname = usePathname();
@@ -55,12 +62,25 @@ function ChatSidebarChat({
   onPromptConsumed,
   initialMessages,
   accessToken,
+  agentType,
+  activeUrn,
 }: ChatSidebarProps & {
   initialMessages: Message[];
   accessToken: string | null;
+  activeUrn?: string | null;
 }) {
+  const pathname = usePathname();
+  const pageContext = {
+    page: pathname ?? "",
+    activeUrn: activeUrn ?? undefined,
+  };
   const { messages, input, setInput, handleSubmit, append, isLoading, error, interactionId } =
-    useAgentChat({ initialMessages, initialAccessToken: accessToken });
+    useAgentChat({
+      agentType,
+      initialMessages,
+      initialAccessToken: accessToken,
+      pageContext,
+    });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const promptSentRef = useRef<string | null>(null);
@@ -95,9 +115,14 @@ function ChatSidebarChat({
       aria-hidden={!isOpen}
     >
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
-        <h2 className="text-sm font-semibold tracking-tight text-zinc-100">
-          Prospector OS
-        </h2>
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">
+            Ask anything
+          </h2>
+          <p className="text-[11px] text-zinc-500">
+            Fallback chat. Page-level actions are usually faster.
+          </p>
+        </div>
         <button
           type="button"
           onClick={onClose}
@@ -123,6 +148,7 @@ function ChatSidebarChat({
                 isLatest={isLast && m.role === "assistant"}
                 interactionId={isLast && m.role === "assistant" ? interactionId : undefined}
                 isStreaming={isLast && isLoading}
+                activeUrn={activeUrn}
               />
             );
           })}
@@ -184,6 +210,8 @@ export function ChatSidebar({
   onClose,
   initialPrompt,
   onPromptConsumed,
+  agentType,
+  activeUrn,
 }: ChatSidebarProps) {
   const [historyReady, setHistoryReady] = useState(false);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
@@ -291,6 +319,8 @@ export function ChatSidebar({
       onPromptConsumed={onPromptConsumed}
       initialMessages={initialMessages}
       accessToken={accessToken}
+      agentType={agentType}
+      activeUrn={activeUrn ?? null}
     />
   );
 }

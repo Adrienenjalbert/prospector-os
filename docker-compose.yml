@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - apps/web/.env.local
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  db:
+    image: supabase/postgres:15.6.1.120
+    ports:
+      - "54322:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: revenue_ai_os
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./packages/db/schema/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./packages/db/migrations/001_revenue_ai_os_platform.sql:/docker-entrypoint-initdb.d/02-platform.sql
+    restart: unless-stopped
+    # Note: NEXT_PUBLIC_SUPABASE_URL should point to hosted Supabase HTTP API,
+    # not this raw Postgres port. This container is for local DB only.
+    # Use `supabase start` for full local Supabase stack with API on port 54321.
+
+volumes:
+  pgdata:

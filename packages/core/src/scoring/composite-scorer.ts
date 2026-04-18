@@ -28,6 +28,14 @@ export interface CompositeScoreInput {
   previousSignalScore: number | null
   companyWinRate: number
   historicalDeals?: HistoricalDealOutcome[]
+  /**
+   * Pre-computed tenant-wide median of per-company 30d activity counts.
+   * Callers scoring many companies in one pass (e.g. nightly cron) MUST
+   * compute this once across the tenant's companies and pass it in —
+   * otherwise `estimateTenantMedian` only sees one company's activities
+   * and collapses to a meaningless value.
+   */
+  tenantMedianActivities30d?: number
 }
 
 export interface CompositeScoreResult {
@@ -67,7 +75,8 @@ export function computeCompositeScore(
     signalConfig,
   )
 
-  const tenantMedian = estimateTenantMedian(activities)
+  const tenantMedian =
+    input.tenantMedianActivities30d ?? estimateTenantMedian(activities)
   const engagementResult = computeEngagementDepth(
     { activities, tenant_median_activities_30d: tenantMedian },
     scoringConfig,

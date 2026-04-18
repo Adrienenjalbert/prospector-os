@@ -62,7 +62,7 @@ function computeSignalStrength(
   const stackingBonus = getStackingBonus(signals.length)
   rawSum *= stackingBonus
 
-  const normalisationFactor = (config as Record<string, unknown>).normalisation_factor as number | undefined ?? 33
+  const normalisationFactor = config.normalisation_factor ?? 33
   return Math.min(100, Math.round(rawSum * normalisationFactor))
 }
 

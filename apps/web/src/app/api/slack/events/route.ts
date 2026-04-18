@@ -133,11 +133,21 @@ async function handleBlockActions(payload: SlackBlockActionsPayload) {
       isDraftAction(id) || isSnoozeAction(id) || isFeedbackPositive(id) || isFeedbackNegative(id)
     if (!isTarget) continue
 
-    console.log('[slack/events] block_action', {
-      action_id: id,
-      slack_user_id: slackUserId,
-      value_meta: valueMeta,
-    })
+    // Production logs go to Vercel function logs which are persisted
+    // server-side and visible to anyone with the dashboard. The full
+    // valueMeta object can contain account_id / notification_id / Slack
+    // user id — useful for local debugging, PII for prod. Gate the
+    // verbose payload behind dev mode and emit a minimal action-only
+    // tag in prod so we keep the breadcrumb without the data.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[slack/events] block_action', {
+        action_id: id,
+        slack_user_id: slackUserId,
+        value_meta: valueMeta,
+      })
+    } else {
+      console.log('[slack/events] block_action', { action_id: id })
+    }
 
     if (isDraftAction(id)) {
       const ctx = await resolveRepContext(supabase, slackUserId)
@@ -258,15 +268,14 @@ async function callAgentForText(
   messageText: string,
 ): Promise<string> {
   const { assembleAgentContext } = await import('@/lib/agent/context-builder')
-  const { buildSystemPrompt } = await import('@/lib/agent/prompt-builder')
-  const { createAgentTools } = await import('@/lib/agent/tools')
+  const { createAgentTools, buildSystemPromptForAgent } = await import('@/lib/agent/tools')
 
   const { generateText, convertToCoreMessages } = await import('ai')
   const { anthropic } = await import('@ai-sdk/anthropic')
 
   const agentContext = await assembleAgentContext(repId, tenantId)
-  const systemPrompt = buildSystemPrompt(agentContext)
-  const tools = createAgentTools(tenantId, repId)
+  const systemPrompt = await buildSystemPromptForAgent('pipeline-coach', tenantId, agentContext)
+  const tools = createAgentTools(tenantId, repId, 'pipeline-coach')
 
   const result = await generateText({
     model: anthropic('claude-haiku-4-20250514'),

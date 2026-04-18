@@ -124,7 +124,7 @@ export async function GET(req: Request) {
       if (!companies?.length) continue
 
       const signalConfig = tenant.signal_config as {
-        signal_types?: { name: string; weight_multiplier: number }[]
+        signal_types?: { name: string; weight_multiplier: number; flex_keywords?: string[] }[]
         deep_research_config?: { model: string; temperature: number; max_tokens: number; only_for_tiers: string[] }
       } | null
       const signalTypes = signalConfig?.signal_types ?? []
@@ -132,11 +132,19 @@ export async function GET(req: Request) {
       let deepResearchCount = 0
       const maxDeepResearch = 20
 
+      // Per-tenant role-type keywords drive `is_temp_flex` flagging in
+      // job postings. Tenants in staffing / contingent verticals configure
+      // ['temp', 'contract', 'shift', 'locum', ...] on their
+      // `temp_job_posting` signal type. Tenants in other verticals leave
+      // it empty — no false-positive `temp_job_posting` signals fire.
+      const flexKeywords =
+        signalTypes.find((t) => t.name === 'temp_job_posting')?.flex_keywords ?? []
+
       for (const company of companies) {
         if (!company.domain) continue
 
         try {
-          const postings = await apollo.getJobPostings(company.domain)
+          const postings = await apollo.getJobPostings(company.domain, flexKeywords)
           const tempPostings = postings.filter((p) => p.is_temp_flex)
 
           if (tempPostings.length > 0) {

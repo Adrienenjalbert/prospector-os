@@ -1,5 +1,8 @@
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { SignalsFeed } from './signals-feed'
+import { SignalsDashboard } from './signals-dashboard'
+import { SkillBar } from '@/components/agent/skill-bar'
+import { SIGNALS_SKILLS } from '@/lib/agent/skills'
 
 interface SignalRow {
   id: string
@@ -16,70 +19,19 @@ interface SignalRow {
   source: string
 }
 
-const DEMO_SIGNALS: SignalRow[] = [
-  {
-    id: 'demo-sig-1',
-    companyId: 'demo-001',
-    companyName: 'UK Logistics Solutions',
-    signalType: 'hiring_surge',
-    title: 'Peak season hiring surge — 45 new warehouse roles posted across 3 locations',
-    description: 'UK Logistics Solutions has posted 45 temporary warehouse roles in London, Manchester, and Birmingham ahead of peak season.',
-    urgency: 'immediate',
-    relevanceScore: 0.92,
-    weightedScore: 1.66,
-    recommendedAction: 'Call Sarah Williams to discuss peak season workforce planning and MSP contract review.',
-    detectedAt: new Date(Date.now() - 2 * 3600000).toISOString(),
-    source: 'Apollo Job Postings',
-  },
-  {
-    id: 'demo-sig-2',
-    companyId: 'demo-002',
-    companyName: 'Distribution Network UK',
-    signalType: 'expansion',
-    title: 'New distribution centre opening in Leeds',
-    description: 'Distribution Network UK is expanding operations with a new 50,000 sq ft facility in Leeds, expected to require 200+ temporary workers.',
-    urgency: 'this_week',
-    relevanceScore: 0.85,
-    weightedScore: 1.28,
-    recommendedAction: 'Email Operations Director about workforce planning for the new Leeds facility.',
-    detectedAt: new Date(Date.now() - 18 * 3600000).toISOString(),
-    source: 'Claude Research',
-  },
-  {
-    id: 'demo-sig-3',
-    companyId: 'demo-003',
-    companyName: 'Industrial Manufacturing Corp',
-    signalType: 'leadership_change',
-    title: 'New VP of Operations appointed',
-    description: 'Industrial Manufacturing Corp has appointed a new VP of Operations who previously led a successful MSP transition at a competitor.',
-    urgency: 'this_week',
-    relevanceScore: 0.78,
-    weightedScore: 1.02,
-    recommendedAction: 'Research the new VP\'s background and send a congratulatory connection request on LinkedIn.',
-    detectedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-    source: 'Apollo People',
-  },
-  {
-    id: 'demo-sig-4',
-    companyId: 'demo-004',
-    companyName: 'Food Service Holdings',
-    signalType: 'temp_job_posting',
-    title: '12 temp catering roles posted for event season',
-    description: 'Food Service Holdings is ramping up for the summer events calendar with temporary catering staff across Scotland.',
-    urgency: 'this_month',
-    relevanceScore: 0.65,
-    weightedScore: 0.78,
-    recommendedAction: 'Include in next prospecting batch — good ICP fit for seasonal workforce management.',
-    detectedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-    source: 'Apollo Job Postings',
-  },
-]
-
-async function fetchSignals(): Promise<{ signals: SignalRow[]; isDemo: boolean }> {
+/**
+ * Signals page — REAL data only. Per MISSION UX rule 8, no demo signals are
+ * surfaced in production analytics. Empty state below explains how to get
+ * data flowing: connect CRM, then nightly signal sync runs.
+ */
+async function fetchSignals(): Promise<{
+  signals: SignalRow[]
+  reason: 'no-auth' | 'no-tenant' | 'no-companies' | 'ok'
+}> {
   try {
     const supabase = await createSupabaseServer()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { signals: DEMO_SIGNALS, isDemo: true }
+    if (!user) return { signals: [], reason: 'no-auth' }
 
     const { data: profile } = await supabase
       .from('user_profiles')
@@ -87,7 +39,7 @@ async function fetchSignals(): Promise<{ signals: SignalRow[]; isDemo: boolean }
       .eq('id', user.id)
       .single()
 
-    if (!profile?.tenant_id) return { signals: DEMO_SIGNALS, isDemo: true }
+    if (!profile?.tenant_id) return { signals: [], reason: 'no-tenant' }
 
     const { data: repProfile } = await supabase
       .from('rep_profiles')
@@ -104,7 +56,7 @@ async function fetchSignals(): Promise<{ signals: SignalRow[]; isDemo: boolean }
     const companyIds = (companies ?? []).map((c) => c.id)
     const companyNameMap = new Map((companies ?? []).map((c) => [c.id, c.name]))
 
-    if (companyIds.length === 0) return { signals: DEMO_SIGNALS, isDemo: true }
+    if (companyIds.length === 0) return { signals: [], reason: 'no-companies' }
 
     const { data: dbSignals } = await supabase
       .from('signals')
@@ -114,10 +66,8 @@ async function fetchSignals(): Promise<{ signals: SignalRow[]; isDemo: boolean }
       .order('detected_at', { ascending: false })
       .limit(50)
 
-    if (!dbSignals || dbSignals.length === 0) return { signals: DEMO_SIGNALS, isDemo: true }
-
     return {
-      signals: dbSignals.map((s) => ({
+      signals: (dbSignals ?? []).map((s) => ({
         id: s.id,
         companyId: s.company_id,
         companyName: companyNameMap.get(s.company_id) ?? 'Unknown',
@@ -131,19 +81,19 @@ async function fetchSignals(): Promise<{ signals: SignalRow[]; isDemo: boolean }
         detectedAt: s.detected_at,
         source: s.source,
       })),
-      isDemo: false,
+      reason: 'ok',
     }
   } catch {
-    return { signals: DEMO_SIGNALS, isDemo: true }
+    return { signals: [], reason: 'no-tenant' }
   }
 }
 
 export default async function SignalsPage() {
-  const { signals, isDemo } = await fetchSignals()
+  const { signals, reason } = await fetchSignals()
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
             Signal Intelligence
@@ -152,27 +102,34 @@ export default async function SignalsPage() {
             Buying signals across your portfolio
           </p>
         </div>
+        <SkillBar skills={SIGNALS_SKILLS} pageContext={{ page: 'signals' }} />
       </div>
 
-      {isDemo && (
-        <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
-          <p className="text-sm text-amber-300/80">
-            Showing demo signals. Connect your CRM to see real buying signals.
+      {signals.length === 0 ? (
+        <div className="mt-12 rounded-lg border border-zinc-800 bg-zinc-950 p-8 text-center">
+          <p className="text-zinc-300">No signals yet.</p>
+          <p className="mt-2 text-sm text-zinc-500">
+            {reason === 'no-auth' && 'Sign in to see your portfolio signals.'}
+            {reason === 'no-tenant' && 'Complete onboarding to start receiving signals.'}
+            {reason === 'no-companies' && (
+              <>Connect your CRM and run the first sync — signals are detected
+              nightly for your Tier A and B accounts.</>
+            )}
+            {reason === 'ok' && (
+              <>Signals are detected daily for your Tier A and B accounts.
+              Nothing has matched in the last 30 days.</>
+            )}
           </p>
         </div>
-      )}
-
-      <div className="mt-6">
-        <SignalsFeed signals={signals} />
-      </div>
-
-      {signals.length === 0 && (
-        <div className="mt-12 text-center">
-          <p className="text-zinc-500">No signals detected yet.</p>
-          <p className="mt-1 text-sm text-zinc-600">
-            Signals are detected daily for your Tier A and B accounts.
-          </p>
-        </div>
+      ) : (
+        <>
+          <div className="mt-6">
+            <SignalsDashboard signals={signals} />
+          </div>
+          <div className="mt-6">
+            <SignalsFeed signals={signals} />
+          </div>
+        </>
       )}
     </div>
   )

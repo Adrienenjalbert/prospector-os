@@ -1,6 +1,9 @@
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { AccountsTable, type AccountRow } from './accounts-table'
 import { AccountsDashboard } from './accounts-dashboard'
+import { AccountsKpiStrip } from './accounts-kpi-strip'
+import { SkillBar } from '@/components/agent/skill-bar'
+import { ACCOUNTS_SKILLS } from '@/lib/agent/skills'
 
 const DEMO_ROWS: AccountRow[] = [
   {
@@ -120,11 +123,17 @@ export default async function AccountsPage() {
   return (
     <div className="mx-auto max-w-7xl p-6 sm:p-8">
       <div className="flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
-            Accounts
-          </h1>
-          <p className="text-sm text-zinc-500">{rows.length} accounts</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
+              Accounts
+            </h1>
+            <p className="mt-1 text-sm text-zinc-500">{rows.length} accounts</p>
+          </div>
+          <SkillBar
+            skills={ACCOUNTS_SKILLS}
+            pageContext={{ page: 'accounts' }}
+          />
         </div>
 
         {useDemo && (
@@ -135,21 +144,13 @@ export default async function AccountsPage() {
           </div>
         )}
 
-        {/* KPI Strip */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {[
-            { label: 'Total Revenue', value: `£${Math.round(totalRev / 1000)}K`, color: 'text-zinc-100' },
-            { label: 'Tier A', value: `${tierACnt}`, color: 'text-emerald-400' },
-            { label: 'Tier B', value: `${tierBCnt}`, color: 'text-teal-400' },
-            { label: 'Avg Priority', value: `${avgPropensity}`, color: 'text-zinc-200' },
-            { label: 'HOT', value: `${hotCnt}`, color: 'text-red-400' },
-          ].map((m) => (
-            <div key={m.label} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-center">
-              <p className="text-xs text-zinc-500">{m.label}</p>
-              <p className={`mt-1 text-xl font-bold font-mono tabular-nums ${m.color}`}>{m.value}</p>
-            </div>
-          ))}
-        </div>
+        <AccountsKpiStrip
+          totalRev={totalRev}
+          tierACnt={tierACnt}
+          tierBCnt={tierBCnt}
+          avgPropensity={avgPropensity}
+          hotCnt={hotCnt}
+        />
 
         {/* Territory Map + ICP Distribution */}
         <AccountsDashboard rows={rows} />

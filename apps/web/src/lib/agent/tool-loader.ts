@@ -1,6 +1,7 @@
 import { tool, type Tool } from 'ai'
 import type { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { emitAgentEvent } from '@prospector/core'
 import {
   DEFAULT_MIDDLEWARE,
   withMiddleware,
@@ -238,6 +239,24 @@ export async function loadToolsForAgent(opts: LoadToolsOptions): Promise<{
       '[tool-loader] registry rows without registered handlers:',
       missingHandlers.join(', '),
     )
+    // Fire-and-forget telemetry so partial degradation surfaces in
+    // /admin/adaptation and the nightly self-improve workflow's failure
+    // clusters. Without this event, an agent silently running with half
+    // its configured toolset is invisible to ops. See AgentEventType
+    // definition in `packages/core/src/telemetry/events.ts`.
+    void emitAgentEvent(supabase, {
+      tenant_id: tenantId,
+      user_id: opts.userId,
+      role: opts.role,
+      interaction_id: opts.interactionId ?? null,
+      event_type: 'tool_registry_drift',
+      payload: {
+        missing_handlers: missingHandlers,
+        role: opts.role,
+        loaded_count: loaded.length,
+        registry_count: rows.length,
+      },
+    })
   }
 
   return { tools, loaded, missingHandlers }

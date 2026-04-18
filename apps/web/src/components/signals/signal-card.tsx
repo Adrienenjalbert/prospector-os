@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
+import { getSignalMeta } from '@/lib/signals/labels'
 
 interface SignalCardProps {
   id: string
@@ -14,17 +15,6 @@ interface SignalCardProps {
   detectedAt: string
   source: string
   onDraftOutreach?: () => void
-}
-
-const SIGNAL_TYPE_META: Record<string, { label: string; icon: string; color: string }> = {
-  hiring_surge: { label: 'Hiring Surge', icon: '📈', color: 'text-red-400 bg-red-950/40 border-red-800/40' },
-  funding: { label: 'Funding', icon: '💰', color: 'text-emerald-400 bg-emerald-950/40 border-emerald-800/40' },
-  expansion: { label: 'Expansion', icon: '🏗️', color: 'text-amber-400 bg-amber-950/40 border-amber-800/40' },
-  leadership_change: { label: 'Leadership Change', icon: '👤', color: 'text-sky-400 bg-sky-950/40 border-sky-800/40' },
-  temp_job_posting: { label: 'Temp Posting', icon: '📋', color: 'text-violet-400 bg-violet-950/40 border-violet-800/40' },
-  competitor_mention: { label: 'Competitor', icon: '⚔️', color: 'text-orange-400 bg-orange-950/40 border-orange-800/40' },
-  seasonal_peak: { label: 'Seasonal Peak', icon: '🌡️', color: 'text-rose-400 bg-rose-950/40 border-rose-800/40' },
-  negative_news: { label: 'Risk', icon: '⚠️', color: 'text-zinc-400 bg-zinc-800/40 border-zinc-700/40' },
 }
 
 const URGENCY_META: Record<string, { label: string; color: string }> = {
@@ -57,7 +47,7 @@ export function SignalCard({
   source,
   onDraftOutreach,
 }: SignalCardProps) {
-  const typeMeta = SIGNAL_TYPE_META[signalType] ?? { label: signalType, icon: '📡', color: 'text-zinc-400 bg-zinc-800/40 border-zinc-700/40' }
+  const typeMeta = getSignalMeta(signalType)
   const urgencyMeta = URGENCY_META[urgency] ?? { label: urgency, color: 'bg-zinc-800 text-zinc-400' }
 
   return (

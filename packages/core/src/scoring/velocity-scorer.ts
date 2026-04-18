@@ -47,8 +47,8 @@ function neutralResult(): ScoringResult {
     score: 0,
     dimensions: [
       { name: 'stage_progress', score: 0, weight: 0.30, weighted_score: 0, label: 'No deal' },
-      { name: 'speed_vs_benchmark', score: 50, weight: 0.40, weighted_score: 20, label: 'N/A' },
-      { name: 'momentum_direction', score: 50, weight: 0.30, weighted_score: 15, label: 'N/A' },
+      { name: 'speed_vs_benchmark', score: 0, weight: 0.40, weighted_score: 0, label: 'N/A' },
+      { name: 'momentum_direction', score: 0, weight: 0.30, weighted_score: 0, label: 'N/A' },
     ],
     top_reason: 'No active opportunity',
     computed_at: new Date().toISOString(),

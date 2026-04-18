@@ -38,6 +38,14 @@ export type AgentEventType =
   // "which slices were actually useful". Carries { slug, urns_referenced,
   // intent_class, role } and fires once per slice the response touched.
   | 'context_slice_consumed'
+  // Emitted by `apps/web/src/lib/agent/tool-loader.ts` when one or more
+  // `tool_registry` rows have no matching TS handler in HANDLERS. The
+  // payload carries `{ missing_handlers: string[], role }`. Surfacing
+  // this as an event (not just a console warn) lets `/admin/adaptation`
+  // and the self-improve workflow detect partial-degradation drift —
+  // the failure mode where an agent silently runs with a subset of its
+  // configured toolset.
+  | 'tool_registry_drift'
   | 'error'
 
 /**

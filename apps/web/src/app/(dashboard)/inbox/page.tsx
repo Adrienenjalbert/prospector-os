@@ -3,7 +3,10 @@ import { QueueHeader, type PipelineStage } from '@/components/priority/queue-hea
 import { InboxList } from '@/components/priority/inbox-list'
 import { WeeklyPulse } from '@/components/priority/weekly-pulse'
 import { InboxDashboard } from '@/components/priority/inbox-dashboard'
+import { NextStepCard } from '@/components/agent/next-step-card'
+import { INBOX_SKILLS } from '@/lib/agent/skills'
 import { isDemoTenantSlug } from '@/lib/demo-tenant'
+import { WelcomeBanner } from '@/components/welcome/welcome-banner'
 
 interface SubScore {
   name: string
@@ -190,13 +193,25 @@ async function fetchRealData(): Promise<{
           .eq('tenant_id', profile.tenant_id)
           .eq('owner_crm_id', repCrmId)
           .eq('is_stalled', true)
-          .eq('is_closed', false),
+          .eq('is_closed', false)
+          // Top-N gate from the mission's signal-over-noise rule —
+          // the inbox only renders 3 stalled deals; everything else
+          // bundles into the next digest. Hard cap by deal value
+          // protects memory and latency for reps with neglected books.
+          .order('value', { ascending: false, nullsFirst: false })
+          .limit(50),
         supabase
           .from('contacts')
           .select('company_id, first_name, last_name, title, phone, is_decision_maker, relevance_score')
           .eq('tenant_id', profile.tenant_id)
           .eq('is_decision_maker', true)
-          .order('relevance_score', { ascending: false }),
+          // Without a per-rep scope this query previously fanned out to
+          // every decision-maker in the tenant. The downstream client
+          // filters to companies in `companies` (rep's own book), so we
+          // cap absolute volume here and rely on relevance ordering to
+          // keep the right rows in the slice.
+          .order('relevance_score', { ascending: false })
+          .limit(200),
         supabase
           .from('opportunities')
           .select('stage, value, is_stalled')
@@ -421,12 +436,23 @@ export default async function InboxPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
+      <WelcomeBanner />
+
       <QueueHeader
         repName={repName}
         actionCount={displayItems.length}
         pipelineStages={showPipelineStages}
         totalPipelineValue={showPipelineTotal}
       />
+
+      <div className="mt-4">
+        <NextStepCard
+          question="What do you want to do next?"
+          helperText="Pick one — Prospector OS will pull the data and lay out the answer."
+          skills={INBOX_SKILLS}
+          pageContext={{ page: 'inbox' }}
+        />
+      </div>
 
       {/* KPI Strip */}
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">

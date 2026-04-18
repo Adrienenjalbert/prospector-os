@@ -1,140 +1,223 @@
-# Cursor Rules — Prospector OS
+# Cursor Rules — Revenue AI OS
 
-## Project Context
+## Read this first
 
-You are working on **Prospector OS**, an ontology-driven AI sales intelligence system for Indeed Flex. The mission is: "Cut the noise. Surface the signal. Empower action."
+Before any non-trivial change, read [`MISSION.md`](MISSION.md). It is the
+single source of truth for what we are building, for whom, and why. This
+rules file is the *how* for Cursor sessions; the mission is the *why*.
 
-This is NOT a custom app. It is a **pipeline + agent orchestration** built on:
-- **Make.com** — all data pipelines, scheduled jobs, CRM sync, webhook endpoints
-- **Relevance AI** — single AI agent template with per-rep context injection
-- **Apollo.io** — firmographic enrichment, contact discovery, signal detection
-- **Claude API** — deep research, account reports, outreach drafting (via Relevance AI tools)
-- **Slack** — rep-facing interface for alerts and agent interaction
-- **Salesforce + HubSpot** — CRM source of truth (custom fields, not shadow DB)
+For concrete process (how to add a tool, connector, workflow, eval, tenant),
+read [`docs/PROCESS.md`](docs/PROCESS.md).
 
-There is NO custom database, NO custom frontend, NO custom hosting.
+## Mission summary
 
-## Domain Concepts
+We build a **Sales Operating System** that turns a company's CRM, calls,
+and context into one self-improving research engine — so reps spend their
+day selling, not searching, and leaders see ROI in weeks, not quarters.
 
-### Ontology Objects
-- **Company** — central enriched entity. Everything links here.
-- **Contact** — person records linked to Company
-- **Signal** — external event indicating buying intent (hiring, funding, news)
-- **ICP Score** — computed fit rating from configurable weighted dimensions
-- **Opportunity** — pipeline deal with stage tracking and velocity
-- **Funnel Analytics** — aggregated stage performance with benchmark comparison
+Two jobs the system has to do well:
 
-### Scoring
-- **ICP Score** = Σ(dimension_score × dimension_weight) from `config/icp-config.json`
-- **Signal Score** = Σ(relevance × type_weight × recency_decay)
-- **Engagement Score** = weighted sum of CRM activities with recency boost
-- **Composite Priority** = ICP(0.35) + Signal(0.30) + Engagement_Funnel(0.35)
-- **Tiers:** HOT(≥80), WARM(60-79), COOL(40-59), MONITOR(<40)
+1. **Build pipeline** — find, prioritise, and engage net-new accounts.
+2. **Manage existing customers** — portfolio health, churn signals,
+   weekly digests.
 
-### Funnel Engine
-- **Impact Score** = |delta_drop_from_benchmark| × deal_count × avg_deal_value
-- **Stall threshold** = days_in_stage > 1.5 × median_days_in_stage
-- **Three benchmark levels:** Company (truth), Team/Market (UK/US), Individual Rep
-- Drop rate × volume matrix determines urgency, not conversion rate alone
+Everything we ship advances one of those two jobs. If a feature doesn't,
+cut it.
 
-### Agent Architecture
-- ONE agent template, NOT separate agents per rep
-- Context injected at runtime via CRM query filtered by rep_id
-- Rep preferences stored in Google Sheets (comm_style, alert_frequency, focus_stage, KPIs)
-- Auto-triggers push alerts; on-demand queries via Slack DM
+## Three layers that compound
 
-## Indeed Flex ICP Context
+1. **Context layer.** Canonical Postgres ontology + `urn:rev:` addressing.
+2. **Agent layer.** One universal agent presented through four **surfaces**
+ (pipeline-coach, account-strategist, leadership-lens, onboarding-coach).
+ Surfaces are presets — same runtime, model, telemetry, harness — that
+ select a different prompt + tool subset based on `(role, active object)`.
+ Tool registry per tenant. Every step emits an event.
+3. **Learning layer.** Event-sourced telemetry. Nightly workflows mine
+   exemplars, propose prompt diffs, calibrate scoring weights, cluster
+   failures, write attributions. The OS gets measurably better per tenant
+   every week.
 
-Primary industries: Light Industrial, Hospitality, Logistics, Warehousing, Manufacturing, Distribution, Facilities Management
+## Stack
 
-UK operating cities: Birmingham, Brighton, Bristol, Cardiff, Coventry, Edinburgh, Glasgow, Leeds, Liverpool, London, Manchester, York
+- **Next.js 16** (App Router) on Vercel
+- **Supabase** (Postgres + pgvector + RLS)
+- **Vercel AI SDK** with Anthropic via the AI Gateway when configured
+- **Workflow runner** (`apps/web/src/lib/workflows/runner.ts`) — durable
+  step execution against `workflow_runs`. Pattern-compatible with Vercel
+  Workflow DevKit so we can swap later.
+- **shadcn/ui + Tailwind 4**
+- **Vitest** for unit tests; agent eval suite gated in CI
 
-US locations: Austin TX, Dallas TX, Houston TX, Nashville TN, Atlanta GA, Cincinnati OH, Columbus OH, Ontario CA
+## Operating principles (NON-NEGOTIABLE)
 
-Ideal company size: 250-10,000 employees
-Ideal revenue: >$50M USD
-Key signals: temp/flex job postings, hiring surges, expansion, funding, leadership changes
+1. **Signal over noise.** The single biggest adoption killer is too much
+ information. Every change ships with a ruthless "what is the ONE thing
+ the rep needs to see?" test. The dispatcher caps proactive Slack pushes
+ per rep per day by `alert_frequency`: high=3, medium=2 (default), low=1.
+ Other limits: ≤ 3 items per list section; ≤ 150 words per short-form
+ agent response; ≤ 3 Next-Step buttons per reply. If in doubt, cut.
+2. **Truthful before new.** Every shipped feature keeps its promise.
+3. **Ontology-first.** New capability = new tool or new ontology object,
+   never a new bespoke page.
+4. **One agent, many tools.** Tools are typed, registry-driven, role-scoped.
+5. **Durable for anything > one request.** Workflows own sync, brief
+   generation, digests, ingestion, learning.
+6. **Cite or shut up.** Every claim links to its source object.
+7. **Evals are non-optional.** Every agent change runs goldens in CI. The
+   eval set grows from real failures.
+8. **Every interaction is training data.** Tool calls, citations, thumbs,
+   citation clicks, action invocations — event-sourced.
+9. **Self-improving by default, never by opaque magic.** Every adaptation
+   is a calibration row a human inspects, A/B tests, approves or rejects.
+10. **ROI is a first-class product, not a slide.** `/admin/roi` is live.
+11. **Per-tenant adaptation.** Each tenant gets their own exemplars,
+    weights, priors — derived from their own data.
 
-## File Structure
+## UX principles (adoption is the product)
+
+A perfect agent that nobody opens is worth zero. These rules are gates,
+not preferences.
+
+1. **Reduce noise.** Reps already drown in CRM and Slack. Our job is to
+ *subtract* from their day. Proactive Slack pushes capped by
+ `alert_frequency` (high=3, medium=2 default, low=1), enforced at the
+ dispatcher. Top-N views default to 3 rows. Short-form
+   responses cap at 150 words. Similar events bundle into one digest. When
+   in doubt, cut. A feature that pushes more info must show it raises
+   thumbs-up % or it doesn't ship.
+2. **One-click onboarding.** First-time user gets to a cited answer inside
+   5 minutes. No CRM connection required for the first run.
+3. **Slack first, dashboard second.** Briefs and alerts arrive in Slack.
+   The dashboard supports deeper exploration.
+4. **Every agent response ends with multi-choice next actions.** 2–3
+   click-to-prompt buttons. Never 4+. No dead-end answers. The behaviour
+   rules in `_shared.ts` enforce this.
+5. **Citations are inline.** Pills under every response. Clicking opens
+   the source and feeds the retrieval ranker.
+6. **Suggested action chips on every page.** Empty states are opportunity
+   states.
+7. **Visible self-improvement.** `/admin/adaptation` is customer-facing.
+8. **No demo data in production analytics.** Empty states beat fake numbers.
+9. **Latency budget:** ≤ 30s median, ≤ 60s P95.
+10. **Honest error states.** "I don't have data on that" beats hallucination.
+11. **Every surface is a thin client over the same agent + ontology.**
+
+## File structure
 
 ```
 prospector-os/
-├── CURSOR_PRD.md              # Full PRD — primary reference
-├── .cursorrules               # This file
-├── config/
-│   ├── icp-config.json        # ICP scoring dimensions
-│   ├── funnel-config.json     # Pipeline stage definitions
-│   └── signal-config.json     # Signal types and weights
-├── schemas/
-│   └── salesforce-fields.md   # CRM custom field specs
-├── agents/
-│   ├── system-prompt.md       # Relevance AI system prompt
-│   └── tool-specs.md          # Agent tool definitions
-├── make-scenarios/
-│   ├── 01-apollo-enrichment.md
-│   ├── 02-signal-detection.md
-│   ├── 03-funnel-computation.md
-│   └── 04-daily-briefing.md
-└── docs/
-    └── deployment-guide.md
+├── MISSION.md                              # Read this first
+├── docs/PROCESS.md                         # Engineering process
+├── apps/web/                               # Next.js application
+│   ├── AGENTS.md                           # Cursor rules for the web app
+│   └── src/
+│       ├── app/
+│       │   ├── (auth)/login/
+│       │   ├── (dashboard)/                # Authenticated app shell
+│       │   │   ├── inbox/                  # Priority queue + welcome
+│       │   │   ├── objects/                # Ontology browser (companies, deals, signals, transcripts, contacts)
+│       │   │   ├── pipeline/               # Legacy: AE-shaped pipeline view
+│       │   │   ├── accounts/               # Legacy: account list
+│       │   │   ├── analytics/              # Forecast, my-funnel, team
+│       │   │   ├── settings/
+│       │   │   ├── admin/                  # config, calibration, ontology, roi, adaptation, replay, pilot, evals
+│       │   │   └── onboarding/             # Tenant + baseline survey
+│       │   └── api/
+│       │       ├── agent/                  # AI agent endpoint
+│       │       ├── webhooks/               # CRM + transcript webhooks (HMAC-verified)
+│       │       └── cron/                   # sync, score, signals, enrich, workflows, learning
+│       ├── evals/                          # Golden eval set + LLM judge
+│       ├── lib/
+│       │   ├── agent/
+│       │   │   ├── tools/                  # createAgentTools, handlers bridge, dispatcher
+│       │   │   ├── agents/                 # Pipeline coach, account strategist, leadership lens, onboarding
+│       │   │   ├── tool-loader.ts          # Registry-driven loader
+│       │   │   ├── tool-bandit.ts          # Thompson sampling priors
+│       │   │   ├── context-builder.ts      # rep-centric assembler
+│       │   │   ├── context-strategies.ts   # 5 strategies
+│       │   │   └── model-registry.ts       # AI Gateway provider/model strings
+│       │   ├── workflows/                  # All durable workflows (one file each)
+│       │   └── supabase/                   # Server + browser clients
+│       └── components/
+│           ├── agent/                      # Chat sidebar, citation pills, suggested actions
+│           └── ontology/                   # Action panel
+├── packages/
+│   ├── core/                               # Business logic (zero UI deps)
+│   │   ├── scoring/                        # 7 scorers + composite + tier matcher + calibration analyzer
+│   │   ├── funnel/                         # Benchmark, stall, impact, forecast
+│   │   ├── prioritisation/                 # Queues, actions, briefings
+│   │   ├── notifications/                  # Triggers, cooldowns, feedback
+│   │   ├── citations/                      # Source tracking engine
+│   │   ├── telemetry/                      # emitAgentEvent / emitOutcomeEvent
+│   │   └── types/                          # Ontology, URN, Zod schemas, config
+│   ├── adapters/
+│   │   ├── crm/                            # HubSpot + Salesforce
+│   │   ├── enrichment/                     # Apollo
+│   │   ├── connectors/                     # Universal connector interface + transcript
+│   │   ├── notifications/                  # Slack dispatcher + cooldown store + web push
+│   │   └── transcripts/                    # Gong + Fireflies ingester
+│   └── db/
+│       ├── migrations/                     # 001 platform, 002 events + foundation
+│       └── schema/                         # Baseline schema.sql
+└── scripts/                                # seed-tools, setup
 ```
 
-## Code Style
+## Patterns to follow (and the file that owns each)
 
-- Make.com scenarios are described as step-by-step flows in markdown (not code)
-- Relevance AI agent configs are YAML-like specifications
-- Config files are JSON with comments via `_comment` fields
-- All scoring formulas documented in CURSOR_PRD.md Section 6
-- CRM field names use Salesforce convention: `Field_Name__c`
+### Adding a tool
+- Handler: `apps/web/src/lib/agent/tools/handlers/<slug>.ts` (or extend the
+  bridge in `tools/handlers.ts`).
+- Citation extractor: `apps/web/src/lib/agent/citations.ts`.
+- Registry seed: `scripts/seed-tools.ts`.
+- Eval case: `apps/web/src/evals/goldens.ts`.
 
-## Common Patterns
+### Adding a workflow
+- Implementation: `apps/web/src/lib/workflows/<name>.ts` with `enqueueX`
+  and `runX`.
+- Dispatcher: `apps/web/src/app/api/cron/workflows/route.ts` switch.
+- Schedule (only if new): `vercel.json` cron + `cron/learning` enqueue.
 
-### Make.com Scenario Pattern
-```
-Trigger (schedule/webhook/CRM event)
-  → Filter (guard clause)
-  → HTTP Module (external API call)
-  → Transform (map response to CRM fields)
-  → Router (branch on conditions)
-  → CRM Update (write back to Salesforce/HubSpot)
-  → Optional: Webhook to Relevance AI (trigger alert)
-```
+### Adding a webhook
+- Route: `apps/web/src/app/api/webhooks/<source>/route.ts`.
+- HMAC verification mandatory (see `webhooks/transcripts/route.ts` for
+  pattern). Idempotency key in `webhook_deliveries`.
 
-### Scoring Computation Pattern
-```
-1. Read config file for dimensions/weights
-2. For each dimension: lookup data → apply scoring tier → multiply by weight
-3. Sum weighted scores → normalise to 0-100
-4. Assign tier based on thresholds
-5. Generate priority_reason (top contributing dimension)
-6. Write to CRM custom fields
-```
+### Adding an ontology object type
+- TypeScript: `packages/core/src/types/ontology.ts`.
+- Zod schema: `packages/core/src/types/schemas.ts`.
+- URN helper: `packages/core/src/types/urn.ts`.
+- Migration: new file `packages/db/migrations/NNN_*.sql` with RLS.
 
-### Context Injection Pattern (Relevance AI)
-```
-1. Rep sends Slack message → Relevance AI receives with rep's Slack ID
-2. Lookup rep_id from Google Sheets config (Slack ID → CRM user ID)
-3. CRM query: top 20 accounts WHERE owner = rep_id ORDER BY priority DESC
-4. CRM query: funnel benchmarks WHERE scope = rep_id
-5. CRM query: signals WHERE company IN rep's accounts AND last 14 days
-6. Inject all into agent system prompt dynamic variables
-7. Agent responds with full context
-```
+### Telemetry
+Every meaningful event flows through `emitAgentEvent` / `emitOutcomeEvent`
+from `@prospector/core/telemetry`. The agent route emits at every step.
+Webhooks emit `outcome_events`. Action panel emits `action_invoked`.
+Without these the learning loop has nothing to learn from.
 
-## Key Constraints
+## Common mistakes (do NOT)
 
-- Apollo API: 100 calls/minute rate limit. Batch enrichment, not real-time.
-- Salesforce API: 15,000 calls/day. Aggregate operations where possible.
-- Claude API: cost-conscious — deep research only for Tier A accounts.
-- Relevance AI: credit-based — monitor usage weekly.
-- Make.com: 10,000 operations/month on Teams plan — design efficient scenarios.
+- DO NOT hardcode business context — always read from `business_profiles`.
+- DO NOT hardcode tool definitions — always load from `tool_registry` via
+  the tool-loader. The static factory is fallback only.
+- DO NOT clone agents per rep — one template with dynamic context per role.
+- DO NOT skip `tenant_id` scoping in Supabase queries.
+- DO NOT compute funnel benchmarks in real-time — they're weekly batch.
+- DO NOT send alerts without cooldown — `SlackDispatcher` accepts a
+  `CooldownStore`, use `SupabaseCooldownStore` in production.
+- DO NOT skip citations — every tool result must produce citations via the
+  extractor in `agent/citations.ts`.
+- DO NOT skip the feedback loop — thumbs up/down + action invocations
+  must persist; without them, the bandit + prompt optimizer have no signal.
+- DO NOT ship demo data in analytics — empty states beat fake numbers.
+- DO NOT ship a new "agent type" — surfaces are presets of the one universal
+ agent. New capability = new tool, new context strategy, or a new surface
+ preset (which is just a prompt + tool subset). Never a new runtime.
+- DO NOT bypass the holdout cohort — `shouldSuppressPush` from
+  `lib/workflows/holdout.ts` runs on every proactive push.
+- DO NOT assume Indeed Flex context — the system is multi-tenant by design.
 
-## Common Mistakes to Avoid
+## When in doubt
 
-- DO NOT create a custom database — CRM is the store
-- DO NOT clone agents per rep — one template with dynamic context
-- DO NOT use multi-agent orchestration — single agent with tools
-- DO NOT hardcode ICP dimensions — always read from config
-- DO NOT compute funnel benchmarks in real-time — weekly batch computation
-- DO NOT send alerts without cooldown — alert fatigue kills adoption
-- DO NOT skip the feedback loop — 👍/👎 reactions tune the system
+Read [`MISSION.md`](MISSION.md). If the change you're considering doesn't
+advance one of the two jobs (build pipeline / manage existing customers),
+or violates a UX principle, push back.

@@ -137,6 +137,59 @@ const addFramework = (ctx: CitationContext, f: Row) => {
 }
 
 /**
+ * Citation for onboarding-time analytics tools.
+ *
+ * Onboarding tools (`explore_crm_fields`, `analyze_*`, `propose_*`,
+ * `apply_*`) return aggregated stats derived from the tenant's CRM or
+ * synced ontology. They are user-visible domain claims and therefore
+ * fall under the cite-or-shut-up rule, even though they don't reference
+ * a single record.
+ *
+ * The citation points at the data source the analysis was drawn from:
+ * either the live CRM (via `crm_type` on the result, deep-linked to the
+ * appropriate console) or the local ontology browser. `source_id` is the
+ * tool slug so the citation pill labels the analysis honestly
+ * ("Analysis: 47 won deals from HubSpot").
+ */
+const addOnboardingSource = (
+  ctx: CitationContext,
+  toolSlug: string,
+  result: Row,
+  defaultClaim: string,
+) => {
+  const data = result.data && typeof result.data === 'object' ? (result.data as Row) : result
+  const counts: string[] = []
+  for (const [key, val] of Object.entries(data)) {
+    if (val && typeof val === 'object' && 'count' in (val as Row) && typeof (val as Row).count === 'number') {
+      counts.push(`${(val as Row).count} ${key}`)
+    }
+  }
+  const totalAccounts = typeof result.total_accounts === 'number' ? result.total_accounts : null
+  const wonDeals = typeof result.won_deals === 'number' ? result.won_deals : null
+  const stagesAnalyzed = Array.isArray(result.stages_found) ? (result.stages_found as unknown[]).length : null
+
+  const summary = counts.length
+    ? counts.join(' · ')
+    : totalAccounts != null
+      ? `${totalAccounts} accounts analysed`
+      : wonDeals != null
+        ? `${wonDeals} won deals analysed`
+        : stagesAnalyzed != null
+          ? `${stagesAnalyzed} pipeline stages detected`
+          : defaultClaim
+
+  const crmType = typeof result.crm_type === 'string' ? result.crm_type : ctx.crmType
+  const sourceTypeLabel = crmType ? `${crmType} CRM` : 'tenant data'
+
+  ctx.collector.addCitation({
+    claim_text: `${defaultClaim} (${summary}, source: ${sourceTypeLabel})`,
+    source_type: 'tenant_config',
+    source_id: toolSlug,
+    source_url: '/onboarding',
+  })
+}
+
+/**
  * Per-tool extractors. Keep these tightly scoped to the actual shape returned
  * by each tool's execute() — matches drive trust, mismatches add noise. When a
  * tool changes its return shape, update the extractor here.
@@ -187,13 +240,6 @@ const EXTRACTORS: Record<string, Extractor> = {
   search_transcripts: (ctx, r) => {
     for (const t of asRows(r.transcripts)) addTranscript(ctx, t)
   },
-  draft_message: (ctx, r) => {
-    const company = asRow(r.company)
-    if (company) addCompany(ctx, company)
-    for (const s of asRows(r.signals)) addSignal(ctx, s)
-    const contact = asRow(r.contact)
-    if (contact) addContact(ctx, contact)
-  },
   draft_outreach: (ctx, r) => {
     const company = asRow(r.company)
     if (company) addCompany(ctx, company)
@@ -222,8 +268,27 @@ const EXTRACTORS: Record<string, Extractor> = {
     // Synthesised theme buckets aren't tied to specific source rows.
   },
 
-  // Onboarding Coach — tool results are setup analytics, not user-facing claims
-  // we need to cite. Skip them by omission.
+  // Onboarding Coach — every tool's result is a domain claim derived from
+  // the tenant's data ("we analysed 47 won deals across 3 industries").
+  // Cite the data source (live CRM vs synced ontology) so the citation
+  // pill links the rep to the place those numbers came from. See
+  // `addOnboardingSource` above for the citation shape.
+  explore_crm_fields: (ctx, r) =>
+    addOnboardingSource(ctx, 'explore_crm_fields', r, 'CRM schema exploration'),
+  analyze_account_distribution: (ctx, r) =>
+    addOnboardingSource(ctx, 'analyze_account_distribution', r, 'Account distribution analysis'),
+  analyze_pipeline_history: (ctx, r) =>
+    addOnboardingSource(ctx, 'analyze_pipeline_history', r, 'Pipeline history analysis'),
+  analyze_contact_patterns: (ctx, r) =>
+    addOnboardingSource(ctx, 'analyze_contact_patterns', r, 'Contact-pattern analysis'),
+  propose_icp_config: (ctx, r) =>
+    addOnboardingSource(ctx, 'propose_icp_config', r, 'Proposed ICP scoring config'),
+  propose_funnel_config: (ctx, r) =>
+    addOnboardingSource(ctx, 'propose_funnel_config', r, 'Proposed funnel benchmarks'),
+  apply_icp_config: (ctx, r) =>
+    addOnboardingSource(ctx, 'apply_icp_config', r, 'ICP config applied'),
+  apply_funnel_config: (ctx, r) =>
+    addOnboardingSource(ctx, 'apply_funnel_config', r, 'Funnel config applied'),
 
   // Knowledge / framework consultations
   consult_sales_framework: (ctx, r) => {

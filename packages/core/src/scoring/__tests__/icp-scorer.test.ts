@@ -50,11 +50,18 @@ const testConfig: ICPConfig = {
       weight: 0.25,
       description: 'Evidence of temp/flex usage',
       data_source: 'industry',
+      high_turnover_industries: [
+        'Warehousing',
+        'Logistics',
+        'Manufacturing',
+        'Hospitality',
+        'Retail',
+      ],
       scoring_tiers: [
-        { condition: 'high_turnover_industry', score: 40, label: 'Industry implies temp need' },
+        { condition: 'high_turnover_industry', score: 100, label: 'High-turnover industry' },
         { condition: 'default', score: 10, label: 'No evidence' },
       ],
-    },
+    } as ICPConfig['dimensions'][number],
     {
       name: 'tech_ops_maturity',
       weight: 0.15,

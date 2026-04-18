@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
+
+interface CookieToSet {
+  name: string
+  value: string
+  options?: CookieOptions
+}
 
 export async function middleware(request: NextRequest) {
   const isApiRoute = request.nextUrl.pathname.startsWith('/api/')
@@ -32,7 +38,7 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           for (const { name, value } of cookiesToSet) {
             request.cookies.set(name, value)
           }
@@ -57,8 +63,22 @@ export async function middleware(request: NextRequest) {
     if (user && isLoginPage) {
       return NextResponse.redirect(new URL('/inbox', request.url))
     }
-  } catch {
-    // Supabase unreachable — allow request through, pages handle their own auth
+  } catch (err) {
+    // Supabase unreachable / cookie parse error / network blip. Two
+    // failure modes:
+    //   - the user is genuinely already on /login → let them through so
+    //     they can sign in once Supabase recovers
+    //   - any other path → redirect to /login. This is critical: pages
+    //     in the (dashboard) tree DO have their own server-side
+    //     `redirect('/login')` checks, but if their data fetches throw
+    //     before that check runs, an unauthenticated request can briefly
+    //     render a partial dashboard frame. The middleware redirect
+    //     closes that hole.
+    console.warn('[middleware] auth client error:', err instanceof Error ? err.message : err)
+    const isLoginPage = request.nextUrl.pathname === '/login'
+    if (!isLoginPage) {
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
   }
 
   return response

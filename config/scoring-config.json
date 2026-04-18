@@ -3,12 +3,13 @@
   "version": "3.0",
 
   "propensity_weights": {
-    "icp_fit": 0.15,
-    "signal_momentum": 0.20,
-    "engagement_depth": 0.15,
-    "contact_coverage": 0.20,
-    "stage_velocity": 0.15,
-    "profile_win_rate": 0.15,
+    "_comment": "engagement_depth weight set to 0 until CRM activity ingestion is validated end-to-end (see apps/web/src/app/api/cron/score/route.ts). Re-enable once cached activities are populated from getActivities() on a representative sample. Other weights rebalanced from the original 0.15 share.",
+    "icp_fit": 0.18,
+    "signal_momentum": 0.23,
+    "engagement_depth": 0.00,
+    "contact_coverage": 0.23,
+    "stage_velocity": 0.18,
+    "profile_win_rate": 0.18,
     "_must_sum_to": 1.0
   },
 
