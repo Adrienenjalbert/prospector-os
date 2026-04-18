@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ApolloAdapter } from '@prospector/adapters'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import {
   runWorkflow,
   startWorkflow,
@@ -157,22 +156,17 @@ export async function runChampionAlumniDetector(
           return { moves: [], skipped: true, reason: loaded.reason ?? 'empty' }
         }
 
-        // Tenant Apollo credentials — same access pattern as cron/enrich.
+        // Apollo credentials — single source of truth via env var, same as
+        // `cron/enrich` and `cron/signals`. The previous implementation
+        // selected `tenants.apollo_credentials_encrypted`, a column that
+        // never existed in any migration — so this workflow short-
+        // circuited with `no_apollo_credentials` for every tenant in
+        // production. The audit caught it as a BLOCKER. We could plumb
+        // a real per-tenant encrypted-credentials column later if
+        // tenants want their own Apollo keys; until then the platform
+        // shares one.
         if (!ctx.tenantId) throw new Error('Missing tenant')
-        const { data: tenant } = await ctx.supabase
-          .from('tenants')
-          .select('apollo_credentials_encrypted')
-          .eq('id', ctx.tenantId)
-          .single()
-        const rawCreds = (tenant as { apollo_credentials_encrypted: unknown } | null)
-          ?.apollo_credentials_encrypted
-        if (!rawCreds) {
-          return { moves: [], skipped: true, reason: 'no_apollo_credentials' }
-        }
-        const creds = isEncryptedString(rawCreds)
-          ? (decryptCredentials(rawCreds) as Record<string, string>)
-          : (rawCreds as Record<string, string>)
-        const apolloKey = creds.api_key
+        const apolloKey = process.env.APOLLO_API_KEY
         if (!apolloKey) {
           return { moves: [], skipped: true, reason: 'apollo_key_missing' }
         }

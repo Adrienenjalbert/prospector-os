@@ -4,8 +4,16 @@ export { HubSpotAdapter } from './crm/hubspot'
 
 export type { EnrichmentProvider } from './enrichment/interface'
 export { ApolloAdapter } from './enrichment/apollo'
+export type { EnrichCompanyOutcome } from './enrichment/apollo'
 export { normalizeIndustry } from './enrichment/normalizers/industry-map'
 export { resolveLocationsInRegions, isInCountry } from './enrichment/normalizers/location-resolver'
+export {
+  ENRICHMENT_COSTS,
+  totalSpend,
+  addCost,
+  canAfford,
+} from './enrichment/cost'
+export type { EnrichmentOperation } from './enrichment/cost'
 
 export type { NotificationAdapter } from './notifications/interface'
 export { SlackAdapter } from './notifications/slack'

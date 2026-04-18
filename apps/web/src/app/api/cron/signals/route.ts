@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
-import { ApolloAdapter, SalesforceAdapter } from '@prospector/adapters'
+import {
+  ApolloAdapter,
+  SalesforceAdapter,
+  totalSpend,
+  type EnrichmentOperation,
+} from '@prospector/adapters'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 
 const DEEP_RESEARCH_PROMPT = `You are a B2B sales intelligence analyst. Research the company "{company_name}" ({domain}) for recent developments relevant to temporary staffing needs.
@@ -101,7 +106,9 @@ export async function GET(req: Request) {
 
     const { data: tenants } = await supabase
       .from('tenants')
-      .select('id, signal_config, crm_type, crm_credentials_encrypted, business_config')
+      .select(
+        'id, signal_config, crm_type, crm_credentials_encrypted, business_config, enrichment_budget_monthly, enrichment_spend_by_op',
+      )
       .eq('active', true)
 
     if (!tenants?.length) {
@@ -109,8 +116,27 @@ export async function GET(req: Request) {
     }
 
     let totalSignals = 0
+    const tenantsOverBudget: string[] = []
 
     for (const tenant of tenants) {
+      // Apollo budget guard. The signals cron uses Apollo
+      // `getJobPostings` (which costs ~$0.05/call), but pre-this-change
+      // it bypassed the per-tenant enrichment budget entirely — a
+      // tenant with $0 left for the month still saw signal cron
+      // running Apollo against their domains. Now we read the same
+      // ledger the enrichment cron writes to, and skip the tenant
+      // when over budget.
+      const monthlyBudget = (tenant.enrichment_budget_monthly as number | null) ?? 0
+      const spendByOp =
+        ((tenant.enrichment_spend_by_op as
+          | Partial<Record<EnrichmentOperation, number>>
+          | null) ?? {}) as Partial<Record<EnrichmentOperation, number>>
+      const remaining = monthlyBudget - totalSpend(spendByOp)
+      if (remaining <= 0) {
+        tenantsOverBudget.push(tenant.id)
+        continue
+      }
+
       const staleThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
       const { data: companies } = await supabase
@@ -283,7 +309,10 @@ export async function GET(req: Request) {
     }
 
     await recordCronRun('/api/cron/signals', 'success', Date.now() - startTime, totalSignals)
-    return NextResponse.json({ signals: totalSignals })
+    return NextResponse.json({
+      signals: totalSignals,
+      tenants_over_budget: tenantsOverBudget.length,
+    })
   } catch (err) {
     console.error('[cron/signals]', err)
     await recordCronRun('/api/cron/signals', 'error', Date.now() - startTime, 0, err instanceof Error ? err.message : 'Unknown error')

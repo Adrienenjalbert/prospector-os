@@ -24,6 +24,34 @@ function extractDomain(website: string | null | undefined): string | null {
 const APOLLO_BASE = 'https://api.apollo.io/api/v1'
 const RATE_LIMIT_MS = 600 // ~100 requests/minute
 
+/**
+ * Tagged result from `enrichCompany`. Used so the caller (cron/enrich)
+ * can persist `companies.enrichment_status` correctly:
+ *
+ *   - `enriched`  → Apollo returned firmographic data; persist + log.
+ *   - `no_match`  → Apollo returned 200 but with no `organization` —
+ *                   the domain just isn't in their dataset. We mark
+ *                   the company so future cron runs skip it (don't
+ *                   pay $0.05 every cycle to re-discover the same
+ *                   nothing).
+ *   - `error`     → 5xx / network / parse failure; safe to retry.
+ *
+ * Pre-this-change `enrichCompany` returned a "shaped empty" object on
+ * no-match, indistinguishable from a real-empty Apollo result, so the
+ * cron re-called the same dead domain every cycle.
+ */
+export type EnrichCompanyOutcome =
+  | { status: 'enriched'; data: CompanyEnrichmentResult }
+  | { status: 'no_match'; domain: string }
+  | { status: 'error'; reason: string; retryable: boolean }
+
+class ApolloRateLimitError extends Error {
+  constructor(public retryAfterMs: number) {
+    super(`Apollo rate-limited; retry after ${retryAfterMs}ms`)
+    this.name = 'ApolloRateLimitError'
+  }
+}
+
 const SENIORITY_MAP: Record<string, string> = {
   c_suite: 'c_level',
   owner: 'c_level',
@@ -52,23 +80,19 @@ export class ApolloAdapter implements EnrichmentProvider {
     this.apiKey = apiKey
   }
 
+  /**
+   * Legacy entry point that always returns a shaped result (or throws).
+   * Kept for callers that don't yet care about the no-match distinction.
+   * New callers should prefer `enrichCompanyOutcome` so they can persist
+   * `companies.enrichment_status` and avoid re-paying for dead domains.
+   */
   async enrichCompany(domain: string): Promise<CompanyEnrichmentResult> {
-    await this.throttle()
-
-    const res = await fetch(`${APOLLO_BASE}/organizations/enrich`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({ domain }),
-    })
-
-    if (!res.ok) {
-      throw new Error(`Apollo enrich failed: ${res.status}`)
-    }
-
-    const data = await res.json()
-    const org: ApolloOrganizationResponse = data.organization
-
-    if (!org) {
+    const outcome = await this.enrichCompanyOutcome(domain)
+    if (outcome.status === 'enriched') return outcome.data
+    if (outcome.status === 'no_match') {
+      // Same shape as the previous "shaped empty" return so old call
+      // sites don't break; the no-match-aware cron uses
+      // enrichCompanyOutcome directly.
       return {
         name: domain,
         domain,
@@ -84,30 +108,103 @@ export class ApolloAdapter implements EnrichmentProvider {
         locations: [],
         tech_stack: [],
         description: null,
-        raw_data: data,
+        raw_data: {},
+      }
+    }
+    throw new Error(outcome.reason)
+  }
+
+  /**
+   * Tagged-outcome variant. Distinguishes:
+   *   - 200 with org data → enriched
+   *   - 200 with no org   → no_match (persist + skip future cycles)
+   *   - 429               → ApolloRateLimitError throwable; caller
+   *                         should back off; status='error', retryable=true
+   *   - 5xx / network     → status='error', retryable=true
+   *   - other 4xx         → status='error', retryable=false
+   *
+   * Pre-this-change every non-200 was indistinguishable from a generic
+   * `Error` so retry loops re-burned credits on quota exhaustion.
+   */
+  async enrichCompanyOutcome(domain: string): Promise<EnrichCompanyOutcome> {
+    await this.throttle()
+
+    let res: Response
+    try {
+      res = await fetch(`${APOLLO_BASE}/organizations/enrich`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ domain }),
+      })
+    } catch (err) {
+      return {
+        status: 'error',
+        reason: `network: ${err instanceof Error ? err.message : 'unknown'}`,
+        retryable: true,
       }
     }
 
-    const normalized = normalizeIndustry(org.industry)
+    if (res.status === 429) {
+      // Honour `Retry-After` (seconds) when present so the caller can
+      // sleep instead of immediately re-trying and getting 429'd again.
+      const retryAfterSec = Number(res.headers.get('Retry-After') ?? '60')
+      return {
+        status: 'error',
+        reason: `rate_limited: retry after ${retryAfterSec}s`,
+        retryable: true,
+      }
+    }
+    if (res.status === 404 || res.status === 422) {
+      // Apollo treats unknown domains as 4xx in some plan tiers.
+      return { status: 'no_match', domain }
+    }
+    if (!res.ok) {
+      return {
+        status: 'error',
+        reason: `apollo enrich failed: ${res.status}`,
+        retryable: res.status >= 500,
+      }
+    }
 
+    let data: { organization?: ApolloOrganizationResponse }
+    try {
+      data = await res.json()
+    } catch (err) {
+      return {
+        status: 'error',
+        reason: `parse: ${err instanceof Error ? err.message : 'unknown'}`,
+        retryable: true,
+      }
+    }
+    const org = data.organization
+    if (!org) {
+      // 200 with no org payload — Apollo doesn't have this domain.
+      // Mark for skip so the next cron cycle saves a credit.
+      return { status: 'no_match', domain }
+    }
+
+    const normalized = normalizeIndustry(org.industry)
     return {
-      name: org.name,
-      domain,
-      industry: normalized.industry,
-      industry_group: normalized.group,
-      employee_count: org.estimated_num_employees ?? null,
-      employee_range: categorizeEmployees(org.estimated_num_employees),
-      annual_revenue: org.annual_revenue ?? null,
-      revenue_range: categorizeRevenue(org.annual_revenue),
-      founded_year: org.founded_year ?? null,
-      hq_city: org.city ?? null,
-      hq_country: org.country ?? null,
-      locations: org.city
-        ? [{ city: org.city, country: org.country, is_hq: true }]
-        : [],
-      tech_stack: org.technologies ?? [],
-      description: null,
-      raw_data: data,
+      status: 'enriched',
+      data: {
+        name: org.name,
+        domain,
+        industry: normalized.industry,
+        industry_group: normalized.group,
+        employee_count: org.estimated_num_employees ?? null,
+        employee_range: categorizeEmployees(org.estimated_num_employees),
+        annual_revenue: org.annual_revenue ?? null,
+        revenue_range: categorizeRevenue(org.annual_revenue),
+        founded_year: org.founded_year ?? null,
+        hq_city: org.city ?? null,
+        hq_country: org.country ?? null,
+        locations: org.city
+          ? [{ city: org.city, country: org.country, is_hq: true }]
+          : [],
+        tech_stack: org.technologies ?? [],
+        description: null,
+        raw_data: data as unknown as Record<string, unknown>,
+      },
     }
   }
 
@@ -146,6 +243,21 @@ export class ApolloAdapter implements EnrichmentProvider {
     const data = await res.json()
     const people: ApolloPersonResponse[] = data.people ?? []
 
+    // Phone numbers are Apollo's most expensive data (~$1/contact). The
+    // previous code returned them on every `searchContacts` call, which:
+    //   1. Inflated the cost-per-call by ~10x vs the basic $0.10 search
+    //      bucket, but the cron tracked it as a flat $0.50.
+    //   2. Leaked direct-dial numbers into the agent's prompt for every
+    //      contact, regardless of whether the rep needed them.
+    //   3. Bypassed any tier-based gating ("only Tier A gets phones").
+    //
+    // Now phones default to NULL on this code path. To retrieve a
+    // contact's phone the caller invokes `enrichPerson(email)` (the
+    // unlock endpoint) — that's a separate, more expensive call that
+    // hits the dedicated `phone_unlock` cost bucket. Set
+    // `filters.revealPhones = true` to opt into the legacy behaviour.
+    const revealPhones = filters?.revealPhones === true
+
     return people.map((p) => ({
       email: p.email ?? null,
       first_name: p.first_name,
@@ -153,7 +265,7 @@ export class ApolloAdapter implements EnrichmentProvider {
       title: p.title ?? null,
       seniority: normalizeSeniority(p.seniority),
       department: p.departments?.[0] ?? null,
-      phone: p.phone_numbers?.[0]?.raw_number ?? null,
+      phone: revealPhones ? (p.phone_numbers?.[0]?.raw_number ?? null) : null,
       linkedin_url: p.linkedin_url ?? null,
       apollo_id: p.id ?? null,
       photo_url: p.photo_url ?? null,

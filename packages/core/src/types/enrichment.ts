@@ -62,6 +62,21 @@ export interface ContactSearchFilters {
   department?: string[]
   titles?: string[]
   limit?: number
+  /**
+   * Opt into Apollo phone-number reveal on the contact search result.
+   * Phones are Apollo's most expensive data (~$1/contact) and the
+   * cheaper $0.10 search call returns them by default — that drift
+   * from the cost map breaks budget enforcement. Default `false`:
+   * callers that need a phone make a follow-up `enrichPerson(email)`
+   * call which hits the dedicated `phone_unlock` cost bucket and
+   * obeys the tenant's tier-based phone-unlock policy.
+   *
+   * Set `true` only when:
+   *   - The active company is `priority_tier === 'HOT'`, AND
+   *   - The contact role is decision_maker / economic_buyer, AND
+   *   - The tenant has `enrichment_spend_by_op.phone_unlock` budget left.
+   */
+  revealPhones?: boolean
 }
 
 /**
