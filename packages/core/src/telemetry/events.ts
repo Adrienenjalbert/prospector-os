@@ -70,6 +70,17 @@ export type AgentEventType =
   // has been silently failing. Payload:
   // { companies_scored, benchmarks_written, duration_ms, status, error? }
   | 'scoring_run_completed'
+  // Phase 3 T1.2 — prompt-injection defence at ingest. Emitted by the
+  // transcript ingester when the Anthropic summary output fails to
+  // parse against `SummarizeResultSchema`. The ingester then persists
+  // `summary = null` rather than the raw model output, so the
+  // ontology never carries a malformed-shape summary downstream into
+  // search_transcripts / conversation memory / brief generation. The
+  // event payload carries `{ source, source_id, zod_issues, raw_length }`
+  // so /admin/adaptation can show "the model got coerced N times this
+  // week on tenant X" — a hard signal for either prompt drift or
+  // adversarial input.
+  | 'summarise_invalid_output'
   | 'error'
 
 /**
