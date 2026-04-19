@@ -172,10 +172,18 @@ is worth zero. These rules are not preferences; they are gates.
      (high=3, medium=2, low=1). The dispatcher reads it per push.
    - **When in doubt, cut.** A feature that pushes more information has to
      show it raises thumbs-up % or we don't ship it.
-2. **One-click onboarding.** First-time user lands on `/onboarding`,
-   completes the 60-second baseline survey, sees their first cited answer
-   inside 5 minutes. No CRM connection required to *try* the product
-   (demo data is OK for the first run); required to *trust* it.
+2. **One-click onboarding.** First-time user lands on `/onboarding`.
+   - **Demo path** (no CRM required): one click on "Try with sample data"
+     → seeded companies, opportunities, contacts, signals → first
+     cited answer inside **5 minutes**. The tenant is stamped
+     `business_config.is_demo: true` so its numbers never leak into a
+     cross-tenant roll-up.
+   - **Real path** (CRM connected): allow **15-30 minutes** end-to-end —
+     CRM sync, enrichment, ICP calibration, funnel detection, and the
+     60-second baseline survey. The wizard's welcome step is honest
+     about both timings; nobody promises 5 minutes for a real run
+     because that would require lying about either sync time or
+     calibration depth.
 3. **Slack first, dashboard second.** Reps live in Slack and HubSpot.
    Briefs, alerts, and digests arrive proactively in Slack DMs. The web
    dashboard is for deeper exploration and admin — never the only path.

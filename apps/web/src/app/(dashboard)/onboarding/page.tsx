@@ -20,6 +20,7 @@ import {
   saveCrmCredentials,
   saveOnboardingPreferences,
   runFullOnboardingPipeline,
+  runDemoOnboarding,
   getTenantDataSummary,
   getOnboardingProposals,
   applyIcpConfig,
@@ -49,6 +50,12 @@ const STEPS: { id: StepId; label: string; icon: React.ComponentType<{ className?
 export default function OnboardingWizard() {
   const router = useRouter();
   const [stepId, setStepId] = useState<StepId>("welcome");
+
+  // Demo path state — tracked separately from the CRM flow because
+  // the demo button bypasses every step except welcome and lands the
+  // user directly on the inbox.
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   // CRM state
   const [crmType, setCrmType] = useState<CrmType>("hubspot");
@@ -131,6 +138,27 @@ export default function OnboardingWizard() {
       setProposalsLoading(false);
     }
   }
+
+  const handleTryDemo = useCallback(async () => {
+    setDemoLoading(true);
+    setDemoError(null);
+    try {
+      await runDemoOnboarding();
+      // Refresh so the inbox's demo-aware queries pick up the new
+      // companies + scoring snapshots without a stale-cache window.
+      router.push("/inbox");
+      router.refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not load demo data";
+      setDemoError(
+        msg.includes("ONBOARDING_DEMO_MODE")
+          ? "Demo mode isn't enabled on this environment yet. Connect your CRM to continue, or ask an admin to enable demo mode."
+          : msg,
+      );
+    } finally {
+      setDemoLoading(false);
+    }
+  }, [router]);
 
   const handleSaveCrm = useCallback(async () => {
     setSavingCrm(true);
@@ -236,7 +264,12 @@ export default function OnboardingWizard() {
 
         <div className="mt-8 rounded-2xl border border-zinc-800 bg-zinc-900/60 shadow-xl">
           {stepId === "welcome" && (
-            <WelcomeStep onNext={() => setStepId("crm")} />
+            <WelcomeStep
+              onNext={() => setStepId("crm")}
+              onTryDemo={handleTryDemo}
+              demoLoading={demoLoading}
+              demoError={demoError}
+            />
           )}
           {stepId === "crm" && (
             <CrmStep
@@ -428,12 +461,24 @@ function StepFooter({
 
 // ── Step 1: Welcome ──────────────────────────────────────────────────────
 
-function WelcomeStep({ onNext }: { onNext: () => void }) {
+interface WelcomeStepProps {
+  onNext: () => void;
+  onTryDemo: () => void;
+  demoLoading: boolean;
+  demoError: string | null;
+}
+
+function WelcomeStep({ onNext, onTryDemo, demoLoading, demoError }: WelcomeStepProps) {
   return (
     <div>
       <StepHeader
         title="Welcome to Revenue AI OS"
-        description="Five short steps. ~5 minutes. We'll connect your CRM, study your real data, and configure scoring and benchmarks tailored to your business."
+        // Phase 3 T2.5 — honest timing copy. Audit area J flagged the
+        // "5 minutes" claim as misleading for a real CRM-connected
+        // tenant. Two paths now live side by side: demo (≤ 5 min, no
+        // CRM) and real (15-30 min including sync + enrichment + ICP
+        // calibration).
+        description="Two ways to get going. Try the sample dataset for a cited answer in under 5 minutes — no CRM required. Or connect your CRM for a real run; allow 15-30 minutes including sync, enrichment, and ICP calibration."
       />
       <div className="grid gap-3 px-6 py-6 sm:grid-cols-2 sm:px-8">
         {[
@@ -453,11 +498,41 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           </div>
         ))}
       </div>
-      <StepFooter
-        hideBack
-        onNext={onNext}
-        nextLabel="Connect your CRM"
-      />
+      {demoError && (
+        <div
+          role="alert"
+          aria-live="polite"
+          className="mx-6 mb-3 rounded-md border border-amber-800/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200 sm:mx-8"
+        >
+          {demoError}
+        </div>
+      )}
+      <div className="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 px-6 py-4 sm:flex-row sm:items-center sm:px-8">
+        <button
+          type="button"
+          onClick={onTryDemo}
+          disabled={demoLoading}
+          className="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+        >
+          {demoLoading ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Loading sample data…
+            </>
+          ) : (
+            <>Try with sample data</>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={demoLoading}
+          className="inline-flex items-center justify-center gap-1.5 rounded-md bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
+        >
+          Connect your CRM
+          <ArrowRight className="size-4" />
+        </button>
+      </div>
     </div>
   );
 }
