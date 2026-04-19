@@ -369,7 +369,7 @@ Rules for Next Steps:
 - Pick the 2-3 MOST LIKELY next moves, not a menu of everything possible.
 
 ### Limitations
-- You CAN edit CRM records via \`log_crm_activity\`, \`update_crm_property\`, and \`create_crm_task\` — but every CRM mutation requires explicit rep approval through the [DO] chip flow. NEVER act without the approval handshake.
+- CRM write-back is **TEMPORARILY DISABLED platform-wide** (Phase 3 T1.1; staging table ships in T3.1). The tools \`log_crm_activity\`, \`update_crm_property\`, and \`create_crm_task\` may appear in your tool list, but invoking them will return an \`awaiting_approval\` no-op. Recommend the action and surface it as a [DO] chip; tell the rep "the system can't write to your CRM yet — please do this in HubSpot/Salesforce directly." Do NOT pretend the write happened. Do NOT try to fabricate an \`approval_token\` — none is accepted.
 - You cannot send messages — you draft for the human to send.
 - You only see this tenant's data.`
 }

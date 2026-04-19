@@ -111,7 +111,17 @@ describe('writeApprovalGate middleware', () => {
     expect((decision.result as { awaiting_approval?: boolean }).awaiting_approval).toBe(true)
   })
 
-  it('lets a write tool through when approval_token is present', async () => {
+  // Phase 3 T1.1 — fail-closed regression cases.
+  //
+  // The previous middleware implementation accepted ANY non-empty
+  // `approval_token` string as a valid approval. The handlers never
+  // validated the token and the nonce table that was supposed to back
+  // it was never built (audit area C, P0). The middleware now denies
+  // write tools unconditionally; the staging-table flow ships in T3.1.
+  // These cases pin the new contract so a future refactor cannot
+  // silently restore the bypass.
+
+  it('still denies a write tool when an approval_token is provided (T1.1)', async () => {
     const writeCtx = ctx('apply_icp_config', {
       registryRow: {
         slug: 'apply_icp_config',
@@ -129,9 +139,92 @@ describe('writeApprovalGate middleware', () => {
     })
     const decision = await writeApprovalGate.preToolUse!(writeCtx, {
       config: {},
-      approval_token: 'tok_abc',
+      approval_token: 'tok_abc', // would have bypassed under the old gate
     })
-    expect(decision.allow).toBe(true)
+    expect(decision.allow).toBe(false)
+    expect(decision.reason).toBe('write_temporarily_disabled')
+    expect(
+      (decision.result as { awaiting_approval?: boolean }).awaiting_approval,
+    ).toBe(true)
+  })
+
+  it('still denies even with a long, structured-looking token (T1.1)', async () => {
+    const writeCtx = ctx('log_crm_activity', {
+      registryRow: {
+        slug: 'log_crm_activity',
+        display_name: 'Log CRM Activity',
+        description: '',
+        available_to_roles: [],
+        enabled: true,
+        is_builtin: true,
+        tool_type: 'builtin',
+        execution_config: { mutates_crm: true } as Record<string, unknown>,
+        citation_config: null,
+        deprecated_at: null,
+        deprecation_replacement: null,
+      },
+    })
+    const decision = await writeApprovalGate.preToolUse!(writeCtx, {
+      target_urn: 'urn:rev:deal:abc',
+      activity_type: 'note',
+      body: 'Hello',
+      approval_token:
+        'pending_write_3f9d2c1a-7b4e-4a8f-9c3d-1e2f3a4b5c6d-signed-by-user-uuid',
+    })
+    expect(decision.allow).toBe(false)
+    expect(decision.reason).toBe('write_temporarily_disabled')
+  })
+
+  it('exposes the proposed_args back to the agent so the [DO] chip is informative', async () => {
+    const writeCtx = ctx('update_crm_property', {
+      registryRow: {
+        slug: 'update_crm_property',
+        display_name: 'Update CRM Property',
+        description: '',
+        available_to_roles: [],
+        enabled: true,
+        is_builtin: true,
+        tool_type: 'builtin',
+        execution_config: { mutates_crm: true } as Record<string, unknown>,
+        citation_config: null,
+        deprecated_at: null,
+        deprecation_replacement: null,
+      },
+    })
+    const args = {
+      target_urn: 'urn:rev:deal:abc',
+      property: 'dealstage',
+      value: 'Negotiation',
+    }
+    const decision = await writeApprovalGate.preToolUse!(writeCtx, args)
+    expect(decision.allow).toBe(false)
+    expect(
+      (decision.result as { proposed_args?: unknown }).proposed_args,
+    ).toEqual(args)
+    // The agent should be told to surface this as a [DO] chip and that
+    // CRM write-back is platform-disabled — not to fake an approval token.
+    expect(decision.additionalContext).toMatch(/temporarily DISABLED/i)
+    expect(decision.additionalContext).toMatch(/Do NOT.*fabricated approval_token/i)
+  })
+
+  it('also denies when execution_config marks is_write instead of mutates_crm', async () => {
+    const writeCtx = ctx('apply_funnel_config', {
+      registryRow: {
+        slug: 'apply_funnel_config',
+        display_name: 'Apply Funnel',
+        description: '',
+        available_to_roles: [],
+        enabled: true,
+        is_builtin: true,
+        tool_type: 'builtin',
+        execution_config: { is_write: true } as Record<string, unknown>,
+        citation_config: null,
+        deprecated_at: null,
+        deprecation_replacement: null,
+      },
+    })
+    const decision = await writeApprovalGate.preToolUse!(writeCtx, { config: {} })
+    expect(decision.allow).toBe(false)
   })
 })
 
