@@ -89,3 +89,18 @@ export type {
 // trigger-engine, and feedback-tracker were removed in B10 because nothing
 // in app code consumed them. Notification *types* (TriggerType,
 // NotificationAdapter, etc.) remain in `./types/notifications`.
+
+// Admin audit log — Phase 3 T2.1. Append-only record of every admin
+// write to a tenant config or proposal. Lives in `admin_audit_log`
+// (migration 011). Every admin write path that mutates tenant-visible
+// state should call `recordAdminAction` AFTER the underlying
+// mutation succeeds. Failures are warn-and-continue (audit is
+// load-bearing for trust, not for correctness).
+export {
+  recordAdminAction,
+  AUDIT_MAX_JSONB_BYTES,
+} from './audit'
+export type {
+  AdminActionSlug,
+  AdminAuditInput,
+} from './audit'

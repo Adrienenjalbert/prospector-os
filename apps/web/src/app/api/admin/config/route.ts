@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
+import { recordAdminAction } from '@prospector/core'
 
 // Cap the JSON blob written to `tenants.<config>_config` so a malformed
 // or malicious payload cannot bloat the row past Postgres's practical
@@ -180,6 +181,24 @@ export async function POST(req: Request) {
     const { config_type, config_data } = parsed.data
     const column = CONFIG_TYPE_TO_COLUMN[config_type]
 
+    // Phase 3 T2.1 — capture the prior value so the audit row can
+    // record before/after. The SELECT is best-effort: if it fails
+    // (RLS denial, transient), we still proceed with the UPDATE
+    // and record `before: null` rather than blocking the admin
+    // action on the audit-log infrastructure.
+    let previousValue: unknown = null
+    try {
+      const { data: prior } = await supabase
+        .from('tenants')
+        .select(column)
+        .eq('id', profile.tenant_id)
+        .single()
+      previousValue =
+        (prior as Record<string, unknown> | null)?.[column] ?? null
+    } catch (priorErr) {
+      console.warn('[admin/config] failed to read prior config for audit:', priorErr)
+    }
+
     const { error } = await supabase
       .from('tenants')
       .update({ [column]: config_data })
@@ -189,6 +208,19 @@ export async function POST(req: Request) {
       console.error('[admin/config]', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    // Audit AFTER the underlying mutation succeeds. Per the
+    // T2.1 contract: failures here are warn-and-continue; the
+    // admin action already happened.
+    void recordAdminAction(supabase, {
+      tenant_id: profile.tenant_id,
+      user_id: user.id,
+      action: 'config.upsert',
+      target: `tenants.${column}`,
+      before: previousValue,
+      after: config_data,
+      metadata: { config_type },
+    })
 
     return NextResponse.json({ ok: true })
   } catch (err) {

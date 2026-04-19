@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
+import { recordAdminAction } from '@prospector/core'
 
 function getServiceSupabase() {
   return createClient(
@@ -83,6 +84,23 @@ export async function POST(req: Request) {
           reviewed_at: new Date().toISOString(),
         })
         .eq('id', proposal_id)
+
+      // Phase 3 T2.1 — record the rejection. `before` is the
+      // proposal's full state (we already read it above to gate
+      // the action); `after` is null (rejection means no
+      // resulting state was applied).
+      void recordAdminAction(supabase, {
+        tenant_id: profile.tenant_id,
+        user_id: user.id,
+        action: 'calibration.reject',
+        target: `calibration_proposals[${proposal_id}]`,
+        before: proposal,
+        after: null,
+        metadata: {
+          proposal_id,
+          proposal_type: (proposal as { proposal_type?: string } | null)?.proposal_type,
+        },
+      })
 
       return NextResponse.json({ status: 'rejected' })
     }
@@ -191,6 +209,27 @@ export async function POST(req: Request) {
         applied_at: new Date().toISOString(),
       })
       .eq('id', proposal_id)
+
+    // Phase 3 T2.1 — record the approval in the admin audit log.
+    // before/after capture the proposal state at approval time so an
+    // auditor can answer "who approved this proposal, when, and what
+    // did the proposal contain at that moment?" without joining
+    // through calibration_ledger. The calibration_ledger entry above
+    // covers the deeper-history weight-change trail; this audit row
+    // covers the admin-action trail.
+    void recordAdminAction(supabase, {
+      tenant_id: profile.tenant_id,
+      user_id: user.id,
+      action: 'calibration.approve',
+      target: `calibration_proposals[${proposal_id}]`,
+      before: proposal,
+      after: { status: 'approved', applied_at: new Date().toISOString() },
+      metadata: {
+        proposal_id,
+        proposal_type: (proposal as { proposal_type?: string } | null)?.proposal_type,
+        config_type: (proposal as { config_type?: string } | null)?.config_type,
+      },
+    })
 
     return NextResponse.json({ status: 'approved' })
   } catch (err) {
