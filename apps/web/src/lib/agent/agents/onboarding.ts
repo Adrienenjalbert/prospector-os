@@ -2,37 +2,13 @@ import { z } from 'zod'
 import { tool } from 'ai'
 import { getServiceSupabase } from '../tools/shared'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
+import { resolveCredentials } from '@/lib/crypto'
 import {
   loadBusinessProfile,
   formatAgentHeader,
   formatBusinessContext,
   commonBehaviourRules,
 } from './_shared'
-
-/**
- * Resolve the CRM credentials column into a plain object.
- *
- * This is a known production failure mode the previous onboarding agent
- * stub silently triggered: `crm_credentials_encrypted` is a string
- * (AES-256-GCM ciphertext from `lib/crypto.ts`) when
- * `CREDENTIALS_ENCRYPTION_KEY` is set — the previous helper just
- * returned `{}` for strings, so every CRM tool call below ("explore
- * fields", "analyze accounts", etc.) ran against `null` adapter and
- * answered "No CRM connected" even after the user had completed the
- * onboarding wizard.
- *
- * Same pattern as `lib/onboarding/hubspot-webhooks.ts` and the cron
- * sync route — single source of truth lives in `lib/crypto.ts`.
- */
-function resolveCrmCredentials(raw: unknown): Record<string, string> {
-  if (!raw) return {}
-  if (isEncryptedString(raw)) {
-    return decryptCredentials(raw) as Record<string, string>
-  }
-  if (typeof raw === 'object') return raw as Record<string, string>
-  return {}
-}
 
 async function getCrmAdapter(supabase: ReturnType<typeof getServiceSupabase>, tenantId: string) {
   const { data: tenant } = await supabase
@@ -43,7 +19,22 @@ async function getCrmAdapter(supabase: ReturnType<typeof getServiceSupabase>, te
 
   if (!tenant?.crm_credentials_encrypted) return null
 
-  const creds = resolveCrmCredentials(tenant.crm_credentials_encrypted)
+  // Phase 3 T1.4 STRICT MODE — `resolveCredentials` throws on legacy
+  // plaintext / corrupt rows with an actionable message. The
+  // onboarding agent runs interactively; surfacing a thrown error
+  // would close the chat with no breadcrumb. Catch and return null
+  // so the agent's "no CRM connected" path applies, but log so the
+  // operator sees the migration prompt in server logs.
+  let creds: Record<string, string>
+  try {
+    creds = resolveCredentials(tenant.crm_credentials_encrypted)
+  } catch (err) {
+    console.warn(
+      `[onboarding-agent] credentials decrypt failed for tenant ${tenantId}:`,
+      err instanceof Error ? err.message : err,
+    )
+    return null
+  }
 
   if (tenant.crm_type === 'hubspot' && creds.private_app_token) {
     return {
