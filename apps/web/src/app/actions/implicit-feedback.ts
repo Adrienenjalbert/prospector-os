@@ -116,9 +116,16 @@ export async function recordAgentFeedback(
     // Propagate to tool priors: every tool called during this interaction
     // gets credited with the outcome. The tool bandit uses these posteriors
     // when ranking tools for future similar intents.
+    //
+    // T1.5 tenant-scoping linter: both reads include
+    // `.eq('tenant_id', ctx.tenant_id)` for defence-in-depth even
+    // though `interaction_id` is a UUID and a malicious cross-tenant
+    // probe would need to guess one. Cheap; explicit is better than
+    // implicit.
     const { data: started } = await supabase
       .from('agent_events')
       .select('payload')
+      .eq('tenant_id', ctx.tenant_id)
       .eq('interaction_id', interactionId)
       .eq('event_type', 'interaction_started')
       .limit(1)
@@ -130,6 +137,7 @@ export async function recordAgentFeedback(
     const { data: toolCalls } = await supabase
       .from('agent_events')
       .select('payload')
+      .eq('tenant_id', ctx.tenant_id)
       .eq('interaction_id', interactionId)
       .eq('event_type', 'tool_called')
 

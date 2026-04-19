@@ -178,10 +178,14 @@ export async function GET(req: Request) {
       })
 
       for (const company of companies) {
+        // T1.5 tenant-scoping linter: every per-company SELECT in the
+        // service-role cron path includes `.eq('tenant_id', tenant.id)`
+        // for defence-in-depth even though `company_id` is a FK to a
+        // tenant-scoped row upstream. Cheap belt-and-braces.
         const [contactsRes, signalsRes, oppsRes] = await Promise.all([
-          supabase.from('contacts').select('*').eq('company_id', company.id),
-          supabase.from('signals').select('*').eq('company_id', company.id),
-          supabase.from('opportunities').select('*').eq('company_id', company.id),
+          supabase.from('contacts').select('*').eq('tenant_id', tenant.id).eq('company_id', company.id),
+          supabase.from('signals').select('*').eq('tenant_id', tenant.id).eq('company_id', company.id),
+          supabase.from('opportunities').select('*').eq('tenant_id', tenant.id).eq('company_id', company.id),
         ])
 
         const activities = perCompanyActivities.get(company.id) ?? []
