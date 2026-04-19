@@ -19,6 +19,7 @@ import {
   runAttribution,
   runContextSliceCalibration,
   runChampionAlumniDetector,
+  runDataExport,
   type WorkflowRunRow,
 } from '@/lib/workflows'
 
@@ -80,6 +81,13 @@ export async function GET(req: Request) {
             break
           case 'champion_alumni_detector':
             await runChampionAlumniDetector(supabase, row.id)
+            break
+          case 'data_export':
+            // Phase 3 T2.3 — per-tenant data export. Triggered on
+            // demand by /api/admin/export rather than scheduled.
+            // The drain picks it up here whenever the next cron
+            // fires after the enqueue.
+            await runDataExport(supabase, row.id)
             break
           default:
             console.warn(
