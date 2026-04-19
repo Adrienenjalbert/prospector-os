@@ -88,10 +88,23 @@ export async function hasSubmittedBaseline(): Promise<boolean> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return false
 
+    // Pull tenant_id from the user's profile so the count is
+    // tenant-scoped — defence-in-depth even though `user_id` is
+    // already 1-to-1 with a tenant via auth. See T1.5 tenant-scoping
+    // linter; the rule is "every service-role query in a tenant-data
+    // table includes .eq('tenant_id', …)".
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('tenant_id')
+      .eq('id', user.id)
+      .single()
+    if (!profile?.tenant_id) return false
+
     const service = getServiceSupabase()
     const { count } = await service
       .from('tenant_baselines')
       .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', profile.tenant_id)
       .eq('user_id', user.id)
 
     return (count ?? 0) > 0

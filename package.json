@@ -15,6 +15,8 @@
     "validate:workflows:warn": "tsx scripts/validate-workflows.ts --warn",
     "validate:tools": "tsx scripts/validate-tools.ts",
     "validate:tools:warn": "tsx scripts/validate-tools.ts --warn",
+    "validate:tenant-scoping": "tsx scripts/validate-tenant-scoping.ts",
+    "validate:tenant-scoping:warn": "tsx scripts/validate-tenant-scoping.ts --warn",
     "evals": "npm run evals --workspace=@prospector/web",
     "evals:smoke": "npm run evals:smoke --workspace=@prospector/web"
   },
