@@ -279,13 +279,65 @@ from the optimiser drifting into a worse local minimum.
 - Every table has RLS. New tables inherit the `tenant_isolation` policy
   pattern from migration 002 — copy it verbatim.
 - CRM credentials are encrypted at rest in
-  `tenants.crm_credentials_encrypted` via `apps/web/src/lib/crypto.ts`.
+  `tenants.crm_credentials_encrypted` via `apps/web/src/lib/crypto.ts`
+  (use `resolveCredentials` — strict, no plaintext fallback; T1.4).
 - Webhooks must verify HMAC + check timestamp window (5 min) +
   store idempotency keys in `webhook_deliveries`.
 - Slack tokens come from `SLACK_BOT_TOKEN` env, never persisted in
   Postgres. Per-tenant tokens go in `tenants.business_config.slack_*`.
 - Service-role Supabase client is only used in server actions and API
   routes. Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.
+- Service-role Supabase queries are linted by
+  `scripts/validate-tenant-scoping.ts` (T1.5). Either the query
+  carries an explicit tenant filter, or the table is in the global
+  exempt list (`scripts/cross-tenant-allowlist.ts`), or the call
+  site is justified inline in the same allowlist file.
+- Per-tenant retention windows enforced nightly by the
+  `retention-sweep` workflow (T1.3). Defaults live in
+  `packages/core/src/retention/defaults.ts`; tenant overrides via
+  `/admin/config` → Retention tab and are **longer-only** (cannot
+  shorten platform default; cannot exceed the 7-year cap).
+- Untrusted free-text from external sources (transcripts, CRM
+  notes, conversation memory, etc.) is wrapped with the
+  `wrapUntrusted` helper from `@prospector/core` before it enters
+  any LLM prompt context (T1.2; gated by `SAFETY_UNTRUSTED_WRAPPER`
+  env, default on).
+- Every admin write to a tenant config or proposal records a row
+  in `admin_audit_log` (T2.1). Helper:
+  `recordAdminAction(supabase, { tenant_id, user_id, action,
+  target, before, after, metadata })`. Failures are warn-and-continue.
+
+### Sub-processor discipline
+
+Every external service we transmit tenant data to is documented in
+[`docs/security/sub-processors.md`](./security/sub-processors.md).
+Rules:
+
+- Adding, removing, or moving a vendor that touches tenant data
+  must update `sub-processors.md` **in the same PR** as the code
+  change.
+- New `packages/adapters/src/<vendor>/` folder without a
+  corresponding row in `sub-processors.md` is a process violation.
+  CI lint for this is on the security roadmap (deferred — not
+  built today; manual review at PR time until then).
+- DPA status changes (TBD → Signed; new region) update both
+  `sub-processors.md` and the prerequisite table in
+  [`docs/security/roadmap.md`](./security/roadmap.md).
+- The list also functions as the canonical answer to procurement
+  questionnaires — if a vendor is not on the list, we don't send
+  customer data to it.
+
+See [`docs/security/`](./security/) for the full set:
+
+- [`sub-processors.md`](./security/sub-processors.md) — vendor
+  list grounded in code paths.
+- [`roadmap.md`](./security/roadmap.md) — honest status of
+  enterprise-readiness items (SOC 2 path is gated on a named
+  first enterprise prospect — we do not start the observation
+  window speculatively).
+- [`incident-response.md`](./security/incident-response.md) —
+  severity ladder, rotation (TBD), runbooks backlog,
+  post-mortem template.
 
 ---
 
