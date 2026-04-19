@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { ExportPanel } from "@/components/admin/export-panel";
 
 type TabId = "icp" | "scoring" | "funnel" | "signals";
 
@@ -283,6 +284,11 @@ export function AdminConfigClient() {
           Save
         </button>
       </div>
+
+      {/* Phase 3 T2.3 — per-tenant data export. Lives below the
+          config tabs because it's a tenant-wide tool, not a
+          configurable property. */}
+      <ExportPanel />
     </div>
   );
 }
