@@ -81,7 +81,29 @@ describe('citationEnforcer middleware', () => {
   })
 })
 
-describe('writeApprovalGate middleware', () => {
+describe('writeApprovalGate middleware (Phase 3 T3.1 — repurposed)', () => {
+  /**
+   * Contract change in T3.1:
+   *
+   *   - `mutates_crm` is no longer the gate. The crm-write tools
+   *     (log_crm_activity / update_crm_property / create_crm_task)
+   *     now STAGE rows in `pending_crm_writes` and let the
+   *     /api/agent/approve endpoint perform the actual mutation.
+   *     They do NOT need a pre-flight gate anymore.
+   *
+   *   - The middleware is REPURPOSED to opt-in: a tool whose
+   *     execution_config has `requires_staging: true` (or the older
+   *     alias `legacy_approval_gate: true`) gets blocked with the
+   *     `awaiting_approval` shape. New tier-2 tools that haven't
+   *     adopted staging yet land in this bucket.
+   *
+   *   - `mutates_crm: true` alone is no longer enough to gate. A tool
+   *     that ships with `mutates_crm: true` but no `requires_staging`
+   *     runs through the gate as if it were any other tool. (The
+   *     intent is that the tool author HAS implemented staging in
+   *     the handler — we trust the handler.)
+   */
+
   it('allows non-write tools through unconditionally', async () => {
     const decision = await writeApprovalGate.preToolUse!(
       ctx('research_account'),
@@ -90,48 +112,98 @@ describe('writeApprovalGate middleware', () => {
     expect(decision.allow).toBe(true)
   })
 
-  it('blocks a write tool without an approval_token', async () => {
-    const writeCtx = ctx('apply_icp_config', {
+  it('allows a tool with mutates_crm: true but no staging gate (post-T3.1 default)', async () => {
+    // The crm-write tools land here after T3.1: their handlers
+    // self-stage. The middleware no longer blocks them.
+    const writeCtx = ctx('log_crm_activity', {
       registryRow: {
-        slug: 'apply_icp_config',
-        display_name: 'Apply ICP',
+        slug: 'log_crm_activity',
+        display_name: 'Log CRM Activity',
         description: '',
         available_to_roles: [],
         enabled: true,
         is_builtin: true,
         tool_type: 'builtin',
-        execution_config: { mutates_crm: true } as Record<string, unknown>,
-        citation_config: null,
-        deprecated_at: null,
-        deprecation_replacement: null,
-      },
-    })
-    const decision = await writeApprovalGate.preToolUse!(writeCtx, { config: {} })
-    expect(decision.allow).toBe(false)
-    expect((decision.result as { awaiting_approval?: boolean }).awaiting_approval).toBe(true)
-  })
-
-  it('lets a write tool through when approval_token is present', async () => {
-    const writeCtx = ctx('apply_icp_config', {
-      registryRow: {
-        slug: 'apply_icp_config',
-        display_name: 'Apply ICP',
-        description: '',
-        available_to_roles: [],
-        enabled: true,
-        is_builtin: true,
-        tool_type: 'builtin',
-        execution_config: { mutates_crm: true } as Record<string, unknown>,
+        execution_config: { stages_crm: true } as Record<string, unknown>,
         citation_config: null,
         deprecated_at: null,
         deprecation_replacement: null,
       },
     })
     const decision = await writeApprovalGate.preToolUse!(writeCtx, {
-      config: {},
-      approval_token: 'tok_abc',
+      target_urn: 'urn:rev:deal:abc',
+      activity_type: 'note',
+      body: 'test',
     })
     expect(decision.allow).toBe(true)
+  })
+
+  it('blocks a tool with requires_staging: true (legacy gate opt-in)', async () => {
+    const writeCtx = ctx('future_tier2_tool', {
+      registryRow: {
+        slug: 'future_tier2_tool',
+        display_name: 'Future Tier 2',
+        description: '',
+        available_to_roles: [],
+        enabled: true,
+        is_builtin: true,
+        tool_type: 'builtin',
+        execution_config: { requires_staging: true } as Record<string, unknown>,
+        citation_config: null,
+        deprecated_at: null,
+        deprecation_replacement: null,
+      },
+    })
+    const decision = await writeApprovalGate.preToolUse!(writeCtx, {})
+    expect(decision.allow).toBe(false)
+    expect((decision.result as { awaiting_approval?: boolean }).awaiting_approval).toBe(true)
+    expect(decision.reason).toBe('write_requires_staging')
+  })
+
+  it('blocks a tool with the legacy_approval_gate alias', async () => {
+    const writeCtx = ctx('legacy_tool', {
+      registryRow: {
+        slug: 'legacy_tool',
+        display_name: 'Legacy Tool',
+        description: '',
+        available_to_roles: [],
+        enabled: true,
+        is_builtin: true,
+        tool_type: 'builtin',
+        execution_config: { legacy_approval_gate: true } as Record<string, unknown>,
+        citation_config: null,
+        deprecated_at: null,
+        deprecation_replacement: null,
+      },
+    })
+    const decision = await writeApprovalGate.preToolUse!(writeCtx, {})
+    expect(decision.allow).toBe(false)
+  })
+
+  it('ignores approval_token entirely (it is no longer the auth surface)', async () => {
+    // T3.1 explicitly removes the approval_token mechanism.
+    // Passing one to a non-staging-aware tool with the legacy gate
+    // does NOT bypass the gate — the staging table is the only
+    // approval surface.
+    const writeCtx = ctx('legacy_tool', {
+      registryRow: {
+        slug: 'legacy_tool',
+        display_name: 'Legacy Tool',
+        description: '',
+        available_to_roles: [],
+        enabled: true,
+        is_builtin: true,
+        tool_type: 'builtin',
+        execution_config: { requires_staging: true } as Record<string, unknown>,
+        citation_config: null,
+        deprecated_at: null,
+        deprecation_replacement: null,
+      },
+    })
+    const decision = await writeApprovalGate.preToolUse!(writeCtx, {
+      approval_token: 'tok_abc_forged',
+    })
+    expect(decision.allow).toBe(false)
   })
 })
 

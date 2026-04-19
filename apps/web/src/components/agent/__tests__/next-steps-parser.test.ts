@@ -104,6 +104,59 @@ describe('parseNextSteps', () => {
     const out = parseNextSteps(md)
     expect(out).toEqual([{ kind: 'ASK', text: 'lowercase tag' }])
   })
+
+  // Phase 3 T3.1 — pending_id extraction. The agent appends
+  // `(pending: <uuid>)` to a [DO] chip so the click handler can
+  // POST the staged write to /api/agent/approve directly.
+  it('extracts a pending_id from a [DO] chip suffix', () => {
+    const md = `## Next Steps
+- [DO] Log call note on Acme (pending: 550e8400-e29b-41d4-a716-446655440000)`
+    const out = parseNextSteps(md)
+    expect(out).toEqual([
+      {
+        kind: 'DO',
+        text: 'Log call note on Acme',
+        pendingId: '550e8400-e29b-41d4-a716-446655440000',
+      },
+    ])
+  })
+
+  it('strips the pending suffix even when wrapped in extra whitespace', () => {
+    const md = `## Next Steps
+- [DO] Set dealstage = "Negotiation"   (pending:   550e8400-e29b-41d4-a716-446655440000  )`
+    const out = parseNextSteps(md)
+    expect(out[0]?.text).toBe('Set dealstage = "Negotiation"')
+    expect(out[0]?.pendingId).toBe('550e8400-e29b-41d4-a716-446655440000')
+  })
+
+  it('omits pendingId when the chip has no suffix', () => {
+    const md = `## Next Steps
+- [DO] Call John Tuesday`
+    const out = parseNextSteps(md)
+    expect(out).toEqual([{ kind: 'DO', text: 'Call John Tuesday' }])
+    expect((out[0] as ParsedAction).pendingId).toBeUndefined()
+  })
+
+  it('does not extract a pending_id from an ASK chip (defensive — strips suffix anyway)', () => {
+    // Agents that mis-tag a write as ASK shouldn't leak the
+    // suffix into the visible chip text. The parser strips it
+    // defensively from any kind.
+    const md = `## Next Steps
+- [ASK] What stage should Acme move to (pending: 550e8400-e29b-41d4-a716-446655440000)`
+    const out = parseNextSteps(md)
+    expect(out[0]?.text).toBe('What stage should Acme move to')
+    // pendingId IS extracted but the chip handler ignores it for non-DO kinds.
+    expect(out[0]?.pendingId).toBe('550e8400-e29b-41d4-a716-446655440000')
+  })
+
+  it('ignores malformed pending suffixes (not 36-char uuid)', () => {
+    const md = `## Next Steps
+- [DO] Log note (pending: not-a-uuid)`
+    const out = parseNextSteps(md)
+    // Suffix didn't match the UUID regex; treated as part of text.
+    expect(out[0]?.text).toBe('Log note (pending: not-a-uuid)')
+    expect(out[0]?.pendingId).toBeUndefined()
+  })
 })
 
 describe('buildClickPrompt — DO confirmation framing (BLOCKER fix)', () => {

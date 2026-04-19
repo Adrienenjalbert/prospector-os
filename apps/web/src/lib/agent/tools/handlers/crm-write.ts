@@ -1,152 +1,206 @@
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { HubSpotAdapter } from '@prospector/adapters'
 import { parseUrn } from '@prospector/core'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import type { ToolHandler } from '../../tool-loader'
 
 /**
- * CRM write-back tools — Phase 3.6. Three sibling tools that close the
- * recommendation→action loop:
+ * CRM write-back tools — Phase 3 T3.1 (rewrite of original Phase 3.6).
  *
- *   - log_crm_activity     — drop a note/call/email/meeting record on a
- *                            deal/company/contact.
- *   - update_crm_property  — set one property on a deal/company/contact.
- *   - create_crm_task      — schedule a follow-up task with optional
- *                            owner + due date + association.
+ * The agent path NEVER calls HubSpot directly anymore. Instead, every
+ * write-back tool STAGES a row in `pending_crm_writes` and returns
+ * `{ pending_id, status: 'pending', summary }` to the agent. The
+ * agent surfaces the proposal as a `[DO]` chip; the rep clicks it;
+ * `/api/agent/approve` flips the row to `approved` + executes the
+ * actual HubSpot call via `lib/crm-writes/executor.ts`.
  *
- * All three are marked `mutates_crm: true` in the tool_registry seed so
- * the existing `writeApprovalGate` middleware blocks the call until the
- * agent re-invokes it with an `approval_token` argument. The agent
- * surfaces the first call as a `[DO]` chip; the rep clicks it; the
- * SuggestedActions UI re-invokes with a token.
+ * Why STAGE-only?
  *
- * Each tool returns a citation pointing at the just-written CRM record
- * so the next turn's `current-deal-health` slice already shows the
- * change. Cite-or-shut-up holds: every claim about a CRM mutation
- * cites the URN of what was mutated.
+ *   - **Trust boundary.** Before T3.1 the model literally held the
+ *     ability to mutate CRM state mid-turn (gated only by a
+ *     pre-flight middleware that checked for an `approval_token`
+ *     argument — and the model could fabricate that token). T1.1
+ *     fail-closed-everywhere fixed the symptom; T3.1 fixes the cause:
+ *     the staging table is the architectural enforcement.
  *
- * Salesforce parity is deferred — the adapter interface is in place but
- * SalesforceAdapter doesn't yet have `createEngagement`/`createTask`.
- * The tools error out cleanly on Salesforce tenants for now.
+ *   - **Auditability.** Every staged row is a durable record of "the
+ *     model proposed this write at this time on behalf of this user
+ *     in this conversation". Approvals + executions persist on the
+ *     same row. A future auditor reads `pending_crm_writes` joined
+ *     with `admin_audit_log` to reconstruct any mutation.
+ *
+ *   - **Reversibility.** A `pending` or `approved` row that hasn't
+ *     executed yet can be cancelled by the rep / by an admin / by the
+ *     24h TTL — without ever touching HubSpot.
+ *
+ *   - **Decoupling.** The executor moved to `lib/crm-writes/executor.ts`
+ *     so a future cron retry path can re-run failed approvals
+ *     without rebuilding the agent context.
+ *
+ * Each handler returns a citation pointing at the **pending row** so
+ * the agent can quote it back ("staged write #abc"). After approval,
+ * the approve endpoint's response cites the actual CRM record id.
+ *
+ * Salesforce parity is still deferred — the staging path is
+ * provider-agnostic but `executor.ts` only knows HubSpot today.
  */
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-interface ResolvedTarget {
-  /** Canonical URN string (returned in citations). */
-  urn: string
-  /** Canonical Postgres id for tenant-scoped queries. */
-  id: string
-  /** HubSpot record id (the value the API expects in URLs). */
-  crmId: string | null
-  type: 'company' | 'deal' | 'contact'
+/** Cap on the JSONB blob we'll persist as `proposed_args`. Mirrors the
+ *  admin-config payload cap; protects the table from a malicious or
+ *  runaway prompt staging a megabyte of garbage. */
+const MAX_PROPOSED_ARGS_BYTES = 64 * 1024
+
+interface StageInput {
+  supabase: SupabaseClient
+  tenantId: string
+  userId: string | null
+  interactionId: string | null
+  toolSlug: string
+  targetUrn: string
+  proposedArgs: Record<string, unknown>
+  /** Human-readable summary for the agent + chip text. */
+  summary: string
 }
 
-type ResolveResult =
-  | { ok: true; target: ResolvedTarget }
-  | { ok: false; error: string }
-
-async function resolveTarget(
-  supabase: SupabaseClient,
-  tenantId: string,
-  rawUrn: string,
-): Promise<ResolveResult> {
-  const parsed = parseUrn(rawUrn)
-  if (!parsed) return { ok: false, error: `Invalid URN: ${rawUrn}` }
-
-  if (parsed.type === 'company') {
-    const { data } = await supabase
-      .from('companies')
-      .select('id, crm_id')
-      .eq('tenant_id', tenantId)
-      .eq('id', parsed.id)
-      .maybeSingle()
-    if (!data) return { ok: false, error: `Company ${parsed.id} not found` }
-    return {
-      ok: true,
-      target: { urn: rawUrn, id: data.id, crmId: data.crm_id, type: 'company' },
-    }
-  }
-  if (parsed.type === 'deal' || parsed.type === 'opportunity') {
-    const { data } = await supabase
-      .from('opportunities')
-      .select('id, crm_id')
-      .eq('tenant_id', tenantId)
-      .eq('id', parsed.id)
-      .maybeSingle()
-    if (!data) return { ok: false, error: `Deal ${parsed.id} not found` }
-    return {
-      ok: true,
-      target: { urn: rawUrn, id: data.id, crmId: data.crm_id, type: 'deal' },
-    }
-  }
-  if (parsed.type === 'contact') {
-    const { data } = await supabase
-      .from('contacts')
-      .select('id, crm_id')
-      .eq('tenant_id', tenantId)
-      .eq('id', parsed.id)
-      .maybeSingle()
-    if (!data) return { ok: false, error: `Contact ${parsed.id} not found` }
-    return {
-      ok: true,
-      target: { urn: rawUrn, id: data.id, crmId: data.crm_id, type: 'contact' },
-    }
-  }
-  return { ok: false, error: `Unsupported URN type: ${parsed.type}` }
+interface StageOutput {
+  pending_id: string
+  status: 'pending'
+  summary: string
+  expires_at: string
+  /** Hint for the agent — what UI affordance to surface. */
+  next_action: string
 }
 
-type CrmClient =
-  | { ok: true; client: HubSpotAdapter }
-  | { ok: false; error: string }
+/**
+ * The shared staging helper. Validates the URN, ensures the target
+ * exists in this tenant, caps the args size, and inserts the row.
+ * Returns either the staged shape or a tool-shaped `{ data, error,
+ * citations }` so the handlers can short-circuit.
+ */
+async function stagePendingWrite(
+  input: StageInput,
+): Promise<{ ok: true; row: StageOutput } | { ok: false; error: string }> {
+  // URN parse + tenant-scoped existence check. Without this, a
+  // malicious prompt could stage a write against a deal id that
+  // belongs to another tenant; the executor would catch it at
+  // approval time, but better to fail at staging.
+  const parsed = parseUrn(input.targetUrn)
+  if (!parsed) return { ok: false, error: `Invalid URN: ${input.targetUrn}` }
 
-async function getCrmClient(
-  supabase: SupabaseClient,
-  tenantId: string,
-): Promise<CrmClient> {
-  const { data: tenant, error } = await supabase
-    .from('tenants')
-    .select('crm_type, crm_credentials_encrypted')
-    .eq('id', tenantId)
-    .single()
-  if (error || !tenant) {
-    return { ok: false, error: 'Tenant not found' }
+  const table =
+    parsed.type === 'company'
+      ? 'companies'
+      : parsed.type === 'deal' || parsed.type === 'opportunity'
+        ? 'opportunities'
+        : parsed.type === 'contact'
+          ? 'contacts'
+          : null
+
+  if (!table) {
+    return { ok: false, error: `Unsupported URN type for write: ${parsed.type}` }
   }
-  if (tenant.crm_type !== 'hubspot') {
-    // Salesforce write parity is on the Phase-4 list. Tools error cleanly
-    // until then so the agent surfaces the limitation honestly.
+
+  const { data: target, error: targetErr } = await input.supabase
+    .from(table)
+    .select('id, crm_id')
+    .eq('tenant_id', input.tenantId)
+    .eq('id', parsed.id)
+    .maybeSingle()
+  if (targetErr) {
+    return { ok: false, error: `Lookup failed: ${targetErr.message}` }
+  }
+  if (!target) {
+    return { ok: false, error: `${parsed.type} ${parsed.id} not found in this tenant` }
+  }
+
+  // Size cap. JSON.stringify is the cheap way to measure JSONB size.
+  let argsBytes = 0
+  try {
+    argsBytes = JSON.stringify(input.proposedArgs).length
+  } catch {
+    return { ok: false, error: 'proposed_args is not JSON-serialisable' }
+  }
+  if (argsBytes > MAX_PROPOSED_ARGS_BYTES) {
     return {
       ok: false,
-      error: `CRM write-back tools currently only support HubSpot tenants (got ${tenant.crm_type}). Salesforce parity is on the roadmap.`,
+      error: `proposed_args too large (${argsBytes} bytes; cap ${MAX_PROPOSED_ARGS_BYTES})`,
     }
   }
-  const rawCreds = (tenant as { crm_credentials_encrypted: unknown })
-    .crm_credentials_encrypted
-  if (!rawCreds) {
-    return { ok: false, error: 'CRM credentials missing for this tenant' }
+
+  const { data: row, error: insertErr } = await input.supabase
+    .from('pending_crm_writes')
+    .insert({
+      tenant_id: input.tenantId,
+      requested_by_user_id: input.userId,
+      agent_interaction_id: input.interactionId,
+      tool_slug: input.toolSlug,
+      target_urn: input.targetUrn,
+      proposed_args: input.proposedArgs,
+      // status defaults to 'pending'; expires_at defaults to NOW + 24h.
+    })
+    .select('id, expires_at')
+    .single()
+
+  if (insertErr || !row) {
+    return {
+      ok: false,
+      error: `Could not stage write: ${insertErr?.message ?? 'unknown error'}`,
+    }
   }
-  const creds = isEncryptedString(rawCreds)
-    ? (decryptCredentials(rawCreds) as Record<string, string>)
-    : (rawCreds as Record<string, string>)
-  if (!creds.private_app_token) {
-    return { ok: false, error: 'HubSpot private_app_token missing' }
+
+  return {
+    ok: true,
+    row: {
+      pending_id: row.id as string,
+      status: 'pending',
+      summary: input.summary,
+      expires_at: row.expires_at as string,
+      next_action: `Surface this proposal to the user as a [DO] chip with text: "${input.summary}". On click, POST { pending_id: "${row.id}" } to /api/agent/approve.`,
+    },
   }
-  return { ok: true, client: new HubSpotAdapter({ private_app_token: creds.private_app_token }) }
+}
+
+/**
+ * Build the citations a staging tool returns. Always cites the
+ * pending row + the target object — the citation enforcer middleware
+ * needs at least one citation, and these are the two URNs the agent
+ * can verify in its next turn.
+ */
+function stagingCitations(
+  pendingId: string,
+  targetUrn: string,
+  type: string,
+): Array<{
+  claim_text: string
+  source_type: string
+  source_id?: string
+  source_url?: string
+}> {
+  return [
+    {
+      claim_text: 'Staged write awaiting approval',
+      source_type: 'pending_crm_write',
+      source_id: pendingId,
+    },
+    {
+      claim_text: `Target ${type}`,
+      source_type: type,
+      source_id: parseUrn(targetUrn)?.id,
+    },
+  ]
 }
 
 // ---------------------------------------------------------------------------
-// log_crm_activity
+// log_crm_activity — STAGE only
 // ---------------------------------------------------------------------------
 
 export const logCrmActivitySchema = z.object({
   target_urn: z
     .string()
-    .describe(
-      'URN of the deal/company/contact to associate the engagement with (e.g. urn:rev:deal:abc).',
-    ),
+    .describe('URN of the deal/company/contact to associate the engagement with (e.g. urn:rev:deal:abc).'),
   activity_type: z
     .enum(['note', 'call', 'email', 'meeting'])
     .describe('Engagement type — note is the safe default for written observations.'),
@@ -158,10 +212,15 @@ export const logCrmActivitySchema = z.object({
     .number()
     .optional()
     .describe('Optional duration for calls/meetings.'),
+  // Phase 3 T3.1 — `approval_token` is no longer accepted. The
+  // staging→approval split makes it obsolete; left as an optional
+  // ignored field for one release so older agent prompts don't hard-
+  // fail at validation. Remove in T3.2 once all agents have rolled
+  // over to the new shape.
   approval_token: z
     .string()
     .optional()
-    .describe('Approval token from the [DO] chip. The first invocation returns awaiting_approval; the rep clicks the chip; the UI re-invokes with this token.'),
+    .describe('DEPRECATED. Ignored. The staging→approval split replaces the token mechanism.'),
 })
 
 export const logCrmActivityHandler: ToolHandler = {
@@ -170,76 +229,44 @@ export const logCrmActivityHandler: ToolHandler = {
   build: (ctx) => async (rawArgs) => {
     const args = rawArgs as z.infer<typeof logCrmActivitySchema>
 
-    const targetRes = await resolveTarget(ctx.supabase, ctx.tenantId, args.target_urn)
-    if (!targetRes.ok) return { data: null, error: targetRes.error, citations: [] }
-    const { target } = targetRes
-    if (!target.crmId) {
-      return {
-        data: null,
-        error: `Target ${target.urn} has no crm_id — record not synced from CRM yet`,
-        citations: [],
-      }
+    const summary = `${args.activity_type === 'note' ? 'Note' : args.activity_type[0].toUpperCase() + args.activity_type.slice(1)} on ${args.target_urn}: ${args.body.slice(0, 80)}${args.body.length > 80 ? '…' : ''}`
+
+    const staged = await stagePendingWrite({
+      supabase: ctx.supabase,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId ?? null,
+      interactionId: ctx.interactionId ?? null,
+      toolSlug: 'log_crm_activity',
+      targetUrn: args.target_urn,
+      proposedArgs: {
+        activity_type: args.activity_type,
+        body: args.body,
+        duration_minutes: args.duration_minutes ?? null,
+      },
+      summary,
+    })
+
+    if (!staged.ok) {
+      return { data: null, error: staged.error, citations: [] }
     }
 
-    const crmRes = await getCrmClient(ctx.supabase, ctx.tenantId)
-    if (!crmRes.ok) return { data: null, error: crmRes.error, citations: [] }
-
-    const associations = {
-      companyId: target.type === 'company' ? target.crmId : undefined,
-      dealId: target.type === 'deal' ? target.crmId : undefined,
-      contactId: target.type === 'contact' ? target.crmId : undefined,
-    }
-
-    const extra: Record<string, unknown> = {}
-    if (args.duration_minutes && (args.activity_type === 'call' || args.activity_type === 'meeting')) {
-      extra[`hs_${args.activity_type}_duration`] = args.duration_minutes * 60_000
-    }
-
-    try {
-      const newId = await crmRes.client.createEngagement(
-        args.activity_type,
-        args.body,
-        associations,
-        extra,
-      )
-      return {
-        data: {
-          activity_type: args.activity_type,
-          target_urn: target.urn,
-          new_record_id: newId,
-        },
-        citations: [
-          {
-            claim_text: `${args.activity_type} logged on ${target.type}`,
-            source_type: args.activity_type,
-            source_id: newId,
-            source_url: HubSpotAdapter.buildRecordUrl(args.activity_type as 'note', newId),
-          },
-          {
-            claim_text: `Target ${target.type}`,
-            source_type: target.type,
-            source_id: target.id,
-          },
-        ],
-      }
-    } catch (err) {
-      return {
-        data: null,
-        error: `HubSpot createEngagement failed: ${err instanceof Error ? err.message : String(err)}`,
-        citations: [],
-      }
+    return {
+      data: staged.row,
+      citations: stagingCitations(
+        staged.row.pending_id,
+        args.target_urn,
+        parseUrn(args.target_urn)?.type ?? 'unknown',
+      ),
     }
   },
 }
 
 // ---------------------------------------------------------------------------
-// update_crm_property
+// update_crm_property — STAGE only
 // ---------------------------------------------------------------------------
 
 export const updateCrmPropertySchema = z.object({
-  target_urn: z
-    .string()
-    .describe('URN of the deal/company/contact to update.'),
+  target_urn: z.string().describe('URN of the deal/company/contact to update.'),
   property: z
     .string()
     .min(1)
@@ -247,7 +274,7 @@ export const updateCrmPropertySchema = z.object({
   value: z
     .union([z.string(), z.number(), z.boolean(), z.null()])
     .describe('New value. Strings/numbers go through unchanged; null clears the property.'),
-  approval_token: z.string().optional(),
+  approval_token: z.string().optional().describe('DEPRECATED. Ignored.'),
 })
 
 export const updateCrmPropertyHandler: ToolHandler = {
@@ -256,54 +283,45 @@ export const updateCrmPropertyHandler: ToolHandler = {
   build: (ctx) => async (rawArgs) => {
     const args = rawArgs as z.infer<typeof updateCrmPropertySchema>
 
-    const targetRes = await resolveTarget(ctx.supabase, ctx.tenantId, args.target_urn)
-    if (!targetRes.ok) return { data: null, error: targetRes.error, citations: [] }
-    const { target } = targetRes
-    if (!target.crmId) {
-      return {
-        data: null,
-        error: `Target ${target.urn} has no crm_id — record not synced from CRM yet`,
-        citations: [],
-      }
+    const valueText =
+      args.value === null
+        ? '(clear)'
+        : typeof args.value === 'string'
+          ? `"${args.value.slice(0, 60)}"`
+          : String(args.value)
+    const summary = `Set ${args.property} = ${valueText} on ${args.target_urn}`
+
+    const staged = await stagePendingWrite({
+      supabase: ctx.supabase,
+      tenantId: ctx.tenantId,
+      userId: ctx.userId ?? null,
+      interactionId: ctx.interactionId ?? null,
+      toolSlug: 'update_crm_property',
+      targetUrn: args.target_urn,
+      proposedArgs: {
+        property: args.property,
+        value: args.value,
+      },
+      summary,
+    })
+
+    if (!staged.ok) {
+      return { data: null, error: staged.error, citations: [] }
     }
 
-    const crmRes = await getCrmClient(ctx.supabase, ctx.tenantId)
-    if (!crmRes.ok) return { data: null, error: crmRes.error, citations: [] }
-
-    const entityKey = target.type === 'deal' ? 'deals' : target.type === 'company' ? 'companies' : 'contacts'
-
-    try {
-      await crmRes.client.write(entityKey, {
-        id: target.crmId,
-        [args.property]: args.value,
-      })
-      return {
-        data: {
-          target_urn: target.urn,
-          property: args.property,
-          value: args.value,
-        },
-        citations: [
-          {
-            claim_text: `${target.type} property update: ${args.property}`,
-            source_type: target.type,
-            source_id: target.id,
-            source_url: HubSpotAdapter.buildRecordUrl(target.type, target.crmId),
-          },
-        ],
-      }
-    } catch (err) {
-      return {
-        data: null,
-        error: `HubSpot property update failed: ${err instanceof Error ? err.message : String(err)}`,
-        citations: [],
-      }
+    return {
+      data: staged.row,
+      citations: stagingCitations(
+        staged.row.pending_id,
+        args.target_urn,
+        parseUrn(args.target_urn)?.type ?? 'unknown',
+      ),
     }
   },
 }
 
 // ---------------------------------------------------------------------------
-// create_crm_task
+// create_crm_task — STAGE only
 // ---------------------------------------------------------------------------
 
 export const createCrmTaskSchema = z.object({
@@ -321,7 +339,7 @@ export const createCrmTaskSchema = z.object({
     .string()
     .optional()
     .describe('Optional URN to associate the task with (deal/company/contact).'),
-  approval_token: z.string().optional(),
+  approval_token: z.string().optional().describe('DEPRECATED. Ignored.'),
 })
 
 export const createCrmTaskHandler: ToolHandler = {
@@ -330,86 +348,147 @@ export const createCrmTaskHandler: ToolHandler = {
   build: (ctx) => async (rawArgs) => {
     const args = rawArgs as z.infer<typeof createCrmTaskSchema>
 
-    let association:
-      | { type: 'deal'; crmId: string; id: string; urn: string }
-      | { type: 'company'; crmId: string; id: string; urn: string }
-      | { type: 'contact'; crmId: string; id: string; urn: string }
-      | null = null
+    // create_crm_task doesn't have an obvious `target_urn` — its
+    // primary effect is a standalone task. We use `related_to_urn`
+    // when present, otherwise stage with a synthetic
+    // `urn:rev:tenant:<id>` that the executor will treat as "no
+    // association". Synthetic URN keeps the NOT NULL constraint
+    // happy without polluting the namespace.
+    const targetUrn =
+      args.related_to_urn ?? `urn:rev:standalone:task:${ctx.tenantId}`
+
+    const summary = `Create task "${args.subject.slice(0, 60)}"${
+      args.due_date_iso ? ` due ${args.due_date_iso.slice(0, 10)}` : ''
+    }${args.related_to_urn ? ` on ${args.related_to_urn}` : ''}`
+
+    // Tasks with no related_to_urn skip the tenant-scoped target
+    // existence check — the synthetic URN doesn't refer to a real
+    // object. We still validate any provided related_to_urn via the
+    // helper.
     if (args.related_to_urn) {
-      const targetRes = await resolveTarget(
-        ctx.supabase,
-        ctx.tenantId,
-        args.related_to_urn,
-      )
-      if (!targetRes.ok) {
-        return { data: null, error: targetRes.error, citations: [] }
-      }
-      if (!targetRes.target.crmId) {
+      const parsed = parseUrn(args.related_to_urn)
+      if (!parsed) {
         return {
           data: null,
-          error: `Target ${targetRes.target.urn} has no crm_id`,
+          error: `Invalid related_to_urn: ${args.related_to_urn}`,
           citations: [],
         }
       }
-      association = {
-        type: targetRes.target.type,
-        crmId: targetRes.target.crmId,
-        id: targetRes.target.id,
-        urn: targetRes.target.urn,
-      }
     }
 
-    const crmRes = await getCrmClient(ctx.supabase, ctx.tenantId)
-    if (!crmRes.ok) return { data: null, error: crmRes.error, citations: [] }
-
-    try {
-      const newId = await crmRes.client.createTask({
-        subject: args.subject,
-        body: args.body,
-        dueDate: args.due_date_iso,
-        priority: args.priority ?? 'MEDIUM',
-        companyId: association?.type === 'company' ? association.crmId : undefined,
-        dealId: association?.type === 'deal' ? association.crmId : undefined,
-        contactId: association?.type === 'contact' ? association.crmId : undefined,
-      })
-
-      const citations: Array<{
-        claim_text: string
-        source_type: string
-        source_id?: string
-        source_url?: string
-      }> = [
-        {
-          claim_text: `Task created: ${args.subject}`,
-          source_type: 'task',
-          source_id: newId,
-          source_url: HubSpotAdapter.buildRecordUrl('task', newId),
-        },
-      ]
-      if (association) {
-        citations.push({
-          claim_text: `Associated ${association.type}`,
-          source_type: association.type,
-          source_id: association.id,
+    const staged = args.related_to_urn
+      ? await stagePendingWrite({
+          supabase: ctx.supabase,
+          tenantId: ctx.tenantId,
+          userId: ctx.userId ?? null,
+          interactionId: ctx.interactionId ?? null,
+          toolSlug: 'create_crm_task',
+          targetUrn: args.related_to_urn,
+          proposedArgs: {
+            subject: args.subject,
+            body: args.body ?? null,
+            due_date_iso: args.due_date_iso ?? null,
+            priority: args.priority ?? 'MEDIUM',
+            related_to_urn: args.related_to_urn,
+          },
+          summary,
         })
-      }
+      : await stageStandaloneTask({
+          supabase: ctx.supabase,
+          tenantId: ctx.tenantId,
+          userId: ctx.userId ?? null,
+          interactionId: ctx.interactionId ?? null,
+          targetUrn,
+          proposedArgs: {
+            subject: args.subject,
+            body: args.body ?? null,
+            due_date_iso: args.due_date_iso ?? null,
+            priority: args.priority ?? 'MEDIUM',
+            related_to_urn: null,
+          },
+          summary,
+        })
 
-      return {
-        data: {
-          subject: args.subject,
-          new_record_id: newId,
-          related_to_urn: association?.urn ?? null,
-          due_date_iso: args.due_date_iso ?? null,
-          priority: args.priority ?? 'MEDIUM',
+    if (!staged.ok) {
+      return { data: null, error: staged.error, citations: [] }
+    }
+
+    return {
+      data: staged.row,
+      citations: [
+        {
+          claim_text: 'Staged task awaiting approval',
+          source_type: 'pending_crm_write',
+          source_id: staged.row.pending_id,
         },
-        citations,
-      }
-    } catch (err) {
-      return {
-        data: null,
-        error: `HubSpot createTask failed: ${err instanceof Error ? err.message : String(err)}`,
-        citations: [],
-      }
+        ...(args.related_to_urn
+          ? [
+              {
+                claim_text: `Associated ${parseUrn(args.related_to_urn)?.type ?? 'object'}`,
+                source_type: parseUrn(args.related_to_urn)?.type ?? 'unknown',
+                source_id: parseUrn(args.related_to_urn)?.id,
+              },
+            ]
+          : []),
+      ],
     }
   },
+}
+
+/**
+ * Stage a standalone task that has no related_to_urn. Bypasses the
+ * tenant-scoped target existence check (there is no target).
+ */
+async function stageStandaloneTask(input: {
+  supabase: SupabaseClient
+  tenantId: string
+  userId: string | null
+  interactionId: string | null
+  targetUrn: string
+  proposedArgs: Record<string, unknown>
+  summary: string
+}): Promise<{ ok: true; row: StageOutput } | { ok: false; error: string }> {
+  let argsBytes = 0
+  try {
+    argsBytes = JSON.stringify(input.proposedArgs).length
+  } catch {
+    return { ok: false, error: 'proposed_args is not JSON-serialisable' }
+  }
+  if (argsBytes > MAX_PROPOSED_ARGS_BYTES) {
+    return {
+      ok: false,
+      error: `proposed_args too large (${argsBytes} bytes; cap ${MAX_PROPOSED_ARGS_BYTES})`,
+    }
+  }
+
+  const { data: row, error } = await input.supabase
+    .from('pending_crm_writes')
+    .insert({
+      tenant_id: input.tenantId,
+      requested_by_user_id: input.userId,
+      agent_interaction_id: input.interactionId,
+      tool_slug: 'create_crm_task',
+      target_urn: input.targetUrn,
+      proposed_args: input.proposedArgs,
+    })
+    .select('id, expires_at')
+    .single()
+
+  if (error || !row) {
+    return {
+      ok: false,
+      error: `Could not stage standalone task: ${error?.message ?? 'unknown error'}`,
+    }
+  }
+
+  return {
+    ok: true,
+    row: {
+      pending_id: row.id as string,
+      status: 'pending',
+      summary: input.summary,
+      expires_at: row.expires_at as string,
+      next_action: `Surface this proposal to the user as a [DO] chip with text: "${input.summary}". On click, POST { pending_id: "${row.id}" } to /api/agent/approve.`,
+    },
+  }
 }

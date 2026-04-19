@@ -570,10 +570,15 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     slug: 'log_crm_activity',
     display_name: 'Log CRM Activity',
     description:
-      "Create a HubSpot engagement (note/call/email/meeting) on a deal/company/contact. Use when the rep wants the agent to log an observation, call summary, or meeting notes back to the CRM. Marked mutates_crm so the writeApprovalGate middleware blocks the first invocation and surfaces a [DO] chip — the rep clicks to approve, the UI re-invokes with an approval_token. Returns a citation pointing at the new HubSpot record so the rep can verify in one click.",
+      "STAGE a HubSpot engagement (note/call/email/meeting) for a deal/company/contact. Phase 3 T3.1 — the agent NEVER calls HubSpot from this tool. Returns { pending_id, status: 'pending', summary, expires_at } and a citation on the staged row. Surface the proposal as a [DO] chip with the pending_id appended in the format `(pending: <uuid>)` — the chip POSTs to /api/agent/approve and the executor performs the actual HubSpot call. Re-invoking with stale args after a rep declines a previous chip is fine; staging is idempotent on the table side via fresh row insertion.",
     category: 'action',
     tool_type: 'builtin',
-    execution_config: { handler: 'log_crm_activity', mutates_crm: true },
+    // Phase 3 T3.1 — `mutates_crm` removed. The handler stages-only;
+    // the legacy approval gate is repurposed to opt-in via
+    // `requires_staging`/`legacy_approval_gate` flags. Keeping the
+    // `stages_crm` marker so the validate-tools script can audit
+    // which tools should ship through pending_crm_writes.
+    execution_config: { handler: 'log_crm_activity', stages_crm: true },
     parameters_schema: {
       type: 'object',
       properties: {
@@ -609,10 +614,10 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     slug: 'update_crm_property',
     display_name: 'Update CRM Property',
     description:
-      "Update one HubSpot property on a deal/company/contact (e.g. set dealstage to 'Negotiation', set hs_meddpicc_champion_email to a new value, mark a custom flag). Marked mutates_crm so the writeApprovalGate middleware enforces approval. Returns a citation pointing at the just-updated CRM record. Surface the property name + new value in the [DO] chip so the rep knows exactly what they're approving.",
+      "STAGE a single HubSpot property update on a deal/company/contact (e.g. dealstage='Negotiation', custom flag). Phase 3 T3.1 — never calls HubSpot from the agent. Returns { pending_id, status: 'pending', summary, expires_at }. Surface the proposal as a [DO] chip with `(pending: <uuid>)` appended; the chip POSTs to /api/agent/approve and the executor performs the actual property update. Include the property name + new value in the chip text so the rep knows what they're approving.",
     category: 'action',
     tool_type: 'builtin',
-    execution_config: { handler: 'update_crm_property', mutates_crm: true },
+    execution_config: { handler: 'update_crm_property', stages_crm: true },
     parameters_schema: {
       type: 'object',
       properties: {
@@ -642,10 +647,10 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     slug: 'create_crm_task',
     display_name: 'Create CRM Task',
     description:
-      "Schedule a HubSpot follow-up task with optional due date, priority, and association to a deal/company/contact. Use after a call where the rep agrees to a follow-up action ('I'll send the proposal Monday'). Marked mutates_crm so the writeApprovalGate enforces approval. Returns a citation pointing at the new task in HubSpot.",
+      "STAGE a HubSpot follow-up task with optional due date, priority, and association. Phase 3 T3.1 — never calls HubSpot from the agent. Returns { pending_id, status: 'pending', summary, expires_at }. Surface the proposal as a [DO] chip with `(pending: <uuid>)` appended; the chip POSTs to /api/agent/approve and the executor creates the task in HubSpot.",
     category: 'action',
     tool_type: 'builtin',
-    execution_config: { handler: 'create_crm_task', mutates_crm: true },
+    execution_config: { handler: 'create_crm_task', stages_crm: true },
     parameters_schema: {
       type: 'object',
       properties: {

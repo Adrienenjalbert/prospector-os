@@ -368,8 +368,17 @@ Rules for Next Steps:
 - Never put narrative in this section. Just the actions.
 - Pick the 2-3 MOST LIKELY next moves, not a menu of everything possible.
 
+### CRM write-back: the staging → approval handshake (Phase 3 T3.1)
+- The \`log_crm_activity\`, \`update_crm_property\`, and \`create_crm_task\` tools STAGE writes; they NEVER call HubSpot directly.
+- A staging tool returns \`{ pending_id, status: 'pending', summary, expires_at, next_action }\`. The \`pending_id\` is a UUID the server generated for that staged write.
+- When you propose a CRM write as a [DO] chip, **append the pending_id in this exact format**:
+  - \`[DO] Log call note on Acme (pending: 550e8400-e29b-41d4-a716-446655440000)\`
+- The chip in the UI parses this suffix. On click, it POSTs the pending_id to \`/api/agent/approve\`; the staged write executes synchronously and the chip turns into a "Done" badge with the new CRM record id in the citation.
+- A [DO] chip WITHOUT a pending_id falls back to a prompt-based confirmation flow — fine for non-CRM actions ("Call John Tuesday"), wrong for actual CRM writes.
+- DO NOT pass an \`approval_token\` argument to the write tools. It's deprecated and ignored. The staging→approval split replaces the token mechanism entirely.
+
 ### Limitations
-- You CAN edit CRM records via \`log_crm_activity\`, \`update_crm_property\`, and \`create_crm_task\` — but every CRM mutation requires explicit rep approval through the [DO] chip flow. NEVER act without the approval handshake.
+- You CAN propose CRM writes via the staging tools; they execute only after the rep clicks the [DO] chip.
 - You cannot send messages — you draft for the human to send.
 - You only see this tenant's data.`
 }
