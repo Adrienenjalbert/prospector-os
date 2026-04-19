@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
+import { resolveCredentials } from '@/lib/crypto'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
 import { emitAgentEvent, type CRMActivity } from '@prospector/core'
 
@@ -11,11 +11,32 @@ type CRMAdapterLike = {
   getActivities: (accountId: string, since: Date) => Promise<CRMActivity[]>
 }
 
-function parseCreds(raw: unknown): Record<string, string> {
-  if (!raw) return {}
-  return isEncryptedString(raw)
-    ? (decryptCredentials(raw) as Record<string, string>)
-    : (raw as Record<string, string>)
+/**
+ * Local wrapper around `resolveCredentials` that returns an empty
+ * record (vs. throwing) for tenants whose creds are missing/legacy/
+ * corrupt — the score cron uses that shape to drive `buildCrmAdapter`,
+ * which returns null and the engagement scorer falls back to
+ * activity-table reads only. So one bad tenant skips CRM-derived
+ * activities for that run; next nightly picks up after the operator
+ * runs the migration.
+ *
+ * Strict-mode resolveCredentials is the single decrypt path; this
+ * wrapper just isolates failures per tenant for the cron's
+ * keep-going-on-error contract.
+ */
+function parseCreds(
+  tenantId: string,
+  raw: unknown,
+): Record<string, string> {
+  try {
+    return resolveCredentials(raw)
+  } catch (err) {
+    console.warn(
+      `[cron/score] tenant ${tenantId} CRM activities skipped — credentials unusable:`,
+      err instanceof Error ? err.message : err,
+    )
+    return {}
+  }
 }
 
 function buildCrmAdapter(
@@ -106,7 +127,7 @@ export async function GET(req: Request) {
       const closedCount = closedRes.count ?? 0
       const companyWinRate = closedCount > 0 ? (wonCount / closedCount) * 100 : 15
 
-      const tenantCreds = parseCreds(tenant.crm_credentials_encrypted)
+      const tenantCreds = parseCreds(tenant.id, tenant.crm_credentials_encrypted)
       const crmAdapter = buildCrmAdapter(tenant.crm_type, tenantCreds)
 
       // Two-pass scoring so the engagement scorer sees a real tenant-wide

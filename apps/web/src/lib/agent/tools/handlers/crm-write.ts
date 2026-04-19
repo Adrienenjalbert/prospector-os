@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { HubSpotAdapter } from '@prospector/adapters'
 import { parseUrn } from '@prospector/core'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
+import { resolveCredentials } from '@/lib/crypto'
 import type { ToolHandler } from '../../tool-loader'
 
 /**
@@ -125,12 +125,16 @@ async function getCrmClient(
   }
   const rawCreds = (tenant as { crm_credentials_encrypted: unknown })
     .crm_credentials_encrypted
-  if (!rawCreds) {
-    return { ok: false, error: 'CRM credentials missing for this tenant' }
+  // resolveCredentials throws on legacy plaintext / missing / corrupt
+  // — agent-tool callers want a clean { ok, error } shape, so catch
+  // and surface the actionable message back to the agent (it will
+  // recommend the rep contact admin / re-onboard).
+  let creds: Record<string, string>
+  try {
+    creds = resolveCredentials(rawCreds)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
-  const creds = isEncryptedString(rawCreds)
-    ? (decryptCredentials(rawCreds) as Record<string, string>)
-    : (rawCreds as Record<string, string>)
   if (!creds.private_app_token) {
     return { ok: false, error: 'HubSpot private_app_token missing' }
   }

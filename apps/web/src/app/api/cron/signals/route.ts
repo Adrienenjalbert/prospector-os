@@ -6,7 +6,7 @@ import {
   totalSpend,
   type EnrichmentOperation,
 } from '@prospector/adapters'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
+import { resolveCredentials } from '@/lib/crypto'
 
 const DEEP_RESEARCH_PROMPT = `You are a B2B sales intelligence analyst. Research the company "{company_name}" ({domain}) for recent developments relevant to temporary staffing needs.
 
@@ -309,10 +309,20 @@ export async function GET(req: Request) {
 
       if (writebackEnabled && tenant.crm_type === 'salesforce' && tenant.crm_credentials_encrypted) {
         try {
-          const raw = tenant.crm_credentials_encrypted
-          const creds = isEncryptedString(raw)
-            ? decryptCredentials(raw) as Record<string, string>
-            : raw as Record<string, string>
+          // Phase 3 T1.4 STRICT MODE — resolveCredentials throws on
+          // legacy plaintext / corrupt rows. Wrap in try/catch so one
+          // bad tenant doesn't abort the whole signals fan-out
+          // (matches the per-company error isolation a few lines up).
+          let creds: Record<string, string>
+          try {
+            creds = resolveCredentials(tenant.crm_credentials_encrypted)
+          } catch (credErr) {
+            console.warn(
+              `[cron/signals] tenant=${tenant.id} writeback skipped — credentials unusable:`,
+              credErr instanceof Error ? credErr.message : credErr,
+            )
+            continue
+          }
 
           if (creds.client_id) {
             const sf = new SalesforceAdapter({

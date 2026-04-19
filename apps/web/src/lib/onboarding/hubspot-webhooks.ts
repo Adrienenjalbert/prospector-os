@@ -1,6 +1,6 @@
 import { HubSpotAdapter } from '@prospector/adapters'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
+import { resolveCredentials } from '@/lib/crypto'
 
 /**
  * Phase 3.8 onboarding helper — subscribes the tenant's HubSpot app to
@@ -92,12 +92,20 @@ export async function subscribeHubspotPropertyWebhooks(
   }
   const rawCreds = (tenant as { crm_credentials_encrypted: unknown })
     .crm_credentials_encrypted
-  if (!rawCreds) {
-    return { ok: false, events_subscribed: 0, error: 'CRM credentials missing' }
+  // resolveCredentials throws on legacy plaintext / missing / corrupt;
+  // catch and surface the message to the admin UI rather than letting
+  // it propagate (this is an admin-driven action, not a cron, so the
+  // operator sees the actionable text directly).
+  let creds: Record<string, string>
+  try {
+    creds = resolveCredentials(rawCreds)
+  } catch (err) {
+    return {
+      ok: false,
+      events_subscribed: 0,
+      error: err instanceof Error ? err.message : String(err),
+    }
   }
-  const creds = isEncryptedString(rawCreds)
-    ? (decryptCredentials(rawCreds) as Record<string, string>)
-    : (rawCreds as Record<string, string>)
   if (!creds.private_app_token) {
     return { ok: false, events_subscribed: 0, error: 'HubSpot private_app_token missing' }
   }

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
 import { forEachTenantChunked, statusFor } from '@/lib/cron-fanout'
 import { SalesforceAdapter, HubSpotAdapter } from '@prospector/adapters'
-import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
+import { resolveCredentials } from '@/lib/crypto'
 import { emitOutcomeEvent, urn, type OutcomeEventInput } from '@prospector/core'
 
 /**
@@ -104,11 +104,30 @@ function extractDomain(website: string | null | undefined): string | null {
   }
 }
 
-function parseCreds(raw: unknown): Record<string, string> {
-  if (!raw) return {}
-  return isEncryptedString(raw)
-    ? decryptCredentials(raw) as Record<string, string>
-    : raw as Record<string, string>
+/**
+ * Local wrapper around `resolveCredentials` that returns `null` for
+ * tenants whose credentials are missing/legacy/corrupt instead of
+ * throwing, so one bad tenant doesn't abort the whole nightly cron.
+ * The strict `resolveCredentials` from `@/lib/crypto` is the single
+ * source of decrypt logic; this wrapper just adapts it to the cron's
+ * "skip and log; keep going" contract. (forEachTenantChunked already
+ * isolates failures per tenant; logging here keeps the breadcrumb
+ * actionable — the operator sees "tenant X needs migration" rather
+ * than a generic "decrypt failed".)
+ */
+function parseCreds(
+  tenantId: string,
+  raw: unknown,
+): Record<string, string> | null {
+  try {
+    return resolveCredentials(raw)
+  } catch (err) {
+    console.warn(
+      `[cron/sync] tenant ${tenantId} skipped — credentials unusable:`,
+      err instanceof Error ? err.message : err,
+    )
+    return null
+  }
 }
 
 /**
@@ -254,7 +273,8 @@ export async function GET(req: Request) {
       tenantsTyped,
       async (t) => {
         const tenant = t as (typeof tenantsTyped)[number]
-        const creds = parseCreds(tenant.crm_credentials_encrypted)
+        const creds = parseCreds(tenant.id, tenant.crm_credentials_encrypted)
+        if (!creds) return 0
         if (tenant.crm_type === 'salesforce' && creds.client_id) {
           return await syncSalesforce(supabase, tenant.id, creds)
         }
