@@ -167,42 +167,60 @@ export const citationEnforcer: ToolMiddleware = {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in middleware 2: writeApprovalGate
-// Blocks tools declared as CRM mutators (tool_registry row has
-// execution_config.mutates_crm = true) from running without an explicit
-// approval token in args. Returns an `awaiting_approval` structured result
-// the agent can surface to the user via the SuggestedActions `[DO]` chip.
+// Built-in middleware 2: writeApprovalGate (Phase 3 T3.1 — repurposed)
+//
+// HISTORICAL CONTEXT:
+//   Pre-T1.1: this middleware checked for an `approval_token` argument in
+//             the tool call. The token was only validated by length (any
+//             non-empty string passed) — easily forged by the model.
+//   T1.1:     refactored to fail-closed for every write tool, regardless of
+//             argument shape. Stop-gap until T3.1 shipped a real approval
+//             surface.
+//   T3.1 (now): the write tools (`log_crm_activity`, `update_crm_property`,
+//             `create_crm_task`) STAGE rows in `pending_crm_writes` and
+//             return a `pending_id`. They no longer hit HubSpot at all
+//             from the agent path. Approval happens out-of-band when the
+//             rep clicks the [DO] chip → POST /api/agent/approve →
+//             `lib/crm-writes/executor.ts`.
+//
+//   So: the staging-aware tools no longer need this gate, and we let them
+//   run. The middleware is KEPT around to gate any FUTURE write tool that
+//   doesn't ship its own staging — opt-in via
+//   `tool_registry.execution_config.requires_staging = true`. The default
+//   is no gate (existing tools behave as before; new ones must opt in).
+//
+//   This is a behaviour change vs T1.1: the registry rows for the three
+//   crm-write tools should be updated to drop `mutates_crm: true` (or this
+//   gate will continue to block them). The crm-write handlers themselves
+//   are now safe to run because they only INSERT a staging row.
 // ---------------------------------------------------------------------------
 
-function isWriteTool(row: ToolRegistryRow): boolean {
+/**
+ * Tools that opt into the legacy "block until approval_token" gate. The
+ * staging-aware crm-write tools are NOT in this set — they self-gate via
+ * the staging table. A future tier-2 tool that wants the legacy behaviour
+ * sets `requires_staging: true` in its execution_config.
+ */
+function requiresLegacyApprovalGate(row: ToolRegistryRow): boolean {
   const cfg = row.execution_config as Record<string, unknown> | null
-  return Boolean(cfg?.mutates_crm) || Boolean(cfg?.is_write)
+  return Boolean(cfg?.requires_staging) || Boolean(cfg?.legacy_approval_gate)
 }
 
 export const writeApprovalGate: ToolMiddleware = {
   name: 'writeApprovalGate',
   async preToolUse(ctx, args) {
-    if (!isWriteTool(ctx.registryRow)) return { allow: true }
-
-    const approval = (args as Record<string, unknown> | null)?.approval_token
-    if (typeof approval === 'string' && approval.length > 0) {
-      // Approval token present — let it through. Real tokens are validated
-      // at the handler level against a short-lived nonce table in Phase 4.1.
-      return { allow: true }
-    }
+    if (!requiresLegacyApprovalGate(ctx.registryRow)) return { allow: true }
 
     return {
       allow: false,
-      reason: 'write_requires_approval',
+      reason: 'write_requires_staging',
       result: {
         awaiting_approval: true,
         tool: ctx.slug,
         proposed_args: args,
-        // The agent should surface this as a `[DO]` chip. The SuggestedActions
-        // parser in `commonBehaviourRules` understands the shape.
-        next_action: `Confirm with the user before running ${ctx.slug}. If confirmed, re-invoke with an approval_token.`,
+        next_action: `Tool ${ctx.slug} requires the staging→approval flow. The current handler does not stage. Surface the proposed args to the rep as a [DO] chip and recommend they perform the action manually until the staging path ships.`,
       },
-      additionalContext: `Tool ${ctx.slug} mutates CRM state. MISSION forbids auto-action without human approval — surface an approval chip to the user.`,
+      additionalContext: `Tool ${ctx.slug} is gated behind the legacy approval check. The new staging→approval flow (Phase 3 T3.1) replaces this gate; until ${ctx.slug} adopts staging, the agent must surface a manual chip rather than execute.`,
     }
   },
 }

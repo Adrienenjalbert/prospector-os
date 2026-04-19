@@ -22,7 +22,23 @@ export type ActionKind = 'ASK' | 'DRAFT' | 'DO'
 export interface ParsedAction {
   kind: ActionKind
   text: string
+  /**
+   * Phase 3 T3.1 — when a `[DO]` chip refers to a staged
+   * `pending_crm_writes` row, the agent embeds the pending_id in
+   * the chip text using the convention `(pending: <uuid>)` at the
+   * end. The parser strips it from `text` and surfaces it here so
+   * the click handler can POST to `/api/agent/approve` directly,
+   * without round-tripping through the chat.
+   *
+   * The convention is documented in `commonBehaviourRules` so the
+   * model knows to include it. Agents that don't know the
+   * convention (older prompts, future surfaces) fall back to the
+   * prompt-based behaviour — there's no hard requirement.
+   */
+  pendingId?: string
 }
+
+const PENDING_ID_SUFFIX = /\s*\(pending:\s*([0-9a-f-]{36})\s*\)\s*$/i
 
 export function parseNextSteps(content: string): ParsedAction[] {
   if (!content) return []
@@ -49,8 +65,20 @@ export function parseNextSteps(content: string): ParsedAction[] {
     const itemMatch = /^(?:[-*]|\d+\.)\s*\[(ASK|DRAFT|DO)\]\s+(.+)$/i.exec(line)
     if (itemMatch) {
       const kind = itemMatch[1].toUpperCase() as ActionKind
-      const text = itemMatch[2].trim()
-      if (text) actions.push({ kind, text })
+      let text = itemMatch[2].trim()
+      let pendingId: string | undefined
+      // Extract the pending suffix when the agent includes one.
+      // Only meaningful for DO chips, but we strip it from any
+      // kind defensively (an agent that mis-tags a write as ASK
+      // shouldn't leak the suffix into the visible chip text).
+      const pendingMatch = PENDING_ID_SUFFIX.exec(text)
+      if (pendingMatch) {
+        pendingId = pendingMatch[1]
+        text = text.slice(0, pendingMatch.index).trim()
+      }
+      if (text) {
+        actions.push(pendingId ? { kind, text, pendingId } : { kind, text })
+      }
       continue
     }
 
