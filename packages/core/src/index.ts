@@ -89,3 +89,19 @@ export type {
 // trigger-engine, and feedback-tracker were removed in B10 because nothing
 // in app code consumed them. Notification *types* (TriggerType,
 // NotificationAdapter, etc.) remain in `./types/notifications`.
+
+// Safety — Phase 3 T1.2 prompt-injection defence at trust boundaries.
+// `wrapUntrusted` wraps any string from an untrusted source (transcript
+// raw_text, CRM free-text, conversation note) in a stable marker the
+// agent's behaviour rule teaches it to treat as data only. Used at the
+// transcript ingest boundary, search_transcripts tool result, and the
+// conversation-memory slice. See `commonBehaviourRules()` in
+// `apps/web/src/lib/agent/agents/_shared.ts` for the model-side
+// counterpart.
+export {
+  wrapUntrusted,
+  wrapUntrustedFields,
+  UNTRUSTED_OPEN_MARKER,
+  UNTRUSTED_CLOSE_MARKER,
+  UNTRUSTED_MAX_SOURCE_LABEL_LEN,
+} from './safety/untrusted-wrapper'

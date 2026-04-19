@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { tool } from 'ai'
 import type { AgentContext } from '@prospector/core'
+import { wrapUntrusted } from '@prospector/core'
 import { TranscriptIngester } from '@prospector/adapters'
 import { getServiceSupabase, resolveCompanyByName } from '../tools/shared'
 import {
@@ -159,7 +160,24 @@ export function createAccountStrategistTools(tenantId: string, _repId: string) {
       const ingester = new TranscriptIngester(supabase, tenantId)
       const results = await ingester.searchSimilar(query, { companyId, limit })
 
-      return { query, company_name: company_name ?? null, transcripts: results }
+      // Phase 3 T1.2 — prompt-injection defence. Transcript summaries
+      // are model-generated from raw call text. Even with the
+      // ingester's output validation in place, summaries are a higher-
+      // trust read-back surface than they should be — wrap each
+      // result's free-text fields in `<untrusted>` markers so the
+      // agent's behaviour rule (`commonBehaviourRules` in
+      // `agents/_shared.ts`) treats them as data, not instructions.
+      // Themes are shape-bounded by `SummarizeResultSchema` but we
+      // wrap them too for uniformity.
+      const wrappedResults = results.map((r) => ({
+        ...r,
+        summary: wrapUntrusted('transcript:summary', r.summary ?? ''),
+        themes: r.themes.map((t) =>
+          wrapUntrusted('transcript:theme', t),
+        ),
+      }))
+
+      return { query, company_name: company_name ?? null, transcripts: wrappedResults }
     },
   })
 

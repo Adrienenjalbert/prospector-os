@@ -268,6 +268,48 @@ export const PreCallBriefSchema = z.object({
 export type PreCallBrief = z.infer<typeof PreCallBriefSchema>
 
 /**
+ * Summariser output schema (Phase 3 T1.2).
+ *
+ * The transcript ingester (`packages/adapters/src/transcripts/transcript-ingester.ts`)
+ * asks Anthropic to summarise raw transcript text and return a JSON
+ * blob with `summary`, `themes`, `sentiment_score`, `meddpicc`. The
+ * pre-T1.2 ingester used a loose `JSON.parse` + a permissive cast,
+ * which meant a model that returned a malicious-shape response (e.g.
+ * dumped a different schema, or returned a 50-page essay because a
+ * meeting attendee told it to "ignore prior instructions") would
+ * silently land in the ontology. From there it fed every subsequent
+ * agent context.
+ *
+ * This schema is the second layer of the prompt-injection defence:
+ * boundary-wrap the input (via `wrapUntrusted` from
+ * `apps/web/src/lib/agent/safety/untrusted-wrapper.ts`) AND
+ * shape-validate the output. On schema-mismatch the ingester records
+ * `summarise_invalid_output` as an `agent_event` and persists
+ * `summary = null` so downstream code keeps working but does not
+ * propagate the malformed string.
+ *
+ * Field constraints intentionally LOOSE on values (we don't reject a
+ * legitimate long summary from a 90-minute call) and STRICT on shape
+ * (`themes` must be an array, `sentiment_score` must be a number in
+ * [-1, 1] or null). The MEDDPICC sub-schema is reused via
+ * `.passthrough()` because the ingester doesn't enforce MEDDPICC
+ * letter-by-letter — a separate downstream tool pulls those fields.
+ */
+export const SummarizeResultSchema = z.object({
+  // Hard cap at 4000 chars — the ingester only persists the first
+  // ~500 anyway (`summary` column has no TEXT length cap, but a
+  // 50-page model dump is itself a signal the call went wrong).
+  summary: z.string().max(4000),
+  themes: z.array(z.string().max(120)).max(20).default([]),
+  sentiment_score: z.number().min(-1).max(1).nullable().default(null),
+  // MEDDPICC extracted from the call. The ingester downstream of this
+  // schema will run a stricter MeddpiccExtractionSchema parse before
+  // anything cites the fields; here we only enforce "object or null".
+  meddpicc: z.record(z.unknown()).nullable().default(null),
+})
+export type SummarizeResult = z.infer<typeof SummarizeResultSchema>
+
+/**
  * MEDDPICC extraction from a transcript. Every field optional — models
  * shouldn't fabricate when the signal isn't in the call.
  */
