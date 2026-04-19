@@ -8,6 +8,11 @@ import {
   type ToolMiddleware,
   type ToolMiddlewareCtx,
 } from './tools/middleware'
+import {
+  decodeTier2Config,
+  isCrmWriteEnabled,
+  TIER2_WRITE_TOOL_SLUGS,
+} from '@/lib/tier2/config'
 
 /**
  * The tool registry makes the agent platform config-driven: tools are rows in
@@ -160,22 +165,53 @@ export async function loadToolsForAgent(opts: LoadToolsOptions): Promise<{
 }> {
   const { tenantId, role, supabase, allowlist } = opts
 
-  const { data, error } = await supabase
-    .from('tool_registry')
-    .select(
-      'slug, display_name, description, available_to_roles, enabled, is_builtin, tool_type, execution_config, citation_config, deprecated_at, deprecation_replacement',
-    )
-    .eq('tenant_id', tenantId)
-    .eq('enabled', true)
-    // Skip soft-deprecated rows. The partial index added in
-    // migration 012 means this filter costs nothing on rows with
-    // `deprecated_at IS NULL`.
-    .is('deprecated_at', null)
+  // Phase 3 T3.2 — fetch the tenant's tier-2 CRM-write enablement
+  // config in parallel with the registry query. Used downstream to
+  // exclude write tools whose per-handler flag is false. The agent
+  // literally never sees a tool the admin has not explicitly
+  // enabled — defence-in-depth on top of T3.1's staging table
+  // (which by itself only enforces "no write executes without an
+  // approval click", not "the write tool was even on the menu").
+  //
+  // CRM_WRITES_TIER2_GATE env flag controls rollout. Off by default
+  // for one release so existing tenants who had writes enabled
+  // before T1.1 can be migrated via the operator runbook before
+  // the gate slams shut. After the migration: flip to 'on' in
+  // production.
+  const tier2GateEnabled = process.env.CRM_WRITES_TIER2_GATE === 'on'
+
+  const [registryRes, tenantRes] = await Promise.all([
+    supabase
+      .from('tool_registry')
+      .select(
+        'slug, display_name, description, available_to_roles, enabled, is_builtin, tool_type, execution_config, citation_config, deprecated_at, deprecation_replacement',
+      )
+      .eq('tenant_id', tenantId)
+      .eq('enabled', true)
+      // Skip soft-deprecated rows. The partial index added in
+      // migration 012 means this filter costs nothing on rows with
+      // `deprecated_at IS NULL`.
+      .is('deprecated_at', null),
+    tier2GateEnabled
+      ? supabase
+          .from('tenants')
+          .select('crm_write_config')
+          .eq('id', tenantId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null } as const),
+  ])
+  const { data, error } = registryRes
 
   if (error) {
     console.warn('[tool-loader] tool_registry query failed:', error.message)
     return { tools: {}, loaded: [], missingHandlers: [] }
   }
+
+  const tier2Config = decodeTier2Config(
+    (tenantRes as { data: { crm_write_config?: unknown } | null }).data
+      ?.crm_write_config,
+  )
+  const tier2GatedSlugs: string[] = []
 
   const rows = (data ?? []) as ToolRegistryRow[]
   const tools: Record<string, Tool> = {}
@@ -202,6 +238,27 @@ export async function loadToolsForAgent(opts: LoadToolsOptions): Promise<{
     }
 
     if (allowlist && !allowlist.includes(row.slug)) continue
+
+    // Phase 3 T3.2 — tier-2 enablement gate. Excludes a write tool
+    // entirely from the agent's available set when the per-handler
+    // flag in `tenants.crm_write_config` is false. Defence-in-depth
+    // on top of T3.1's staging table:
+    //   - Without this gate: agent sees the tool, stages a write,
+    //     surfaces a [DO] chip; rep clicks it; T3.1's executor
+    //     fires the HubSpot call. Safe but the tool is "always on".
+    //   - With this gate: agent never sees the tool until the admin
+    //     explicitly toggles it ON. Procurement-friendly default.
+    //
+    // Skipped entirely when CRM_WRITES_TIER2_GATE is off (rollout
+    // staging — see env-var note above).
+    if (
+      tier2GateEnabled &&
+      TIER2_WRITE_TOOL_SLUGS.includes(row.slug) &&
+      !isCrmWriteEnabled(row.slug, tier2Config)
+    ) {
+      tier2GatedSlugs.push(row.slug)
+      continue
+    }
 
     const handlerSlug = row.execution_config?.handler ?? row.slug
     const handler = HANDLERS.get(handlerSlug)

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { Tier2WritePanel } from "@/components/admin/tier2-write-panel";
 
 type TabId = "icp" | "scoring" | "funnel" | "signals";
 
@@ -283,6 +284,12 @@ export function AdminConfigClient() {
           Save
         </button>
       </div>
+
+      {/* Phase 3 T3.2 — per-tenant tier-2 enablement. Lives below
+          the ICP/scoring/funnel/signals tabs because it has its
+          own write path (config_type='crm_write') and its own
+          acknowledgement gate. */}
+      <Tier2WritePanel />
     </div>
   );
 }

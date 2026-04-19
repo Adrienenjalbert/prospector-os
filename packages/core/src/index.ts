@@ -58,6 +58,19 @@ export type { RelationshipEventInput } from './relationships/event-detector'
 export { CitationCollector, extractCitationsFromToolResult, formatCitationFooter } from './citations'
 export type { PendingCitation, CitationConfig } from './citations'
 
+// Admin audit log — Phase 3 T2.1. Append-only record of every admin
+// write to a tenant config or proposal. T3.2 (this branch) and
+// T2.1 (PR #6) both ship this export. Same content; merge is
+// trivially mechanical.
+export {
+  recordAdminAction,
+  AUDIT_MAX_JSONB_BYTES,
+} from './audit'
+export type {
+  AdminActionSlug,
+  AdminAuditInput,
+} from './audit'
+
 // Business skills (Phase 7 — modular business_profiles replacement)
 export {
   loadActiveBusinessSkills,
