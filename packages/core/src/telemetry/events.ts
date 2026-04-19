@@ -70,6 +70,20 @@ export type AgentEventType =
   // has been silently failing. Payload:
   // { companies_scored, benchmarks_written, duration_ms, status, error? }
   | 'scoring_run_completed'
+  // Phase 3 T1.3 — retention-sweep lifecycle. Emitted per tenant per
+  // run by `apps/web/src/lib/workflows/retention-sweep.ts`. Payload:
+  // {
+  //   dry_run: boolean,            // shadow mode flag
+  //   total_rows_swept: number,    // total deletes (or would-be deletes in dry run)
+  //   per_table: Record<string, { rows: number, action: 'delete'|'null' }>,
+  //   duration_ms: number,
+  //   error?: string,
+  // }
+  // /admin/adaptation reads these to show "X rows purged this week" so
+  // the operator can verify the retention policy is honoured. In dry-
+  // run mode the same event fires with `dry_run: true` so the operator
+  // can preview the volume before flipping the env flag.
+  | 'retention_sweep_completed'
   | 'error'
 
 /**

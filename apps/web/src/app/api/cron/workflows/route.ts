@@ -19,6 +19,7 @@ import {
   runAttribution,
   runContextSliceCalibration,
   runChampionAlumniDetector,
+  runRetentionSweep,
   type WorkflowRunRow,
 } from '@/lib/workflows'
 
@@ -80,6 +81,9 @@ export async function GET(req: Request) {
             break
           case 'champion_alumni_detector':
             await runChampionAlumniDetector(supabase, row.id)
+            break
+          case 'retention_sweep':
+            await runRetentionSweep(supabase, row.id)
             break
           default:
             console.warn(
