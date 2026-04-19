@@ -26,6 +26,7 @@ import {
   applyFunnelConfig,
   type SyncSummary,
 } from "@/app/actions/onboarding";
+import { recordOnboardingStepStarted } from "@/app/actions/onboarding-instrumentation";
 import type {
   IcpProposal,
   FunnelProposal,
@@ -97,6 +98,19 @@ export default function OnboardingWizard() {
       void loadProposals();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId]);
+
+  // Phase 3 T2.4 — emit `onboarding_step_started` whenever the user
+  // lands on a new step. The wizard's existing server actions already
+  // emit `onboarding_step_completed` from inside each step's
+  // mutation; pairing them gives /admin/pilot the data it needs to
+  // compute median + p95 step duration and per-step drop-off.
+  //
+  // Fire-and-forget: telemetry never blocks the wizard. The server
+  // action also no-ops if the user is unauthenticated (e.g.
+  // pre-login render of the welcome step).
+  useEffect(() => {
+    void recordOnboardingStepStarted({ step: stepId });
   }, [stepId]);
 
   // Auto-accept all dimensions/stages when proposals first load — user can opt out per item.
