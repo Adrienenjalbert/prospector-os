@@ -8,6 +8,9 @@ import { NextStepCard } from '@/components/agent/next-step-card'
 import { INBOX_SKILLS } from '@/lib/agent/skills'
 import { isDemoTenantSlug } from '@/lib/demo-tenant'
 import { WelcomeBanner } from '@/components/welcome/welcome-banner'
+import { BaselineNag } from '@/components/onboarding/baseline-nag'
+import { hasSubmittedBaseline } from '@/app/actions/baseline-survey'
+import { getBaselineNagSnoozeUntil } from '@/app/actions/onboarding-instrumentation'
 
 export const metadata = {
   title: 'Inbox',
@@ -444,6 +447,25 @@ export default async function InboxPage() {
   const showWeeklyPulse = realData?.showWeeklyPulse ?? false
   const topAccountForPulse = realData?.topAccountForPulse ?? null
 
+  // Phase 3 T2.4 — baseline-survey nag visibility decision is made
+  // server-side so the card never flickers in/out on hydration.
+  // Show only when:
+  //   - we have a real (non-demo) authenticated user,
+  //   - they have NOT submitted the baseline survey,
+  //   - they have NOT snoozed the nag (or the snooze has expired).
+  // Both helpers are fail-safe: any error returns "not submitted" /
+  // "no snooze", which means the nag shows by default. The goal of
+  // T2.4 is to surface the nag, not to hide it on infrastructure
+  // blips.
+  let showBaselineNag = false
+  if (!useDemoData) {
+    const [submitted, snoozedUntil] = await Promise.all([
+      hasSubmittedBaseline(),
+      getBaselineNagSnoozeUntil(),
+    ])
+    showBaselineNag = !submitted && !snoozedUntil
+  }
+
   const demoPipelineStages: PipelineStage[] = [
     { name: 'Lead', count: 12, value: 280_000, stallCount: 0 },
     { name: 'Qualified', count: 8, value: 340_000, stallCount: 0 },
@@ -508,6 +530,12 @@ export default async function InboxPage() {
           pageContext={{ page: 'inbox' }}
         />
       </div>
+
+      {showBaselineNag && (
+        <div className="mt-4">
+          <BaselineNag />
+        </div>
+      )}
 
       {/* KPI Strip */}
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">

@@ -52,18 +52,27 @@ export type AgentEventType =
   // these, operators have no way to measure completion rate per step,
   // time-to-first-cited-answer, or where users drop off the funnel.
   // Payload conventions:
-  //   onboarding_step_completed: { step: 'welcome' | 'crm' | 'sync' | ... }
-  //   crm_connected: { crm_type: 'hubspot' | 'salesforce', webhook_subscribed: boolean }
-  //   onboarding_proposals_loaded: { icp_source: 'derived'|'default', funnel_source, won_deals }
-  //   onboarding_config_applied: { kind: 'icp' | 'funnel' }
-  //   onboarding_completed: { duration_ms?, completed_steps[] }
-  //   baseline_submitted: { task_count }
+  //   onboarding_step_started:    { step: 'welcome' | 'crm' | 'sync' | ... }
+  //   onboarding_step_completed:  { step: 'welcome' | 'crm' | 'sync' | ... }
+  //   crm_connected:              { crm_type: 'hubspot' | 'salesforce', webhook_subscribed: boolean }
+  //   onboarding_proposals_loaded:{ icp_source: 'derived'|'default', funnel_source, won_deals }
+  //   onboarding_config_applied:  { kind: 'icp' | 'funnel' }
+  //   onboarding_completed:       { duration_ms?, completed_steps[] }
+  //   baseline_submitted:         { task_count }
+  //   baseline_nag_snoozed:       { snoozed_until: ISO TIMESTAMPTZ }
+  //
+  // Phase 3 T2.4 added `onboarding_step_started` (so the funnel widget
+  // on /admin/pilot can compute median + p95 step duration) and
+  // `baseline_nag_snoozed` (so the operator can see how often the
+  // nag is being dismissed vs converted).
+  | 'onboarding_step_started'
   | 'onboarding_step_completed'
   | 'crm_connected'
   | 'onboarding_proposals_loaded'
   | 'onboarding_config_applied'
   | 'onboarding_completed'
   | 'baseline_submitted'
+  | 'baseline_nag_snoozed'
   // Scoring lifecycle. Emitted per tenant by the nightly cron at
   // `apps/web/src/app/api/cron/score/route.ts` so /admin/adaptation
   // and the self-improve workflow can detect tenants whose scoring
