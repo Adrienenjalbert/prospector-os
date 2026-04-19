@@ -14,6 +14,7 @@ import {
   enqueueAttribution,
   enqueueContextSliceCalibration,
   enqueueChampionAlumniDetector,
+  enqueueRetentionSweep,
 } from '@/lib/workflows'
 
 /**
@@ -62,6 +63,10 @@ export async function GET(req: Request) {
         enqueueScoringCalibration(supabase, tenantId),
         enqueueContextSliceCalibration(supabase, tenantId),
         enqueueChampionAlumniDetector(supabase, tenantId),
+        // Phase 3 T1.3 — retention sweep. Idempotency key in
+        // `enqueueRetentionSweep` is `rs:<tenant>:<YYYY-MM-DD>` so a
+        // double-fire on the same day is a no-op.
+        enqueueRetentionSweep(supabase, tenantId),
       ])
       let ok = 0
       for (const r of results) {

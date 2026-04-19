@@ -89,3 +89,22 @@ export type {
 // trigger-engine, and feedback-tracker were removed in B10 because nothing
 // in app code consumed them. Notification *types* (TriggerType,
 // NotificationAdapter, etc.) remain in `./types/notifications`.
+
+// Retention — Phase 3 T1.3. Per-table default windows + override
+// validation. The retention-sweep workflow reads defaults from this
+// module; per-tenant overrides live in `retention_policies` (see
+// `packages/db/migrations/010_retention_policies.sql`). Per-tenant
+// overrides may only LENGTHEN the window (OQ-4) — enforced by
+// `validateRetentionOverride` at the admin-config write boundary.
+export {
+  RETENTION_DEFAULT_DAYS,
+  RETENTION_MAX_DAYS,
+  RETENTION_TABLE_NAMES,
+  defaultRetentionDays,
+  isRetentionTableName,
+  validateRetentionOverride,
+} from './retention/defaults'
+export type {
+  RetentionTableName,
+  RetentionOverrideValidation,
+} from './retention/defaults'

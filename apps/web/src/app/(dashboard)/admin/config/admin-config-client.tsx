@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { RetentionConfig } from "@/components/admin/retention-config";
 
-type TabId = "icp" | "scoring" | "funnel" | "signals";
+type TabId = "icp" | "scoring" | "funnel" | "signals" | "retention";
 
 type IcpDimension = {
   id: string;
@@ -139,6 +140,7 @@ export function AdminConfigClient() {
     { id: "scoring", label: "Scoring" },
     { id: "funnel", label: "Funnel" },
     { id: "signals", label: "Signals" },
+    { id: "retention", label: "Retention" },
   ];
 
   return (
@@ -264,25 +266,32 @@ export function AdminConfigClient() {
             Signal types, recency decay, and type weights will be edited here.
           </p>
         )}
+        {tab === "retention" && <RetentionConfig />}
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <button
-          type="button"
-          onClick={handleReset}
-          className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
-        >
-          Reset
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={tab === "icp" && !weightsValid}
-          className="rounded-lg bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Save
-        </button>
-      </div>
+      {/* The ICP-tab Reset/Save controls are scoped to that tab's local
+          state. The Retention tab has its own per-row Save / Revert
+          buttons (see RetentionConfig); hide the bottom bar there to
+          avoid two competing save affordances. */}
+      {tab !== "retention" && (
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={handleReset}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={tab === "icp" && !weightsValid}
+            className="rounded-lg bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      )}
     </div>
   );
 }
