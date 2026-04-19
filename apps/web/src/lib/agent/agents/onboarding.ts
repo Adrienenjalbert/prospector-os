@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { tool } from 'ai'
 import { getServiceSupabase } from '../tools/shared'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
+import { recordAdminAction } from '@prospector/core'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import {
   loadBusinessProfile,
@@ -548,6 +549,21 @@ export function createOnboardingTools(tenantId: string) {
         _updated_note: note ?? null,
       }
 
+      // Phase 3 T2.1 — capture prior icp_config for the audit row.
+      // Best-effort: failure to read just means before=null in the
+      // audit; never blocks the apply.
+      let priorIcp: unknown = null
+      try {
+        const { data: prior } = await supabase
+          .from('tenants')
+          .select('icp_config')
+          .eq('id', tenantId)
+          .single()
+        priorIcp = (prior as { icp_config?: unknown } | null)?.icp_config ?? null
+      } catch {
+        // Swallow — audit-log is not load-bearing for the apply.
+      }
+
       const { error } = await supabase
         .from('tenants')
         .update({ icp_config: stamped, updated_at: new Date().toISOString() })
@@ -556,6 +572,28 @@ export function createOnboardingTools(tenantId: string) {
       if (error) {
         return { success: false, error: `Failed to save ICP config: ${error.message}` }
       }
+
+      // Phase 3 T2.1 — audit AFTER successful apply. The agent
+      // surface (admin / leader role per tool_registry seed) is
+      // technically a system-actor here because `apply_icp_config`
+      // is invoked by the model on behalf of the human, not the
+      // human directly. user_id is null per the audit module's
+      // contract for system actions; metadata.invoked_via='agent'
+      // makes the provenance explicit.
+      void recordAdminAction(supabase, {
+        tenant_id: tenantId,
+        user_id: null,
+        action: 'onboarding.apply_icp',
+        target: 'tenants.icp_config',
+        before: priorIcp,
+        after: stamped,
+        metadata: {
+          invoked_via: 'agent',
+          tool_slug: 'apply_icp_config',
+          note: note ?? null,
+          dimensions_count: (config as { dimensions?: unknown[] }).dimensions?.length ?? 0,
+        },
+      })
 
       return {
         success: true,
@@ -588,6 +626,20 @@ export function createOnboardingTools(tenantId: string) {
         _updated_note: note ?? null,
       }
 
+      // Phase 3 T2.1 — capture prior funnel_config for the audit
+      // row. Best-effort.
+      let priorFunnel: unknown = null
+      try {
+        const { data: prior } = await supabase
+          .from('tenants')
+          .select('funnel_config')
+          .eq('id', tenantId)
+          .single()
+        priorFunnel = (prior as { funnel_config?: unknown } | null)?.funnel_config ?? null
+      } catch {
+        // Swallow.
+      }
+
       const { error } = await supabase
         .from('tenants')
         .update({ funnel_config: stamped, updated_at: new Date().toISOString() })
@@ -596,6 +648,21 @@ export function createOnboardingTools(tenantId: string) {
       if (error) {
         return { success: false, error: `Failed to save funnel config: ${error.message}` }
       }
+
+      void recordAdminAction(supabase, {
+        tenant_id: tenantId,
+        user_id: null,
+        action: 'onboarding.apply_funnel',
+        target: 'tenants.funnel_config',
+        before: priorFunnel,
+        after: stamped,
+        metadata: {
+          invoked_via: 'agent',
+          tool_slug: 'apply_funnel_config',
+          note: note ?? null,
+          stages_count: (config as { stages?: unknown[] }).stages?.length ?? 0,
+        },
+      })
 
       return {
         success: true,

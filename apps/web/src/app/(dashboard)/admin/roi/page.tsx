@@ -191,6 +191,9 @@ export default async function RoiPage() {
           <li>
             Calibration proposals: <Link href="/admin/calibration" className="text-sky-300 hover:underline">Calibration</Link>
           </li>
+          <li>
+            Admin actions audit trail: <Link href="/admin/audit-log" className="text-sky-300 hover:underline">Admin audit log</Link>
+          </li>
         </ul>
       </section>
     </div>
