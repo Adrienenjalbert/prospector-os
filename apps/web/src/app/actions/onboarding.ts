@@ -15,6 +15,7 @@ import {
   type FunnelConfig,
   type FunnelProposal,
 } from '@/lib/onboarding/proposals'
+import { generateDemoDataset } from '@/lib/onboarding/demo-data'
 
 // =============================================================================
 // Validation schemas
@@ -585,4 +586,316 @@ export async function applyFunnelConfig(config: FunnelConfig, note?: string) {
     event_type: 'onboarding_step_completed',
     payload: { step: 'funnel' },
   })
+}
+
+// =============================================================================
+// Demo onboarding (Phase 3 T2.5)
+// =============================================================================
+//
+// Replaces the CRM-connect → sync → score loop for the "Try with sample
+// data" wizard path. Operates on the user's existing tenant row (the
+// auth bootstrap already created it); does NOT create a fresh tenant
+// behind their back. The end result is a tenant whose
+// `business_config.is_demo === true`, with seeded companies +
+// opportunities + contacts + signals, plus a synthetic rep_profile
+// linked to the user so the inbox query path works.
+//
+// Idempotent on retry: every insert uses `onConflict` on the
+// (tenant_id, crm_id) tuple, matching the production sync's upsert
+// pattern. A second click of the button re-seeds the same shapes
+// without producing duplicates.
+
+/**
+ * Result shape returned to the client. The wizard uses
+ * `companies_seeded` to populate its sync-step summary and decide
+ * whether to route the user past the ICP/funnel steps directly to
+ * the inbox.
+ */
+export interface DemoOnboardingResult {
+  companies_seeded: number
+  opportunities_seeded: number
+  contacts_seeded: number
+  signals_seeded: number
+  scored: number
+  is_demo: true
+}
+
+export async function runDemoOnboarding(): Promise<DemoOnboardingResult> {
+  // Hard gate: demo mode is feature-flagged for the first week of
+  // production rollout per the proposal. Enables QA to ship the path
+  // dark, validate end-to-end, then flip on.
+  if (process.env.ONBOARDING_DEMO_MODE !== 'on') {
+    throw new Error(
+      'Demo onboarding is disabled. Set ONBOARDING_DEMO_MODE=on to enable.',
+    )
+  }
+
+  const { userId, tenantId } = await requireProfile()
+  const admin = getServiceSupabase()
+
+  // Stamp the tenant as a demo tenant + record metadata about WHEN
+  // and BY WHOM the seed happened. Keep any existing business_config
+  // keys (description, slack_*) intact.
+  const { data: tenantRow } = await admin
+    .from('tenants')
+    .select('business_config, slug')
+    .eq('id', tenantId)
+    .single()
+  const existingConfig =
+    (tenantRow?.business_config as Record<string, unknown> | null) ?? {}
+  const businessConfig = {
+    ...existingConfig,
+    is_demo: true,
+    demo_seeded_at: new Date().toISOString(),
+    demo_seeded_by_user_id: userId,
+  }
+
+  const { error: tenantUpdateErr } = await admin
+    .from('tenants')
+    .update({
+      business_config: businessConfig,
+      crm_type: 'demo',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', tenantId)
+
+  if (tenantUpdateErr) {
+    throw new Error(
+      `Could not flag tenant as demo: ${tenantUpdateErr.message}`,
+    )
+  }
+
+  // Create or refresh a synthetic rep_profile linked to the user so
+  // the inbox query path (`owner_crm_id` lookup) returns rows.
+  const ownerCrmId = `demo-rep-${userId.slice(0, 8)}`
+  const { data: rep, error: repErr } = await admin
+    .from('rep_profiles')
+    .upsert(
+      {
+        tenant_id: tenantId,
+        crm_id: ownerCrmId,
+        name: 'Demo Rep',
+        email: 'demo-rep@example.com',
+        active: true,
+        market: 'demo',
+      },
+      { onConflict: 'tenant_id,crm_id' },
+    )
+    .select('id')
+    .single()
+  if (repErr || !rep) {
+    throw new Error(
+      `Could not create demo rep profile: ${repErr?.message ?? 'unknown error'}`,
+    )
+  }
+
+  // Link the user's profile to the demo rep so subsequent inbox
+  // loads find their book. Best-effort — if rep_profile_id already
+  // points elsewhere we leave it alone (the user might be on a
+  // mixed real+demo tenant).
+  const { data: userProfile } = await admin
+    .from('user_profiles')
+    .select('rep_profile_id')
+    .eq('id', userId)
+    .single()
+  if (
+    !userProfile ||
+    (userProfile as { rep_profile_id?: string | null }).rep_profile_id == null
+  ) {
+    await admin
+      .from('user_profiles')
+      .update({ rep_profile_id: rep.id })
+      .eq('id', userId)
+  }
+
+  const dataset = generateDemoDataset({ ownerCrmId })
+
+  // Insert companies; collect the generated UUIDs so opps + contacts
+  // + signals can reference them.
+  const companyIdMap = new Map<string, string>()
+  for (const co of dataset.companies) {
+    const { data, error } = await admin
+      .from('companies')
+      .upsert(
+        {
+          tenant_id: tenantId,
+          crm_id: co.crm_id,
+          crm_source: 'demo',
+          name: co.name,
+          domain: co.domain,
+          industry: co.industry,
+          industry_group: co.industry_group,
+          employee_count: co.employee_count,
+          employee_range: co.employee_range,
+          annual_revenue: co.annual_revenue,
+          hq_city: co.hq_city,
+          hq_country: co.hq_country,
+          location_count: co.location_count,
+          tech_stack: co.tech_stack,
+          owner_crm_id: co.owner_crm_id,
+          enriched_at: new Date().toISOString(),
+          enrichment_source: 'demo',
+        },
+        { onConflict: 'tenant_id,crm_id' },
+      )
+      .select('id')
+      .single()
+    if (error) {
+      console.warn(`[demo-onboarding] company insert ${co.name}:`, error.message)
+      continue
+    }
+    if (data) companyIdMap.set(co.crm_id, data.id as string)
+  }
+
+  // Insert opportunities — `stage_entered_at` is back-dated by
+  // `days_in_stage` so the stalled-deal detection has plausible
+  // input.
+  let opportunitiesSeeded = 0
+  for (const opp of dataset.opportunities) {
+    const companyId = companyIdMap.get(opp.company_crm_id)
+    if (!companyId) continue
+    const stageEnteredAt = new Date(
+      Date.now() - opp.days_in_stage * 86_400_000,
+    ).toISOString()
+    const { error } = await admin.from('opportunities').upsert(
+      {
+        tenant_id: tenantId,
+        crm_id: opp.crm_id,
+        company_id: companyId,
+        owner_crm_id: opp.owner_crm_id,
+        name: opp.name,
+        value: opp.value,
+        currency: 'GBP',
+        stage: opp.stage,
+        stage_order: opp.stage_order,
+        probability: opp.probability,
+        days_in_stage: opp.days_in_stage,
+        stage_entered_at: stageEnteredAt,
+        is_stalled: opp.is_stalled,
+        stall_reason: opp.stall_reason,
+        is_closed: false,
+        is_won: false,
+      },
+      { onConflict: 'tenant_id,crm_id' },
+    )
+    if (!error) opportunitiesSeeded += 1
+  }
+
+  // Insert contacts. Use the same `seed:<email>` synthetic crm_id
+  // pattern that scripts/seed.ts uses so the upsert key matches and
+  // re-seeds are idempotent.
+  let contactsSeeded = 0
+  for (const ct of dataset.contacts) {
+    const companyId = companyIdMap.get(ct.company_crm_id)
+    if (!companyId) continue
+    const syntheticCrmId = `demo:${ct.email.toLowerCase()}`
+    const { error } = await admin.from('contacts').upsert(
+      {
+        tenant_id: tenantId,
+        company_id: companyId,
+        crm_id: syntheticCrmId,
+        first_name: ct.first_name,
+        last_name: ct.last_name,
+        title: ct.title,
+        seniority: ct.seniority,
+        department: ct.department,
+        email: ct.email,
+        phone: ct.phone,
+        is_champion: ct.is_champion,
+        is_decision_maker: ct.is_decision_maker,
+        relevance_score: ct.is_decision_maker ? 80 : 40,
+        last_activity_date: new Date(
+          Date.now() - Math.floor(Math.random() * 14) * 86_400_000,
+        ).toISOString(),
+        last_crm_sync: new Date().toISOString(),
+      },
+      { onConflict: 'tenant_id,crm_id' },
+    )
+    if (!error) contactsSeeded += 1
+  }
+
+  // Signals — these don't have a `crm_id` so we can't upsert. Delete
+  // any existing demo-source signals for this tenant first to keep
+  // re-seeds idempotent (without this, every click compounds the
+  // signal count).
+  await admin
+    .from('signals')
+    .delete()
+    .eq('tenant_id', tenantId)
+    .eq('source', 'demo')
+
+  let signalsSeeded = 0
+  for (const sig of dataset.signals) {
+    const companyId = companyIdMap.get(sig.company_crm_id)
+    if (!companyId) continue
+    const detectedAt = new Date(
+      Date.now() - sig.recency_days * 86_400_000,
+    ).toISOString()
+    const { error } = await admin.from('signals').insert({
+      tenant_id: tenantId,
+      company_id: companyId,
+      signal_type: sig.signal_type,
+      title: sig.title,
+      source: 'demo',
+      relevance_score: sig.relevance_score,
+      weight_multiplier: 1.0,
+      recency_days: sig.recency_days,
+      weighted_score: sig.relevance_score,
+      urgency: sig.urgency,
+      detected_at: detectedAt,
+    })
+    if (!error) signalsSeeded += 1
+  }
+
+  // Run scoring directly via the same cron route the production sync
+  // path uses. The route iterates ALL tenants but the scoring is
+  // tenant-scoped and idempotent, so calling it from here just
+  // ensures the demo tenant gets scored before the user lands on
+  // the inbox.
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000'
+  const proto = h.get('x-forwarded-proto') ?? 'http'
+  const cronSecret = process.env.CRON_SECRET
+  const baseUrl = `${proto}://${host}`
+  const authHeaders: Record<string, string> = cronSecret
+    ? { Authorization: `Bearer ${cronSecret}` }
+    : {}
+  const scoreRes = await runPipelineStep(baseUrl, '/api/cron/score', authHeaders, 'scored')
+
+  // Telemetry — match the real-flow event sequence so the funnel
+  // widget on /admin/pilot doesn't show demo runs as "stuck on the
+  // CRM step".
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'crm_connected',
+    payload: { crm_type: 'demo', webhook_subscribed: false },
+  })
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_step_completed',
+    payload: { step: 'crm', mode: 'demo' },
+  })
+  await emitAgentEvent(admin, {
+    tenant_id: tenantId,
+    user_id: userId,
+    event_type: 'onboarding_step_completed',
+    payload: {
+      step: 'sync',
+      mode: 'demo',
+      synced: dataset.companies.length,
+      enriched: dataset.companies.length,
+      scored: scoreRes.count ?? 0,
+    },
+  })
+
+  return {
+    companies_seeded: companyIdMap.size,
+    opportunities_seeded: opportunitiesSeeded,
+    contacts_seeded: contactsSeeded,
+    signals_seeded: signalsSeeded,
+    scored: scoreRes.count ?? 0,
+    is_demo: true,
+  }
 }

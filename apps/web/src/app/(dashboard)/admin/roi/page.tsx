@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createSupabaseServer } from '@/lib/supabase/server'
+import { isDemoTenantConfig } from '@/lib/demo-tenant'
 
 export const metadata = { title: 'ROI dashboard' }
 export const dynamic = 'force-dynamic'
@@ -49,6 +50,19 @@ export default async function RoiPage() {
 
   const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
   const quarterAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
+
+  // Phase 3 T2.5 — surface demo-tenant status loudly so the operator
+  // never confuses demo numbers with real ones. The check itself is
+  // pure (`isDemoTenantConfig` is a JSON-blob inspection); we still
+  // run the SELECT because we need `business_config` either way.
+  const { data: tenantRow } = await supabase
+    .from('tenants')
+    .select('business_config')
+    .eq('id', profile.tenant_id)
+    .single()
+  const isDemo = isDemoTenantConfig(
+    (tenantRow as { business_config?: unknown } | null)?.business_config,
+  )
 
   const [
     actionsRes,
@@ -156,11 +170,30 @@ export default async function RoiPage() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <header>
-        <h1 className="text-2xl font-semibold text-zinc-100">ROI</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold text-zinc-100">ROI</h1>
+          {isDemo && (
+            <span
+              className="inline-flex items-center rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-amber-200"
+              title="This tenant was seeded with sample data via the wizard's Try-with-sample-data path."
+            >
+              Demo tenant
+            </span>
+          )}
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Sourced live from agent_events + outcome_events + attributions. No hardcoded figures.
           Control-cohort users are attributed but excluded from influenced-ARR lift.
         </p>
+        {isDemo && (
+          <p className="mt-2 rounded-md border border-amber-800/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200/90">
+            <strong className="font-semibold">Demo data:</strong> these
+            numbers come from the seeded sample dataset, not from real
+            user activity. They&apos;re excluded from any cross-tenant
+            roll-up the leadership view aggregates. Connect a real CRM
+            to start measuring real ROI.
+          </p>
+        )}
       </header>
 
       <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">

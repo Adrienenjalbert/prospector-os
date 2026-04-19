@@ -25,7 +25,7 @@
 6. [The knowledge layer — a sales-aware assistant](#6-the-knowledge-layer--a-sales-aware-assistant)
 7. [The agent — one runtime, four surfaces](#7-the-agent--one-runtime-four-surfaces)
 8. [Customisation without code — per-tenant everything](#8-customisation-without-code--per-tenant-everything)
-9. [Onboarding — five minutes, agent-assisted, derived from your data](#9-onboarding--five-minutes-agent-assisted-derived-from-your-data)
+9. [Onboarding — five minutes on demo data, 15-30 minutes for a real CRM](#9-onboarding--five-minutes-on-demo-data-15-30-minutes-for-a-real-crm)
 10. [Signal-over-noise — the gates that protect adoption](#10-signal-over-noise--the-gates-that-protect-adoption)
 11. [Manager and leadership reporting — defensible ROI](#11-manager-and-leadership-reporting--defensible-roi)
 12. [Cost discipline — how it stays cheap](#12-cost-discipline--how-it-stays-cheap)
@@ -473,10 +473,22 @@ as the tenant accumulates won deals in that vertical.
 
 ---
 
-## 9. Onboarding — five minutes, agent-assisted, derived from your data
+## 9. Onboarding — five minutes on demo data, 15-30 minutes for a real CRM
 
-Onboarding is itself a product surface. The promise: **first cited answer
-in 5 minutes, no manual configuration required.**
+Onboarding is itself a product surface. The promise has two halves
+because the timing genuinely differs:
+
+- **Demo path (no CRM):** **first cited answer in ≤ 5 minutes.** One
+  click on "Try with sample data" seeds 25 vendor-neutral companies,
+  ~10 opportunities, ~150 contacts, ~7 signals, runs scoring, and
+  drops the user on `/inbox`. Tenant is stamped
+  `business_config.is_demo: true` so its numbers never leak into a
+  cross-tenant roll-up; `/admin/roi` shows a "Demo tenant" banner.
+- **Real path (CRM connected):** **15-30 minutes end-to-end** — CRM
+  sync, enrichment, ICP calibration, funnel detection, baseline
+  survey. The wizard's welcome step is honest about both timings;
+  nobody promises 5 minutes for a real run because that requires
+  lying about either sync time or calibration depth.
 
 ### 9.1 The wizard (six steps)
 
@@ -670,6 +682,8 @@ plus the onboarding wizard run-through. **No code changes.**
 |---|---|---|---|
 | Median question → cited answer | ~15 minutes (survey) | ≤ 30 seconds | `agent_events` durations |
 | P95 question → cited answer | — | ≤ 60 seconds | `agent_events` durations |
+| Time to first cited answer (demo path) | — | ≤ 5 minutes | `onboarding_step_started`/`_completed` pair on `crm` step (when `mode=demo`) → first `response_finished` event |
+| Time to first cited answer (real path) | — | ≤ 30 minutes | Same pair on `preferences` step → first `response_finished` event |
 | Cited-answer rate | — | ≥ 95% | `agent_events.payload.citation_count` |
 | Thumbs-up rate | — | ≥ 80% | `agent_interaction_outcomes` |
 | Weekly active users (pilot) | — | ≥ 80% of enrolled | `agent_events` distinct user count |
