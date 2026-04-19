@@ -167,12 +167,36 @@ export const citationEnforcer: ToolMiddleware = {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in middleware 2: writeApprovalGate
-// Blocks tools declared as CRM mutators (tool_registry row has
-// execution_config.mutates_crm = true) from running without an explicit
-// approval token in args. Returns an `awaiting_approval` structured result
-// the agent can surface to the user via the SuggestedActions `[DO]` chip.
+// Built-in middleware 2: writeApprovalGate (FAIL-CLOSED, Phase 3 T1.1)
 // ---------------------------------------------------------------------------
+//
+// Blocks tools declared as CRM mutators (tool_registry row has
+// execution_config.mutates_crm = true) from running, FULL STOP. The
+// previous version of this middleware accepted any non-empty
+// `approval_token` string as a valid approval, with the comment "real
+// tokens are validated at the handler level against a short-lived nonce
+// table in Phase 4.1". That nonce table never shipped, no handler ever
+// validated the token, so a hallucinating or adversarial model could
+// pass `approval_token: "ok"` and bypass the entire human-in-the-loop
+// guarantee promised in MISSION.md "What we explicitly do not do" #3 and
+// in the agent behaviour rules in `_shared.ts`. (See audit area C, P0.)
+//
+// FIX (T1.1): the gate now denies write tools unconditionally and
+// returns the `awaiting_approval` shape so the agent surfaces a `[DO]`
+// chip the user can read but cannot execute. CRM write-back is also
+// disabled at the data layer via `scripts/disable-crm-writes.ts` so
+// this gate is defence-in-depth for any tool_registry row that gets
+// re-enabled by mistake.
+//
+// REMOVAL (T3.1): when the `pending_crm_writes` staging table ships,
+// this middleware is deleted. The new flow stages the proposed write
+// into a row, the user clicks `[DO]`, the UI POSTs to
+// `/api/agent/approve`, and that endpoint executes the HubSpot call
+// directly. The model never executes the write, no token is involved,
+// no gate is needed.
+//
+// Until then: every write tool call is a no-op that produces a
+// human-readable summary the rep can act on manually.
 
 function isWriteTool(row: ToolRegistryRow): boolean {
   const cfg = row.execution_config as Record<string, unknown> | null
@@ -184,25 +208,27 @@ export const writeApprovalGate: ToolMiddleware = {
   async preToolUse(ctx, args) {
     if (!isWriteTool(ctx.registryRow)) return { allow: true }
 
-    const approval = (args as Record<string, unknown> | null)?.approval_token
-    if (typeof approval === 'string' && approval.length > 0) {
-      // Approval token present — let it through. Real tokens are validated
-      // at the handler level against a short-lived nonce table in Phase 4.1.
-      return { allow: true }
-    }
-
+    // No `approval_token` early-allow path. The token check was a
+    // type-only gate (any non-empty string passed) and the nonce
+    // table that was supposed to validate it was never built.
+    // Until T3.1 ships the staging table, EVERY write tool call is
+    // denied — the agent surfaces the proposed args as a `[DO]` chip
+    // for the rep to act on manually.
     return {
       allow: false,
-      reason: 'write_requires_approval',
+      reason: 'write_temporarily_disabled',
       result: {
         awaiting_approval: true,
         tool: ctx.slug,
         proposed_args: args,
-        // The agent should surface this as a `[DO]` chip. The SuggestedActions
-        // parser in `commonBehaviourRules` understands the shape.
-        next_action: `Confirm with the user before running ${ctx.slug}. If confirmed, re-invoke with an approval_token.`,
+        // The agent should surface this as a `[DO]` chip. The
+        // SuggestedActions parser in `commonBehaviourRules`
+        // understands the shape. Today the chip is informational
+        // only — clicking it surfaces the proposed write but does
+        // not execute (the executor staging table lands in T3.1).
+        next_action: `Surface the proposed ${ctx.slug} call to the user as a [DO] chip. CRM write-back is temporarily disabled platform-wide; the rep must perform the action in the CRM directly until the approval-staging system ships.`,
       },
-      additionalContext: `Tool ${ctx.slug} mutates CRM state. MISSION forbids auto-action without human approval — surface an approval chip to the user.`,
+      additionalContext: `Tool ${ctx.slug} would mutate CRM state. CRM write-back is temporarily DISABLED platform-wide because the previous approval gate had a string-equality bypass (see docs/review/01-audit.md area C). Phase 3 T3.1 ships a real staging table; until then the agent recommends the action and the rep performs it manually. Do NOT attempt to bypass with a fabricated approval_token — none is accepted.`,
     }
   },
 }
