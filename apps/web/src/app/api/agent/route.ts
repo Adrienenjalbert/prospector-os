@@ -18,7 +18,6 @@ import {
   updateWikiPagePosteriors,
 } from '@/lib/memory/bandit'
 import type { AgentContext } from '@prospector/core'
-import type { ContextSelection } from '@/lib/agent/context-strategies'
 import {
   AGENT_TYPES,
   buildSystemPromptForAgent,
@@ -36,6 +35,11 @@ import {
 } from '@prospector/core'
 import { recordCitationsFromToolResult } from '@/lib/agent/citations'
 import { chooseModel, getModel } from '@/lib/agent/model-registry'
+import { getHaikuThumbsUpRate } from '@/lib/agent/intent-quality'
+import {
+  loadProfilesForPrompt,
+  synthesizePackerSuccessContext,
+} from '@/lib/agent/profile-loader'
 import { compactConversation, COMPACTION_CONSTANTS } from '@/lib/agent/compaction'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -86,85 +90,15 @@ function classifyIntent(lastUserText: string): IntentClass {
   return 'general_query'
 }
 
-/**
- * Hints we hand the slice selector so it can fire stage- and signal-aware
- * boosts. The selector defaults to `stage='other', isStalled=false,
- * signalTypes=[]` when these are absent — which makes the `whenStalled`
- * trigger inert and the signal-substring scoring blind.
- *
- * We derive from the legacy AgentContext (already loaded for prompt
- * builders) so this stays a pure transform: no new DB roundtrip, no
- * dependency on the packer reaching back into the route's data.
- *
- * Order of precedence for `dealStage`:
- *   1. The active deal's stage (when on a deal/opportunity page).
- *   2. The active account's most-progressed deal stage (heuristic for
- *      account_deep selection — tells the selector what stage rep is
- *      likely thinking about).
- *   3. null (selector falls back to its default).
- */
-interface IntentHints {
-  dealStage: string | null
-  isStalled: boolean
-  signalTypes: string[]
-}
-
-function deriveIntentHints(
-  ctx: AgentContext | null,
-  selection: ContextSelection,
-): IntentHints {
-  if (!ctx) {
-    return { dealStage: null, isStalled: false, signalTypes: [] }
-  }
-
-  let dealStage: string | null = null
-  let isStalled = false
-
-  if (selection.strategy === 'deal_deep' && ctx.current_deal) {
-    dealStage = ctx.current_deal.stage ?? null
-    if (selection.activeDealId) {
-      isStalled = ctx.stalled_deals.some((d) => d.id === selection.activeDealId)
-    }
-  } else if (selection.strategy === 'account_deep' && selection.activeCompanyId) {
-    const accountStalled = ctx.stalled_deals.find(
-      (d) => d.company_id === selection.activeCompanyId,
-    )
-    if (accountStalled) {
-      dealStage = accountStalled.stage ?? null
-      isStalled = true
-    } else {
-      const accountSummary = ctx.priority_accounts.find(
-        (a) => a.id === selection.activeCompanyId,
-      )
-      if (accountSummary) {
-        dealStage = accountSummary.stage ?? null
-        isStalled = accountSummary.is_stalled
-      }
-    }
-  } else {
-    // rep_centric / portfolio: surface the rep's most-stalled deal
-    // stage so the selector still gets a meaningful hint when no
-    // single object is active.
-    const firstStalled = ctx.stalled_deals[0]
-    if (firstStalled) {
-      dealStage = firstStalled.stage ?? null
-      isStalled = true
-    }
-  }
-
-  // Signal types: dedupe across the most recent signals, capped to
-  // keep the selector's substring scoring bounded.
-  const signalTypes = Array.from(
-    new Set(
-      (ctx.recent_signals ?? [])
-        .slice(0, 12)
-        .map((s) => s.signal_type)
-        .filter((t): t is string => typeof t === 'string' && t.length > 0),
-    ),
-  )
-
-  return { dealStage, isStalled, signalTypes }
-}
+// `deriveIntentHints` lived here pre-PR3. It read the legacy
+// AgentContext to compute (dealStage, isStalled, signalTypes) hints
+// for the packer's slice selector. PR3 reverses the run order
+// (packer first, profile-loader second), so by the time the
+// AgentContext exists the packer has already shipped — there's
+// nowhere to thread the hints. Dropped along with the per-turn
+// legacy-assembler call. If a future PR re-wires hints via a small
+// targeted query (active deal stage + stalled lookup), the function
+// can be reinstated; the prior implementation is in git history.
 
 const requestSchema = z.object({
   messages: z.array(
@@ -311,15 +245,24 @@ export async function POST(req: Request) {
     // classified above; pass it through alongside the per-tenant
     // model_routing override so the chooseModel policy can downgrade
     // cheap intents to Haiku safely.
+    //
+    // Quality gate (PR1): load the tenant's historical Haiku
+    // thumbs-up rate for this intent so chooseModel can refuse the
+    // downgrade when production data shows Haiku regresses quality
+    // for THIS tenant on THIS intent. The loader returns undefined
+    // when sample_count < 10 (or on any error), which chooseModel
+    // treats as "no gate signal — apply default policy".
     const tenantBizConfig = (tenantRow.business_config as Record<string, unknown> | null) ?? {}
     const tenantModelRouting = (tenantBizConfig.model_routing ?? null) as
       | Record<string, string>
       | null
+    const haikuThumbsUpRate = await getHaikuThumbsUpRate(supabase, tenantId, intentClass)
     const modelId = chooseModel({
       tokensUsedThisMonth: tokensUsed,
       monthlyBudget: budget,
       intentClass,
       tenantOverride: tenantModelRouting ?? undefined,
+      historicalHaikuThumbsUpRate: haikuThumbsUpRate,
     })
 
     const interactionId = crypto.randomUUID()
@@ -388,60 +331,87 @@ export async function POST(req: Request) {
       activeUrn: subjectUrn,
     })
 
-    // Run the legacy assembler FIRST so we can derive intent hints
-    // (dealStage, isStalled, signalTypes) from its result and pass them
-    // into the Context Pack. Without these hints the slice selector falls
-    // back to defaults (stage='other', isStalled=false, signalTypes=[])
-    // and the `whenStalled` / signal-substring scoring effectively never
-    // fires — biasing the selector toward generic slices regardless of
-    // what the rep is actually looking at.
+    // PR3: Run the packer FIRST. The legacy `assembleContextForStrategy`
+    // is now the packer-failure fallback, not an unconditional parallel
+    // fetch.
     //
-    // Phase 1 keeps both context paths — the legacy AgentContext stays
-    // the source of truth for prompt builders, the PackedContext layers
-    // in URN-cited slice citations and emits per-slice telemetry.
-    const agentContext =
-      dispatch.agentType === 'onboarding-coach'
-        ? null
-        : await assembleContextForStrategy({
-            supabase,
-            tenantId,
-            repId,
-            selection: contextSelection,
-            pageContext: context.pageContext,
-          })
+    // Trade-off: when the packer runs first, we don't yet have the
+    // `intentHints` that used to come from the legacy AgentContext —
+    // so the slice selector falls back to defaults
+    // (stage='other', isStalled=false, signalTypes=[]). This matches
+    // the existing Slack behaviour (run-agent.ts already calls the
+    // packer without hints). Net effect: minor relevance loss for
+    // `whenStalled`-triggered + signal-substring-scored slices on
+    // rep_centric/portfolio strategies. For deep strategies the
+    // legacy assembler already skipped the queries that fed those
+    // hints (B4.2), so no change.
+    //
+    // The saving: packer-success path replaces 7-9 legacy queries
+    // with a single rep_profile load (the only legacy field the
+    // prompt builders still consume). The packer is the source of
+    // truth for slice rendering via `formatPackedSections(packed)`.
+    const isOnboardingDispatch = dispatch.agentType === 'onboarding-coach'
 
-    // Derive selector hints from the legacy context. This is cheap (pure
-    // map lookups), and keeping it in the route rather than inside the
-    // packer avoids a second DB roundtrip per turn just to recover what
-    // the legacy assembler already loaded.
-    const intentHints = deriveIntentHints(agentContext, contextSelection)
+    const packed: PackedContext | null = isOnboardingDispatch
+      ? null
+      : await assembleContextPack({
+          supabase,
+          tenantId,
+          repId,
+          userId: user.id,
+          role: dispatch.role,
+          selection: contextSelection,
+          intentClass: intentClass,
+          pageContext: context.pageContext,
+          interactionId,
+          crmType: tenantRow.crm_type ?? null,
+          // C5.2: forward the user message so RAG slices can do
+          // similarity retrieval keyed on the actual question.
+          userMessageText: lastUserMessage,
+        }).catch((err) => {
+          // Context Pack failures must NEVER break a turn — log and
+          // proceed with the legacy AgentContext only.
+          console.warn('[agent] context-pack failed:', err)
+          return null
+        })
 
-    const packed: PackedContext | null =
-      dispatch.agentType === 'onboarding-coach'
-        ? null
-        : await assembleContextPack({
-            supabase,
-            tenantId,
-            repId,
-            userId: user.id,
-            role: dispatch.role,
-            selection: contextSelection,
-            intentClass: intentClass,
-            pageContext: context.pageContext,
-            interactionId,
-            crmType: tenantRow.crm_type ?? null,
-            dealStage: intentHints.dealStage,
-            isStalled: intentHints.isStalled,
-            signalTypes: intentHints.signalTypes,
-            // C5.2: forward the user message so RAG slices can do
-            // similarity retrieval keyed on the actual question.
-            userMessageText: lastUserMessage,
-          }).catch((err) => {
-            // Context Pack failures must NEVER break a turn — log and
-            // proceed with the legacy AgentContext only.
-            console.warn('[agent] context-pack failed:', err)
-            return null
-          })
+    // Resolve `agentContext` based on whether the packer succeeded.
+    // Success path: just the rep_profile (one query). Failure path:
+    // full legacy assembler (preserves pre-PR3 graceful degradation).
+    let agentContext: AgentContext | null
+    if (isOnboardingDispatch) {
+      agentContext = null
+    } else if (packed) {
+      const profiles = await loadProfilesForPrompt(supabase, tenantId, repId)
+      agentContext = synthesizePackerSuccessContext(profiles)
+      if (!agentContext) {
+        // Misconfigured tenant (no rep_profile row matching crm_id)
+        // — drop into the legacy assembler so the prompt at least
+        // gets the rest of its data. Avoids a silent regression
+        // where the rep header reads "the rep" forever.
+        console.warn(
+          '[agent] profile-loader returned null rep_profile — falling back to legacy assembler',
+        )
+        agentContext = await assembleContextForStrategy({
+          supabase,
+          tenantId,
+          repId,
+          selection: contextSelection,
+          pageContext: context.pageContext,
+        })
+      }
+    } else {
+      // Packer failed — full legacy assembler is the graceful
+      // degradation path. Preserves pre-PR3 behaviour exactly.
+      agentContext = await assembleContextForStrategy({
+        supabase,
+        tenantId,
+        repId,
+        selection: contextSelection,
+        pageContext: context.pageContext,
+      })
+    }
+
 
     // Forward slice citations into the collector so the same UI pills
     // surface them. Cite-or-shut-up holds for context evidence too.

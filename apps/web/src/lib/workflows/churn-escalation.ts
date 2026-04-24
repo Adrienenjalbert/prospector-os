@@ -232,28 +232,52 @@ export async function runChurnEscalation(
         const evidence = ctx.stepState.gather_evidence as GatheredEvidence
         const { guidance } = ctx.input as unknown as ChurnEscalationInput
 
+        // PR2: split the prompt into (a) a static cacheable system
+        // block carrying the evidence + tone rules + output format,
+        // and (b) a tiny per-iteration user message carrying only the
+        // validator's revision guidance. Anthropic's ephemeral prompt
+        // cache TTL (~5 min) covers any realistic loop duration, so
+        // iterations 2-5 read the evidence pack from cache instead of
+        // re-billing it every time.
+        //
+        // Pre-this-change the draft loop re-sent the entire evidence
+        // pack uncached on every iteration — measured at ~1k input
+        // tokens × up to 5 iterations × per Sonnet input rate. That
+        // was the worst-case ~$0.08/tenant/day line item in the
+        // strategic review (§14). Caching cuts iterations 2-5 to the
+        // cache-read rate (10× cheaper).
+        const cacheableSystem = buildCacheableSystem(evidence, guidance ?? '')
+
         const { passed, iterations, lastResult, lastReasons } = await loopUntil<DraftLetter>(
           {
             maxIterations: 5,
             freshContext: false,
             step: async ({ iteration, previousReasons }) => {
-              const revisionGuidance =
-                previousReasons.length > 0
-                  ? `\n\nPREVIOUS ATTEMPT FAILED validation:\n- ${previousReasons.join(
-                      '\n- ',
-                    )}\n\nFix every reason above.`
-                  : ''
-
-              const prompt = buildDraftPrompt(evidence, guidance ?? '', revisionGuidance)
+              const userMessage = buildIterationUser(previousReasons, iteration)
               // B4.1: switched from `generateText` + JSON.parse to
               // `generateObject` with the shared ChurnLetterSchema.
               // Schema validation is server-side; malformed model
               // output throws a typed error rather than degrading
               // silently to an empty letter.
+              //
+              // PR2: messages-shape (system + user) instead of bare
+              // `prompt`, so the system block can carry
+              // `providerOptions.anthropic.cacheControl: ephemeral`.
+              // Mirrors the cache layout the agent route uses for
+              // `commonBehaviourRules()` (B3.1).
               const { object } = await generateObject({
                 model: getModel('anthropic/claude-sonnet-4'),
                 schema: ChurnLetterSchema,
-                prompt,
+                messages: [
+                  {
+                    role: 'system',
+                    content: cacheableSystem,
+                    providerOptions: {
+                      anthropic: { cacheControl: { type: 'ephemeral' } },
+                    },
+                  },
+                  { role: 'user', content: userMessage },
+                ],
                 maxTokens: 1200,
                 temperature: iteration === 0 ? 0.5 : 0.3,
               })
@@ -418,12 +442,30 @@ export async function runChurnEscalation(
 
 // ---------------------------------------------------------------------------
 // Draft helpers — builder, parser, validator.
+//
+// PR2: the legacy `buildDraftPrompt` is split into two helpers so the
+// generateObject call can use the messages shape with prompt caching:
+//
+//   buildCacheableSystem(evidence, guidance)
+//     → static across all iterations of the loopUntil. Carries the
+//       evidence pack, tone rules, output format. Marked
+//       `cacheControl: ephemeral` at the call site so iterations
+//       2..5 read it from cache.
+//
+//   buildIterationUser(previousReasons, iteration)
+//     → tiny, per-iteration. Carries only the validator's revision
+//       guidance and the iteration index. The first iteration emits
+//       the canonical "draft the letter" instruction; subsequent
+//       iterations emit the failure list.
+//
+// Splitting this way is what makes PR2 worth shipping — without the
+// split, the cached portion would change every iteration and the
+// cache would never hit.
 // ---------------------------------------------------------------------------
 
-function buildDraftPrompt(
+export function buildCacheableSystem(
   ev: GatheredEvidence,
   guidance: string,
-  revisionGuidance: string,
 ): string {
   const metricsBlock = ev.metrics
     .map((m) => `- ${m.label}: ${m.value}  (urn: ${m.urn})`)
@@ -461,13 +503,29 @@ function buildDraftPrompt(
     lossThemesBlock,
     ``,
     guidance ? `Owner guidance: ${guidance}` : '',
-    revisionGuidance,
     ``,
-    `Output JSON only, no markdown fences:`,
-    `{"subject": "<subject line>", "body": "<letter body, <= 400 words, include citations as [urn:rev:...]>", "cited_urns": ["urn:rev:...", ...]}`,
+    `Output schema fields:`,
+    `- subject: short subject line`,
+    `- body_markdown: letter body, <= 400 words, include citations inline as [urn:rev:...]`,
+    `- cited_urns: array of every URN you cited`,
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+export function buildIterationUser(
+  previousReasons: string[],
+  iteration: number,
+): string {
+  if (iteration === 0 || previousReasons.length === 0) {
+    return 'Draft the escalation now. Cite at least 3 URNs from the evidence above. Stay within 400 words.'
+  }
+  return [
+    'PREVIOUS ATTEMPT FAILED validation:',
+    ...previousReasons.map((r) => `- ${r}`),
+    '',
+    'Fix every reason above and re-emit the letter. Do not change the cited URNs to ones outside the evidence set.',
+  ].join('\n')
 }
 
 /**

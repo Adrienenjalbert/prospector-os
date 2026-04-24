@@ -108,7 +108,24 @@ export interface ModelPolicyInput {
   historicalHaikuThumbsUpRate?: number
 }
 
-const HAIKU_PREFERRED_INTENTS = new Set<string>(['lookup', 'general_query'])
+// Cheap intents — Haiku-by-default with the historical-quality gate
+// as the kill switch. The original set was just lookup + general_query;
+// the expansion below covers high-volume intents where Haiku is
+// competent on most tenants. Any tenant whose historical thumbs-up
+// rate on Haiku for one of these intents drops below
+// MIN_HAIKU_THUMBS_UP automatically falls back to Sonnet via the
+// gate inside `chooseModel` — no per-tenant config edits required.
+//
+// `meeting_prep`        — pulling cited evidence for the brief
+// `signal_triage`       — summarising why a signal matters
+// `stakeholder_mapping` — listing contacts and their role
+const HAIKU_PREFERRED_INTENTS = new Set<string>([
+  'lookup',
+  'general_query',
+  'meeting_prep',
+  'signal_triage',
+  'stakeholder_mapping',
+])
 const SONNET_PINNED_INTENTS = new Set<string>(['forecast', 'portfolio_health'])
 const MIN_HAIKU_THUMBS_UP = 0.7
 

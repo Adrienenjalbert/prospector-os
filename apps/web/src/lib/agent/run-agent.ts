@@ -18,6 +18,8 @@ import type { ContextSelection } from './context-strategies'
 import type { IntentClass, PackedContext } from './context'
 import type { AgentContext, PageContext } from '@prospector/core'
 import { chooseModel } from './model-registry'
+import { getHaikuThumbsUpRate } from './intent-quality'
+import { loadProfilesForPrompt, synthesizePackerSuccessContext } from './profile-loader'
 
 /**
  * Track D — unify Slack and dashboard runtimes.
@@ -92,6 +94,19 @@ export interface AssembleAgentRunInput {
    * to 3000). Slack passes 'brief' to keep DMs short.
    */
   repCommStyle?: 'brief' | 'casual' | 'formal' | null
+  /**
+   * Optional pre-loaded thumbs-up rate for `claude-haiku-4` on
+   * `intentClass`, used by `chooseModel`'s quality gate to refuse
+   * cheap-intent downgrades when historical Haiku quality is poor
+   * for this tenant.
+   *
+   * When omitted, the assembler loads it itself via
+   * `getHaikuThumbsUpRate`. Routes that already loaded it (e.g. for
+   * their own logging) can pass it in to avoid the extra round trip;
+   * undefined here is the default ("no signal — apply default
+   * routing policy").
+   */
+  historicalHaikuThumbsUpRate?: number
 }
 
 export interface AssembledAgentRun {
@@ -144,11 +159,22 @@ export async function assembleAgentRun(
   // used to hardcode Haiku; now both routes get the cost-aware
   // chooseModel decision so the tenant's `model_routing` overrides
   // apply equally.
+  //
+  // Quality gate (PR1): the historical Haiku thumbs-up rate for this
+  // (tenant, intent) is loaded here unless the caller already passed
+  // it in. `chooseModel` refuses the cheap-intent downgrade when the
+  // rate is below MIN_HAIKU_THUMBS_UP, so a regression on any tenant
+  // auto-engages the gate without code changes.
+  const haikuRate =
+    input.historicalHaikuThumbsUpRate ??
+    (await getHaikuThumbsUpRate(input.supabase, input.tenantId, input.intentClass))
+
   const modelId = chooseModel({
     tokensUsedThisMonth: input.tokensUsedThisMonth,
     monthlyBudget: input.monthlyBudget,
     intentClass: input.intentClass,
     tenantOverride: input.tenantModelRouting ?? undefined,
+    historicalHaikuThumbsUpRate: haikuRate,
   })
 
   const contextSelection = pickContextStrategy({
@@ -161,16 +187,19 @@ export async function assembleAgentRun(
   // builder explicitly wants the empty/null path.
   const isOnboarding = dispatch.agentType === 'onboarding-coach'
 
-  const agentContext = isOnboarding
-    ? null
-    : await assembleContextForStrategy({
-        supabase: input.supabase,
-        tenantId: input.tenantId,
-        repId: input.repId,
-        selection: contextSelection,
-        pageContext: input.pageContext,
-      })
-
+  // PR3: run the packer FIRST. The legacy `assembleContextForStrategy`
+  // is now a packer-failure fallback, not an unconditional parallel
+  // fetch. When the packer succeeds (the common case), we replace
+  // the 7-9 query legacy assembly with a single `loadProfilesForPrompt`
+  // call that just fetches the rep_profile row — the only legacy
+  // field the prompt builders actually still need (slice rendering
+  // already goes through `formatPackedSections(packed)` and the
+  // legacy slice arrays sit inside `else if (ctx)` branches that
+  // never execute when packed is non-null).
+  //
+  // Pre-this-change: legacy + packer ran in parallel. Post: packer
+  // first, then EITHER profile-load (cheap, success path) OR full
+  // legacy assembler (failure path).
   const packedContext: PackedContext | null = isOnboarding
     ? null
     : await assembleContextPack({
@@ -192,6 +221,44 @@ export async function assembleAgentRun(
         console.warn('[run-agent] context-pack failed:', err)
         return null
       })
+
+  let agentContext: AgentContext | null
+  if (isOnboarding) {
+    agentContext = null
+  } else if (packedContext) {
+    // Packer succeeded — load just the rep_profile (single query).
+    // If the profile load itself returns a null rep (misconfigured
+    // tenant), drop into the legacy assembler so a missing rep
+    // doesn't silently lose the rep header in the prompt.
+    const profiles = await loadProfilesForPrompt(
+      input.supabase,
+      input.tenantId,
+      input.repId,
+    )
+    agentContext = synthesizePackerSuccessContext(profiles)
+    if (!agentContext) {
+      console.warn(
+        '[run-agent] profile-loader returned null rep_profile — falling back to legacy assembler',
+      )
+      agentContext = await assembleContextForStrategy({
+        supabase: input.supabase,
+        tenantId: input.tenantId,
+        repId: input.repId,
+        selection: contextSelection,
+        pageContext: input.pageContext,
+      })
+    }
+  } else {
+    // Packer failed — full legacy assembler is the graceful
+    // degradation path. Preserves pre-PR3 behaviour exactly.
+    agentContext = await assembleContextForStrategy({
+      supabase: input.supabase,
+      tenantId: input.tenantId,
+      repId: input.repId,
+      selection: contextSelection,
+      pageContext: input.pageContext,
+    })
+  }
 
   const promptParts = await buildSystemPromptParts(
     dispatch.agentType,
