@@ -69,7 +69,20 @@ const allNavEntries: NavEntry[] = [
     ],
   },
   { type: 'link', href: "/settings", label: "Settings" },
-  { type: 'link', href: "/admin/config", label: "Admin", roles: ["admin", "revops"] },
+  {
+    type: 'dropdown',
+    label: 'Admin',
+    roles: ['admin', 'revops', 'manager'],
+    items: [
+      { href: '/admin/config', label: 'Config', roles: ['admin', 'revops'] },
+      { href: '/admin/memory', label: 'Memory', roles: ['admin', 'revops', 'manager'] },
+      { href: '/admin/wiki', label: 'Wiki', roles: ['admin', 'revops', 'manager'] },
+      { href: '/admin/adaptation', label: 'Adaptation', roles: ['admin', 'revops', 'manager'] },
+      { href: '/admin/calibration', label: 'Calibration', roles: ['admin', 'revops'] },
+      { href: '/admin/roi', label: 'ROI', roles: ['admin', 'revops', 'manager'] },
+      { href: '/admin/evals', label: 'Evals', roles: ['admin', 'revops'] },
+    ],
+  },
 ];
 
 function getNavForRole(role: string): NavEntry[] {

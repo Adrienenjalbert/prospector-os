@@ -46,44 +46,42 @@ async function runDeepResearch(
   domain: string,
   config: { model: string; temperature: number; max_tokens: number }
 ): Promise<ClaudeSignal[]> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return []
+  // B3.4 + B4.1: route via `getModel()` AND switch to
+  // `generateObject` with the shared ResearchSignalsSchema. Eliminates
+  // the silent-parse-failure mode of the old `JSON.parse(text.match(...))`
+  // path and gives the AI Gateway full visibility into the call.
+  const { getModel } = await import('@/lib/agent/model-registry')
+  const { generateObject } = await import('ai')
+  const { ResearchSignalsSchema } = await import('@prospector/core')
+
+  const rawModel = config.model ?? 'claude-sonnet-4-20250514'
+  const modelId = rawModel.includes('/') ? rawModel : `anthropic/${rawModel}`
 
   try {
     const prompt = DEEP_RESEARCH_PROMPT
       .replace('{company_name}', companyName)
       .replace('{domain}', domain)
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.model ?? 'claude-sonnet-4-20250514',
-        max_tokens: config.max_tokens ?? 3000,
-        temperature: config.temperature ?? 0.2,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    const { object } = await generateObject({
+      model: getModel(modelId),
+      schema: ResearchSignalsSchema,
+      prompt,
+      maxTokens: config.max_tokens ?? 3000,
+      temperature: config.temperature ?? 0.2,
     })
 
-    if (!res.ok) {
-      console.error('[cron/signals] Claude API error:', res.status)
-      return []
-    }
-
-    const data = await res.json()
-    const text = data.content?.[0]?.text ?? ''
-
-    const jsonMatch = text.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return []
-
-    const parsed = JSON.parse(jsonMatch[0])
-    if (!Array.isArray(parsed)) return []
-
-    return parsed as ClaudeSignal[]
+    // Adapt to the legacy ClaudeSignal shape used by the rest of this
+    // file. Drops `source_url` for now (the legacy insert-side doesn't
+    // use it); D7.1's web-search replacement will store source_url
+    // directly on `signals.source_url` when grounded retrieval lands.
+    return object.map((s) => ({
+      type: s.type,
+      title: s.title,
+      description: s.description,
+      relevance: s.relevance,
+      urgency: s.urgency,
+      recommended_action: s.recommended_action ?? undefined,
+    }))
   } catch (err) {
     console.error('[cron/signals] Deep research failed for', companyName, err)
     return []
@@ -245,13 +243,32 @@ export async function GET(req: Request) {
             if (inserted) totalSignals++
           }
 
-          const researchGated = deepResearchConfig
+          // Deep research is gated behind an explicit per-tenant opt-in
+          // (`business_config.deep_research_enabled`). Default OFF.
+          //
+          // Why: `runDeepResearch` invokes Sonnet without any web-search
+          // tool, asking the model to "research" companies from training
+          // data alone. The output is fluent fiction ("hiring surge",
+          // "leadership change") that gets persisted as `signals` rows
+          // and feeds the propensity scorer with hallucinated inputs.
+          // The hardcoded staffing-vertical prompt also violates the
+          // multi-tenant rule for any other tenant.
+          //
+          // The proper replacement is a tool-using web-search Sonnet
+          // step — see plan D7.1. Until then, only tenants who explicitly
+          // opt in get this experimental signal source, and they accept
+          // the trade-off.
+          const tenantBizConfig = (tenant.business_config as Record<string, unknown> | null) ?? {}
+          const deepResearchOptIn = tenantBizConfig.deep_research_enabled === true
+
+          const researchGated = deepResearchConfig && deepResearchOptIn
           ? await shouldRunDeepResearch(supabase, tenant.id, company.icp_tier, company.name)
           : false
 
         if (
             company.icp_tier === 'A' &&
             deepResearchConfig &&
+            deepResearchOptIn &&
             deepResearchCount < maxDeepResearch &&
             (deepResearchConfig.only_for_tiers ?? []).includes('A') &&
             researchGated

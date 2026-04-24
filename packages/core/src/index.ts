@@ -8,6 +8,9 @@ export * from './types/enrichment'
 export * from './types/notifications'
 export * from './types/agent'
 export * from './types/platform'
+export * from './types/structured-outputs'
+export * from './types/memory'
+export * from './types/wiki'
 
 // Scoring Engine
 export { computeICPScore } from './scoring/icp-scorer'
@@ -40,8 +43,13 @@ export { detectStalls } from './funnel/stall-detector'
 export type { StallDetectionResult } from './funnel/stall-detector'
 export { computeImpactScores } from './funnel/impact-scorer'
 export type { StageStatus, ImpactScoreResult } from './funnel/impact-scorer'
-export { computeForecast } from './funnel/forecast'
-export type { ForecastInput, ForecastResult } from './funnel/forecast'
+export { computeForecast, computeBootstrapForecast } from './funnel/forecast'
+export type {
+  ForecastInput,
+  ForecastResult,
+  BootstrapForecastInput,
+  BootstrapForecastResult,
+} from './funnel/forecast'
 
 // Prioritisation Engine
 export { buildQueue } from './prioritisation/queue-builder'

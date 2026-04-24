@@ -534,6 +534,36 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     enabled: true,
   },
   {
+    slug: 'web_search',
+    display_name: 'Web Search (grounded)',
+    description:
+      "Run a web search via the platform-configured provider (Tavily by default; Exa or Brave when configured) and return the top hits with URLs, titles, snippets, and publication dates. Replaces the legacy hallucinated 'deep research' path: use whenever the agent needs information that isn't in the CRM or transcripts (recent funding, news, leadership changes, competitor mentions). Every result becomes a citation pill linking to the source URL — claims grounded here are auditable, unlike model-only research. Cap recency_days when freshness matters (e.g. 30 for breaking news, 180 for stable corporate intel).",
+    category: 'data_query',
+    tool_type: 'builtin',
+    execution_config: { handler: 'web_search' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Natural-language search query. Be specific — include the company name and the signal type you want.',
+        },
+        max_results: {
+          type: 'number',
+          description: 'Max number of search hits (1–10). Default 5.',
+        },
+        recency_days: {
+          type: 'number',
+          description: 'Restrict to sources published in the last N days (1–720). Default 180.',
+        },
+      },
+      required: ['query'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad', 'csm', 'leader'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
     slug: 'record_conversation_note',
     display_name: 'Record Conversation Note',
     description:
@@ -704,6 +734,106 @@ const BUILTIN_TOOLS: ToolSeed[] = [
       required: ['contact_urn', 'new_company_urn'],
     },
     available_to_roles: ['nae', 'ae', 'growth_ae', 'ad'],
+    is_builtin: true,
+    enabled: true,
+  },
+  // -------------------------------------------------------------------------
+  // C2 — account-intelligence bundle
+  // Three tier-2-compliant tools that close the obvious "I'm on this
+  // account, what do I need to know?" gaps. All require the embedding
+  // pipelines from migration 020 (find_similar_accounts → match_companies).
+  // -------------------------------------------------------------------------
+  {
+    slug: 'find_similar_accounts',
+    display_name: 'Find Similar Accounts',
+    description:
+      "Semantic search over the tenant's company embeddings (migration 020). Use to answer 'find accounts like Acme', 'show me lookalikes of our top 5 customers', or 'similar prospects to last quarter's wins'. Either pass an existing company UUID OR a free-text description ('EMEA fintechs with 200-500 employees and a recent SOC2 audit'). Returns the top-K matches by cosine similarity with similarity scores so the agent can decide whether to surface them.",
+    category: 'data_query',
+    tool_type: 'builtin',
+    execution_config: { handler: 'find_similar_accounts' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        reference_company_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID of an existing company in the tenant ontology to find similar accounts for.',
+        },
+        reference_text: {
+          type: 'string',
+          description: 'Free-text description of the kind of account to find. Provide instead of reference_company_id.',
+        },
+        exclude_self: {
+          type: 'boolean',
+          description: 'Drop the reference company from results when reference_company_id is set. Default true.',
+          default: true,
+        },
+        max_results: {
+          type: 'number',
+          default: 5,
+        },
+        threshold: {
+          type: 'number',
+          default: 0.7,
+        },
+      },
+      required: [],
+    },
+    available_to_roles: [...ALL_ROLES],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'extract_meddpicc_gaps',
+    display_name: 'Extract MEDDPICC Gaps',
+    description:
+      "Reads the MEDDPICC blob the transcript ingester already extracts (transcripts.meddpicc_extracted) and returns which fields are still missing for a given account. Zero new AI cost — the data is already on disk. Use when the rep asks 'what's missing on this deal' / 'do we know the economic buyer for X' / 'where are the MEDDPICC gaps'. Returns coverage_pct + a per-field map with the latest known value (or null) and citation back to the transcript that contributed each value.",
+    category: 'analysis',
+    tool_type: 'builtin',
+    execution_config: { handler: 'extract_meddpicc_gaps' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        company_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID of the company to inspect.',
+        },
+        lookback_days: {
+          type: 'number',
+          default: 90,
+        },
+      },
+      required: ['company_id'],
+    },
+    available_to_roles: [...ALL_ROLES],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'summarise_account_health',
+    display_name: 'Summarise Account Health',
+    description:
+      "One-paragraph state-of-the-account: latest health_snapshot vs the previous one, the trend, and the top recent signal types. Use for portfolio reviews, QBR prep, or whenever the rep asks 'how is account X doing'. Returns a structured payload + a `headline` string the agent can quote verbatim with citations to the snapshot row + top signal.",
+    category: 'analysis',
+    tool_type: 'builtin',
+    execution_config: { handler: 'summarise_account_health' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        company_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID of the company to summarise.',
+        },
+        lookback_days: {
+          type: 'number',
+          default: 60,
+        },
+      },
+      required: ['company_id'],
+    },
+    available_to_roles: [...ALL_ROLES],
     is_builtin: true,
     enabled: true,
   },

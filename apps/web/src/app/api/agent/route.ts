@@ -6,7 +6,19 @@ import {
   assembleContextPack,
   pickContextStrategy,
 } from '@/lib/agent/context-strategies'
-import { consumedSlicesFromResponse, type IntentClass } from '@/lib/agent/context'
+import {
+  consumedSlicesFromResponse,
+  citedMemoryIdsFromResponse,
+  injectedMemoryIdsFromPacked,
+  type IntentClass,
+  type PackedContext,
+} from '@/lib/agent/context'
+import {
+  updateMemoryPosteriors,
+  updateWikiPagePosteriors,
+} from '@/lib/memory/bandit'
+import type { AgentContext } from '@prospector/core'
+import type { ContextSelection } from '@/lib/agent/context-strategies'
 import {
   AGENT_TYPES,
   buildSystemPromptForAgent,
@@ -24,15 +36,20 @@ import {
 } from '@prospector/core'
 import { recordCitationsFromToolResult } from '@/lib/agent/citations'
 import { chooseModel, getModel } from '@/lib/agent/model-registry'
-import { compactConversation } from '@/lib/agent/compaction'
+import { compactConversation, COMPACTION_CONSTANTS } from '@/lib/agent/compaction'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
-// Phase 3.9: ROLLING_MESSAGE_LIMIT remains as the persistence cap on
-// `ai_conversations.messages` (we don't want unbounded growth there
-// either), but the ACTUAL prompt the model sees now goes through
-// compactConversation() which keeps the last 8 verbatim and Haiku-
-// summarises the older half into a system message.
-const ROLLING_MESSAGE_LIMIT = 40
+// `ROLLING_MESSAGE_LIMIT` is the persistence cap on
+// `ai_conversations.messages`. It must be at least the compaction tail
+// size (KEEP_RECENT_MESSAGES) so the model can always reload the
+// verbatim window from history; anything beyond the tail gets
+// summarised into `summary_text` on the conversation row, so storing
+// more raw turns past the tail is wasted bytes (and risks UIs that
+// render history showing more than the model ever saw).
+//
+// Keep ~2x the tail to give a small "look-back" buffer for analytics
+// surfaces or future compaction retries.
+const ROLLING_MESSAGE_LIMIT = COMPACTION_CONSTANTS.KEEP_RECENT_MESSAGES * 2
 const USAGE_MONTH_KEY = 'prospector_ai_usage_month'
 
 function currentUsageMonthKey(): string {
@@ -67,6 +84,86 @@ function classifyIntent(lastUserText: string): IntentClass {
   if (/(theme|churn|portfolio|health)/.test(t)) return 'portfolio_health'
   if (/(what|who|show|list|find)/.test(t)) return 'lookup'
   return 'general_query'
+}
+
+/**
+ * Hints we hand the slice selector so it can fire stage- and signal-aware
+ * boosts. The selector defaults to `stage='other', isStalled=false,
+ * signalTypes=[]` when these are absent — which makes the `whenStalled`
+ * trigger inert and the signal-substring scoring blind.
+ *
+ * We derive from the legacy AgentContext (already loaded for prompt
+ * builders) so this stays a pure transform: no new DB roundtrip, no
+ * dependency on the packer reaching back into the route's data.
+ *
+ * Order of precedence for `dealStage`:
+ *   1. The active deal's stage (when on a deal/opportunity page).
+ *   2. The active account's most-progressed deal stage (heuristic for
+ *      account_deep selection — tells the selector what stage rep is
+ *      likely thinking about).
+ *   3. null (selector falls back to its default).
+ */
+interface IntentHints {
+  dealStage: string | null
+  isStalled: boolean
+  signalTypes: string[]
+}
+
+function deriveIntentHints(
+  ctx: AgentContext | null,
+  selection: ContextSelection,
+): IntentHints {
+  if (!ctx) {
+    return { dealStage: null, isStalled: false, signalTypes: [] }
+  }
+
+  let dealStage: string | null = null
+  let isStalled = false
+
+  if (selection.strategy === 'deal_deep' && ctx.current_deal) {
+    dealStage = ctx.current_deal.stage ?? null
+    if (selection.activeDealId) {
+      isStalled = ctx.stalled_deals.some((d) => d.id === selection.activeDealId)
+    }
+  } else if (selection.strategy === 'account_deep' && selection.activeCompanyId) {
+    const accountStalled = ctx.stalled_deals.find(
+      (d) => d.company_id === selection.activeCompanyId,
+    )
+    if (accountStalled) {
+      dealStage = accountStalled.stage ?? null
+      isStalled = true
+    } else {
+      const accountSummary = ctx.priority_accounts.find(
+        (a) => a.id === selection.activeCompanyId,
+      )
+      if (accountSummary) {
+        dealStage = accountSummary.stage ?? null
+        isStalled = accountSummary.is_stalled
+      }
+    }
+  } else {
+    // rep_centric / portfolio: surface the rep's most-stalled deal
+    // stage so the selector still gets a meaningful hint when no
+    // single object is active.
+    const firstStalled = ctx.stalled_deals[0]
+    if (firstStalled) {
+      dealStage = firstStalled.stage ?? null
+      isStalled = true
+    }
+  }
+
+  // Signal types: dedupe across the most recent signals, capped to
+  // keep the selector's substring scoring bounded.
+  const signalTypes = Array.from(
+    new Set(
+      (ctx.recent_signals ?? [])
+        .slice(0, 12)
+        .map((s) => s.signal_type)
+        .filter((t): t is string => typeof t === 'string' && t.length > 0),
+    ),
+  )
+
+  return { dealStage, isStalled, signalTypes }
 }
 
 const requestSchema = z.object({
@@ -210,9 +307,19 @@ export async function POST(req: Request) {
       )
     }
 
+    // D7.2 — intent-aware routing. The route already has the intent
+    // classified above; pass it through alongside the per-tenant
+    // model_routing override so the chooseModel policy can downgrade
+    // cheap intents to Haiku safely.
+    const tenantBizConfig = (tenantRow.business_config as Record<string, unknown> | null) ?? {}
+    const tenantModelRouting = (tenantBizConfig.model_routing ?? null) as
+      | Record<string, string>
+      | null
     const modelId = chooseModel({
       tokensUsedThisMonth: tokensUsed,
       monthlyBudget: budget,
+      intentClass,
+      tenantOverride: tenantModelRouting ?? undefined,
     })
 
     const interactionId = crypto.randomUUID()
@@ -281,24 +388,38 @@ export async function POST(req: Request) {
       activeUrn: subjectUrn,
     })
 
-    // Run the legacy assembler and the new Context Pack packer in parallel.
-    // Phase 1 keeps both — the legacy AgentContext stays the source of
-    // truth for prompt builders, the PackedContext layers in URN-cited
-    // slice citations into the citation collector and emits per-slice
-    // telemetry the bandit + attribution workflows rely on.
-    const [agentContext, packed] = await Promise.all([
+    // Run the legacy assembler FIRST so we can derive intent hints
+    // (dealStage, isStalled, signalTypes) from its result and pass them
+    // into the Context Pack. Without these hints the slice selector falls
+    // back to defaults (stage='other', isStalled=false, signalTypes=[])
+    // and the `whenStalled` / signal-substring scoring effectively never
+    // fires — biasing the selector toward generic slices regardless of
+    // what the rep is actually looking at.
+    //
+    // Phase 1 keeps both context paths — the legacy AgentContext stays
+    // the source of truth for prompt builders, the PackedContext layers
+    // in URN-cited slice citations and emits per-slice telemetry.
+    const agentContext =
       dispatch.agentType === 'onboarding-coach'
-        ? Promise.resolve(null)
-        : assembleContextForStrategy({
+        ? null
+        : await assembleContextForStrategy({
             supabase,
             tenantId,
             repId,
             selection: contextSelection,
             pageContext: context.pageContext,
-          }),
+          })
+
+    // Derive selector hints from the legacy context. This is cheap (pure
+    // map lookups), and keeping it in the route rather than inside the
+    // packer avoids a second DB roundtrip per turn just to recover what
+    // the legacy assembler already loaded.
+    const intentHints = deriveIntentHints(agentContext, contextSelection)
+
+    const packed: PackedContext | null =
       dispatch.agentType === 'onboarding-coach'
-        ? Promise.resolve(null)
-        : assembleContextPack({
+        ? null
+        : await assembleContextPack({
             supabase,
             tenantId,
             repId,
@@ -309,13 +430,18 @@ export async function POST(req: Request) {
             pageContext: context.pageContext,
             interactionId,
             crmType: tenantRow.crm_type ?? null,
+            dealStage: intentHints.dealStage,
+            isStalled: intentHints.isStalled,
+            signalTypes: intentHints.signalTypes,
+            // C5.2: forward the user message so RAG slices can do
+            // similarity retrieval keyed on the actual question.
+            userMessageText: lastUserMessage,
           }).catch((err) => {
             // Context Pack failures must NEVER break a turn — log and
             // proceed with the legacy AgentContext only.
             console.warn('[agent] context-pack failed:', err)
             return null
-          }),
-    ])
+          })
 
     // Forward slice citations into the collector so the same UI pills
     // surface them. Cite-or-shut-up holds for context evidence too.
@@ -325,16 +451,17 @@ export async function POST(req: Request) {
       }
     }
 
-    // Build the system prompt as parts so the static prefix can be marked
-    // for Anthropic prompt caching. Cache window is 5 minutes (Anthropic
-    // ephemeral TTL) — matches typical chat-session length, so turn 2
-    // onwards reuses the cached static portion (~50% input-token
-    // reduction on the cached tokens, ~90% latency reduction).
+    // Build the system prompt as parts so both the static prefix AND
+    // the trailing behaviour-rules block can be marked for Anthropic
+    // prompt caching (B3.1 — two breakpoints). `intentClass` + `role`
+    // drive per-turn exemplar selection (A1.1) — the dynamic suffix
+    // splices the matching mined few-shots when present.
     const promptParts = await buildSystemPromptParts(
       dispatch.agentType,
       tenantId,
       agentContext,
       packed,
+      { intentClass, role: dispatch.role },
     )
 
     // Compact the message history (Phase 3.9). Threads ≤ 12 messages
@@ -352,30 +479,62 @@ export async function POST(req: Request) {
       conversationId: activeConversationId,
     })
 
-    // Anthropic supports multiple system messages and per-message
-    // providerOptions. We send two: one cacheable (static), one not
-    // (dynamic). When there is no dynamic content (onboarding-coach), fall
-    // back to the plain `system: string` form so we don't pay for an
-    // unnecessary message-array construction.
+    // Anthropic supports up to 4 cache breakpoints; we use TWO here
+    // (B3.1) so both the tenant/role-stable PREFIX and the
+    // tenant/role-stable trailing BEHAVIOUR RULES get cached, while
+    // per-turn dynamic data flows uncached between them. Layout:
+    //
+    //   system: staticPrefix      ← cached (breakpoint 1)
+    //   system: dynamicSuffix     ← per-turn, never cached
+    //   system: cacheableSuffix   ← cached (breakpoint 2) — usually
+    //                                commonBehaviourRules() at ~1.2k
+    //                                tokens. Kept at the end of the
+    //                                prompt for the lost-in-the-middle
+    //                                attention bonus on citation
+    //                                discipline.
+    //
+    // Onboarding-coach has no dynamic suffix and no cacheable suffix
+    // today, but we still cache its single static prefix (B3.2) — every
+    // onboarding-coach turn after the first re-uses the same large
+    // prompt, so caching it is pure win.
     const baseUserMessages = convertToCoreMessages(compacted.messages)
 
-    const useCaching = promptParts.dynamicSuffix.length > 0
-    const messagesForStream: CoreMessage[] = useCaching
-      ? [
-          {
-            role: 'system' as const,
-            content: promptParts.staticPrefix,
-            providerOptions: {
-              anthropic: { cacheControl: { type: 'ephemeral' } },
-            },
-          },
-          {
-            role: 'system' as const,
-            content: promptParts.dynamicSuffix,
-          },
-          ...baseUserMessages,
-        ]
-      : baseUserMessages
+    const cacheableSuffix = promptParts.cacheableSuffix ?? ''
+    const hasDynamic = promptParts.dynamicSuffix.length > 0
+    const hasCacheableSuffix = cacheableSuffix.length > 0
+
+    const messagesForStream: CoreMessage[] = []
+
+    // Always cache the static prefix when we have any further parts to
+    // stitch in. This is the B3.2 fix: previously the onboarding-coach
+    // (no dynamic, no suffix) fell into the `useCaching=false` branch
+    // and lost the cache entirely. Now even the prefix-only case caches.
+    messagesForStream.push({
+      role: 'system' as const,
+      content: promptParts.staticPrefix,
+      providerOptions: {
+        anthropic: { cacheControl: { type: 'ephemeral' } },
+      },
+    })
+
+    if (hasDynamic) {
+      messagesForStream.push({
+        role: 'system' as const,
+        content: promptParts.dynamicSuffix,
+      })
+    }
+
+    if (hasCacheableSuffix) {
+      messagesForStream.push({
+        role: 'system' as const,
+        content: cacheableSuffix,
+        providerOptions: {
+          anthropic: { cacheControl: { type: 'ephemeral' } },
+        },
+      })
+    }
+
+    messagesForStream.push(...baseUserMessages)
 
     const toolCallsMade: string[] = []
 
@@ -404,7 +563,6 @@ export async function POST(req: Request) {
 
     const result = streamText({
       model: getModel(modelId),
-      ...(useCaching ? {} : { system: promptParts.staticPrefix }),
       messages: messagesForStream,
       tools,
       maxSteps: 8,
@@ -486,10 +644,49 @@ export async function POST(req: Request) {
             .join('\n\n')
             .trim()
 
-          const usageTotal = event.steps.reduce(
-            (acc, s) => acc + (s.usage?.totalTokens ?? 0),
-            0
-          )
+          // Sum every dimension the AI SDK exposes so the
+          // `agent_token_costs_daily` view (P0.1) can compute USD
+          // cost per model with the cache-read discount applied.
+          // The AI SDK's `usage` object surfaces `promptTokens`,
+          // `completionTokens`, `totalTokens`, and (for Anthropic
+          // when the prompt cache hits) `cachedPromptTokens` /
+          // `cacheReadInputTokens` via providerMetadata. We accept
+          // multiple property names so we stay robust to SDK churn.
+          let usageInput = 0
+          let usageOutput = 0
+          let usageCachedInput = 0
+          let usageTotal = 0
+          for (const s of event.steps) {
+            const u = s.usage as
+              | {
+                  totalTokens?: number
+                  promptTokens?: number
+                  completionTokens?: number
+                  cachedPromptTokens?: number
+                  inputTokens?: number
+                  outputTokens?: number
+                }
+              | undefined
+            if (!u) continue
+            usageTotal += u.totalTokens ?? 0
+            usageInput += u.promptTokens ?? u.inputTokens ?? 0
+            usageOutput += u.completionTokens ?? u.outputTokens ?? 0
+            // Anthropic's cache-read counter lives at one of these
+            // names depending on SDK version. Prefer providerMetadata
+            // when present (more authoritative) and fall back.
+            const pm = (s as unknown as {
+              providerMetadata?: {
+                anthropic?: {
+                  cacheReadInputTokens?: number
+                  cacheCreationInputTokens?: number
+                }
+              }
+            }).providerMetadata
+            usageCachedInput +=
+              pm?.anthropic?.cacheReadInputTokens ??
+              u.cachedPromptTokens ??
+              0
+          }
 
           const baseMessages = messages.map(m => ({
             role: m.role as 'user' | 'assistant',
@@ -614,10 +811,75 @@ export async function POST(req: Request) {
               }))
               void emitAgentEvents(supabase, consumedEvents)
             }
+
+            // Phase 6 (1.2) — close the memory bandit loop. Emit one
+            // memory_cited per atom URN the response touched and one
+            // wiki_page_cited per page URN. Then batch-update the per-row
+            // Beta posterior on tenant_memories.prior_alpha/beta (and
+            // wiki_pages.prior_alpha/beta) — alpha += 1 per cited id,
+            // beta += 1 per injected id. The packer already emitted
+            // memory_injected / wiki_page_injected during load.
+            const cited = citedMemoryIdsFromResponse(assistantText, tenantId)
+            const injected = injectedMemoryIdsFromPacked(packed)
+
+            const memoryCitedEvents: AgentEventInput[] = cited.memoryIds.map((memoryId) => ({
+              tenant_id: tenantId,
+              interaction_id: interactionId,
+              user_id: user.id,
+              role: userRole,
+              event_type: 'memory_cited' as const,
+              subject_urn: urn.memory(tenantId, memoryId),
+              payload: {
+                memory_id: memoryId,
+                kind: 'unknown', // resolved post-hoc via tenant_memories join
+                urn: urn.memory(tenantId, memoryId),
+                intent_class: intentClass,
+              },
+            }))
+            const pageCitedEvents: AgentEventInput[] = cited.wikiPageIds.map((pageId) => ({
+              tenant_id: tenantId,
+              interaction_id: interactionId,
+              user_id: user.id,
+              role: userRole,
+              event_type: 'wiki_page_cited' as const,
+              subject_urn: urn.wikiPage(tenantId, pageId),
+              payload: {
+                page_id: pageId,
+                kind: 'unknown', // resolved post-hoc via wiki_pages join
+                urn: urn.wikiPage(tenantId, pageId),
+                intent_class: intentClass,
+              },
+            }))
+            const allCitedEvents = [...memoryCitedEvents, ...pageCitedEvents]
+            if (allCitedEvents.length > 0) {
+              void emitAgentEvents(supabase, allCitedEvents)
+            }
+
+            // Posterior updates — fire-and-forget. The memory-bandit
+            // module swallows any per-row failures so a single dead row
+            // can't break the whole turn's learning signal.
+            void updateMemoryPosteriors(
+              supabase,
+              tenantId,
+              injected.memoryIds,
+              cited.memoryIds,
+            )
+            void updateWikiPagePosteriors(
+              supabase,
+              tenantId,
+              injected.wikiPageIds,
+              cited.wikiPageIds,
+            )
           }
 
           // response_finished is the "label anchor" for attribution + eval growth.
           // Carries the summary metrics the optimiser will key off nightly.
+          //
+          // Token breakdown is split into (input | output | cached_input)
+          // so `agent_token_costs_daily` (migration 018 / P0.1) can
+          // compute precise USD cost per model with the prompt-cache
+          // discount applied. `tokens_total` is kept for legacy
+          // consumers (existing /admin/roi cited-rate calc).
           await emitAgentEvent(supabase, {
             tenant_id: tenantId,
             interaction_id: interactionId,
@@ -633,6 +895,9 @@ export async function POST(req: Request) {
               tool_calls: toolCallsMade,
               citation_count: citations.getCitations().length,
               tokens_total: usageTotal,
+              input_tokens: usageInput,
+              output_tokens: usageOutput,
+              cached_input_tokens: usageCachedInput,
               response_length: assistantText.length,
               slices_loaded: packed?.hydrated ?? [],
               slices_consumed: packed

@@ -9,10 +9,41 @@ import type {
   PageContext,
 } from '@prospector/core'
 
+/**
+ * Hints that let callers skip queries the Context Pack slices already
+ * cover (B4.2). When the agent route is on `account_deep` or
+ * `deal_deep`, the packer loads `current-deal-health` /
+ * `current-company-snapshot` / `recent-signals` slices that
+ * duplicate the fields below — so the legacy assembler can skip
+ * them and trim ~3 DB queries per turn.
+ *
+ * Skipping returns empty arrays for those fields, so prompt builders
+ * that fall back to legacy snapshots still render (just empty). The
+ * packed slices fill the gap.
+ */
+export interface AssembleContextOptions {
+  /**
+   * Skip the rep-wide priority accounts query. Safe to skip when the
+   * packer is loading `priority-accounts` or `current-company-snapshot`.
+   */
+  skipPriorityAccounts?: boolean
+  /**
+   * Skip the stalled-opps query. Safe to skip when the packer is
+   * loading `stalled-deals` or `current-deal-health`.
+   */
+  skipStalledDeals?: boolean
+  /**
+   * Skip the recent-signals fan-out query. Safe to skip when the packer
+   * is loading `recent-signals`.
+   */
+  skipSignals?: boolean
+}
+
 export async function assembleAgentContext(
   repId: string,
   tenantId: string,
-  pageContext?: PageContext
+  pageContext?: PageContext,
+  opts: AssembleContextOptions = {},
 ): Promise<AgentContext> {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,13 +64,28 @@ export async function assembleAgentContext(
       .eq('tenant_id', tenantId)
       .eq('crm_id', repId)
       .single(),
-    supabase
-      .from('companies')
-      .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier, icp_score, signal_score')
-      .eq('tenant_id', tenantId)
-      .eq('owner_crm_id', repId)
-      .order('expected_revenue', { ascending: false })
-      .limit(20),
+    opts.skipPriorityAccounts
+      ? Promise.resolve({
+          data: [] as Array<{
+            id: string
+            name: string
+            expected_revenue: number
+            propensity: number
+            priority_tier: string
+            priority_reason: string | null
+            icp_tier: string
+            icp_score: number
+            signal_score: number
+          }>,
+          error: null,
+        } as const)
+      : supabase
+          .from('companies')
+          .select('id, name, expected_revenue, propensity, priority_tier, priority_reason, icp_tier, icp_score, signal_score')
+          .eq('tenant_id', tenantId)
+          .eq('owner_crm_id', repId)
+          .order('expected_revenue', { ascending: false })
+          .limit(20),
     supabase
       .from('funnel_benchmarks')
       .select('*')
@@ -52,13 +98,15 @@ export async function assembleAgentContext(
       .eq('tenant_id', tenantId)
       .eq('scope', 'company')
       .eq('scope_id', 'all'),
-    supabase
-      .from('opportunities')
-      .select('id, name, company_id, stage, value, days_in_stage, stall_reason, is_stalled')
-      .eq('tenant_id', tenantId)
-      .eq('owner_crm_id', repId)
-      .eq('is_stalled', true)
-      .eq('is_closed', false),
+    opts.skipStalledDeals
+      ? Promise.resolve({ data: [] as Array<{ id: string; name: string; company_id: string; stage: string; value: number; days_in_stage: number; stall_reason: string | null; is_stalled: boolean }>, error: null } as const)
+      : supabase
+          .from('opportunities')
+          .select('id, name, company_id, stage, value, days_in_stage, stall_reason, is_stalled')
+          .eq('tenant_id', tenantId)
+          .eq('owner_crm_id', repId)
+          .eq('is_stalled', true)
+          .eq('is_closed', false),
   ])
 
   const repProfile = repResult.data
@@ -69,14 +117,16 @@ export async function assembleAgentContext(
   const safeIds = accountIds.length > 0 ? accountIds : ['none']
 
   const [signalsResult, oppsForAccounts, contactCounts] = await Promise.all([
-    supabase
-      .from('signals')
-      .select('id, company_id, signal_type, title, urgency, relevance_score, detected_at')
-      .eq('tenant_id', tenantId)
-      .in('company_id', safeIds)
-      .gte('detected_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
-      .order('weighted_score', { ascending: false })
-      .limit(20),
+    opts.skipSignals
+      ? Promise.resolve({ data: [] as Array<{ id: string; company_id: string; signal_type: string; title: string; urgency: string; relevance_score: number; detected_at: string }>, error: null } as const)
+      : supabase
+          .from('signals')
+          .select('id, company_id, signal_type, title, urgency, relevance_score, detected_at')
+          .eq('tenant_id', tenantId)
+          .in('company_id', safeIds)
+          .gte('detected_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+          .order('weighted_score', { ascending: false })
+          .limit(20),
     supabase
       .from('opportunities')
       .select('company_id, stage, value, days_in_stage, is_stalled')

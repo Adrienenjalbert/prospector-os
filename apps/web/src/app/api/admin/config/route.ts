@@ -115,6 +115,16 @@ const tier2RequestSchema = z.object({
   acknowledged: z.boolean().optional(),
 })
 
+// D7.3 — alternate request shape for the simple writeback toggle.
+// Different from the other config_types because it doesn't write to
+// a tenants.*_config column — it flips a flag inside business_config.
+// We accept a flat `{ kind, enabled }` body; the main handler
+// branches on the presence of `kind`.
+const writebackToggleSchema = z.object({
+  kind: z.literal('crm_writeback_scores'),
+  enabled: z.boolean(),
+})
+
 const requestSchema = z
   .object({
     config_type: z.enum(['icp', 'scoring', 'funnel', 'signals', 'crm_write']),
@@ -193,6 +203,38 @@ export async function POST(req: Request) {
       body = JSON.parse(rawText)
     } catch {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+    }
+
+    // D7.3 — handle the simple writeback toggle BEFORE the
+    // config_type schema. The toggle uses a flat
+    // `{ kind, enabled }` body that doesn't fit
+    // requestSchema's shape; routing on `kind` keeps the API
+    // backwards compatible.
+    const writeback = writebackToggleSchema.safeParse(body)
+    if (writeback.success) {
+      const { data: tenantRow } = await supabase
+        .from('tenants')
+        .select('business_config')
+        .eq('id', profile.tenant_id)
+        .single()
+      const cfg = ((tenantRow?.business_config ?? {}) as Record<string, unknown>) ?? {}
+      const updated = { ...cfg, crm_writeback_scores: writeback.data.enabled }
+      const { error: writeErr } = await supabase
+        .from('tenants')
+        .update({ business_config: updated })
+        .eq('id', profile.tenant_id)
+      if (writeErr) {
+        return NextResponse.json({ error: writeErr.message }, { status: 500 })
+      }
+      void recordAdminAction(supabase, {
+        tenant_id: profile.tenant_id,
+        user_id: user.id,
+        action: 'crm_writeback.toggle',
+        target: 'tenants.business_config.crm_writeback_scores',
+        before: { enabled: cfg.crm_writeback_scores === true },
+        after: { enabled: writeback.data.enabled },
+      })
+      return NextResponse.json({ ok: true, enabled: writeback.data.enabled })
     }
 
     const parsed = requestSchema.safeParse(body)

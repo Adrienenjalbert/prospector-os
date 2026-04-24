@@ -159,9 +159,82 @@ export async function recordAgentFeedback(
 }
 
 /**
+ * Records pill-render impressions for a batch of citations (C5.3).
+ *
+ * Until now, `retrieval_priors.impressions` only ever incremented on
+ * the FIRST click for a never-seen source — meaning CTR was always
+ * 100% (every impression also a click). That made the
+ * retrieval_priors signal useless for ranking. With this batched
+ * impression logger:
+ *   - One INSERT/UPSERT round-trip per pill render (deduplicated by
+ *     source key).
+ *   - CTR becomes a real number (clicks / impressions).
+ *   - The retrieval-CTR booster in the packer (C5.3) finally has
+ *     meaningful input.
+ *
+ * Telemetry-only: failures swallow so a bad row doesn't break pill
+ * rendering.
+ */
+export async function recordCitationImpressions(
+  citations: Array<{ source_type: string; source_id: string | null }>,
+) {
+  if (citations.length === 0) return
+  try {
+    const ctx = await resolveRepContext()
+    const supabase = getServiceSupabase()
+
+    // Dedup within the batch — pills are de-duplicated client-side
+    // already, but we re-dedup here in case two render passes fire
+    // before the first DB write completes.
+    const seen = new Set<string>()
+    const unique = citations.filter((c) => {
+      const k = `${c.source_type}:${c.source_id ?? ''}`
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+
+    // For each unique citation, increment impressions. Upsert with
+    // an ON CONFLICT DO UPDATE pattern via a plain SQL would be
+    // ideal; PostgREST doesn't expose increment directly, so we
+    // read-add-write per row. Volume is bounded (~5 pills per
+    // message) so this is acceptable.
+    for (const c of unique) {
+      const { data: existing } = await supabase
+        .from('retrieval_priors')
+        .select('id, impressions')
+        .eq('tenant_id', ctx.tenant_id)
+        .eq('source_type', c.source_type)
+        .eq('source_id', c.source_id ?? '')
+        .maybeSingle()
+
+      if (existing) {
+        await supabase
+          .from('retrieval_priors')
+          .update({
+            impressions: (existing.impressions ?? 0) + 1,
+            last_updated: new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+      } else {
+        await supabase.from('retrieval_priors').insert({
+          tenant_id: ctx.tenant_id,
+          source_type: c.source_type,
+          source_id: c.source_id,
+          impressions: 1,
+          clicks: 0,
+        })
+      }
+    }
+  } catch (err) {
+    logTelemetryError('recordCitationImpressions', err)
+  }
+}
+
+/**
  * Records that a user clicked a citation pill. Feeds the per-tenant
- * retrieval-usefulness ranker (Phase 7e): sources that get clicked get
- * surfaced more, sources that get ignored get deprioritised.
+ * retrieval-usefulness ranker (Phase 7e / C5.3): sources that get
+ * clicked get surfaced more, sources that get ignored get deprioritised.
  */
 export async function recordCitationClick(
   interactionId: string,
@@ -203,11 +276,17 @@ export async function recordCitationClick(
         })
         .eq('id', existing.id)
     } else {
+      // First-ever click on a source we never logged an impression
+      // for — pre-C5.3 this would set impressions=1, making CTR=100%
+      // for every brand-new source. Now we set impressions=0 so the
+      // separate `recordCitationImpressions` writer is the canonical
+      // impression source. CTR converges to a real number as
+      // impressions accumulate.
       await supabase.from('retrieval_priors').insert({
         tenant_id: ctx.tenant_id,
         source_type: sourceType,
         source_id: sourceId,
-        impressions: 1,
+        impressions: 0,
         clicks: 1,
       })
     }

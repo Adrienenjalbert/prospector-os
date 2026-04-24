@@ -45,6 +45,13 @@ export const consultFrameworkSchema = z.object({
     .describe(
       'Optional section to return only — e.g. "scaffold" for the verbatim moves, "pitfalls" for the gotchas. Omit to return the full body.',
     ),
+  query: z
+    .string()
+    .min(3)
+    .optional()
+    .describe(
+      'Optional natural-language query. When provided, the tool returns the TOP 2 framework chunks (~500 tokens) most semantically similar to the query, instead of the full framework body (~5k tokens). Use this when you only need targeted guidance — saves significant tokens. Falls back to full body when the embedding RPC is unavailable.',
+    ),
 })
 
 export type ConsultFrameworkArgs = z.infer<typeof consultFrameworkSchema>
@@ -94,10 +101,11 @@ export interface ConsultFrameworkResult {
 export const consultFrameworkHandler: ToolHandler = {
   slug: 'consult_sales_framework',
   schema: consultFrameworkSchema,
-  build: () => async (rawArgs) => {
+  build: (ctx) => async (rawArgs) => {
     const args = rawArgs as ConsultFrameworkArgs
     const slug = args.slug
     const focus = args.focus as FrameworkSection | undefined
+    const query = args.query
     const doc = loadFramework(slug)
 
     if (!doc) {
@@ -108,14 +116,50 @@ export const consultFrameworkHandler: ToolHandler = {
       } satisfies ConsultFrameworkResult
     }
 
-    const content = focus ? extractSection(doc, focus) : doc.content
+    let content: string
+
+    // C5.2: chunk retrieval. When a query is provided AND the
+    // embedding pipeline is available, fetch top-2 chunks (~500 toks)
+    // instead of the full body (~5k toks). Soft-fail to the legacy
+    // path on any error so the tool stays useful even before the
+    // embeddings cron has run.
+    let usedRagChunks = false
+    if (query) {
+      try {
+        const { embedQuery } = await import('@/lib/agent/context/embed-query')
+        const queryEmbedding = await embedQuery(query)
+        const { data: chunks, error } = await ctx.supabase.rpc('match_framework_chunks', {
+          query_embedding: queryEmbedding,
+          match_threshold: 0.5,
+          match_count: 2,
+          filter_framework_slug: slug,
+        })
+        if (!error && chunks && chunks.length > 0) {
+          content = chunks
+            .map(
+              (c: { section: string; content: string; similarity: number }) =>
+                `### ${c.section} _(similarity: ${(c.similarity * 100).toFixed(0)}%)_\n\n${c.content}`,
+            )
+            .join('\n\n---\n\n')
+          usedRagChunks = true
+        } else {
+          content = focus ? extractSection(doc, focus) : doc.content
+        }
+      } catch (err) {
+        console.warn('[consult-framework] RAG fallback to full body:', err)
+        content = focus ? extractSection(doc, focus) : doc.content
+      }
+    } else {
+      content = focus ? extractSection(doc, focus) : doc.content
+    }
+
     const related = recommendRelated(doc.slug)
 
     return {
       data: {
         slug: doc.slug,
         title: doc.title,
-        focus: focus ?? null,
+        focus: usedRagChunks ? 'rag-chunks' : focus ?? null,
         content: content || doc.content,
         metadata: {
           stages: doc.stages,

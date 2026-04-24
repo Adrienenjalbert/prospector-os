@@ -70,6 +70,56 @@ export type AgentEventType =
   // has been silently failing. Payload:
   // { companies_scored, benchmarks_written, duration_ms, status, error? }
   | 'scoring_run_completed'
+  // C1 first-run digest completion. Emitted by the first-run
+  // workflow (`apps/web/src/lib/workflows/first-run.ts`) at the
+  // end of every kickoff. Payload:
+  // { source, elapsed_ms, sla_met, slack_ok, accounts_briefed,
+  //   citations, skipped, skip_reason }. Drives the
+  // `first_run_completed_30d` and `first_run_p50_elapsed_ms`
+  // KPIs on /admin/adaptation.
+  | 'first_run_completed'
+  // Smart Memory Layer (migration 021). Mining workflows write to
+  // tenant_memories then emit `memory_derived` so /admin/memory and
+  // /admin/adaptation can show the per-tenant compounding. Admin
+  // approval / archive / pin transitions emit `memory_approved` etc.
+  // Per-turn injection emits `memory_injected` (one per memory
+  // surfaced to the prompt) and `memory_cited` (one per memory whose
+  // URN the agent referenced) so the Beta posterior on
+  // `tenant_memories.prior_alpha/beta` can learn which memories
+  // actually moved the rep's behaviour.
+  // Payload conventions:
+  //   memory_derived:  { memory_id, kind, scope, confidence, source_workflow }
+  //   memory_approved: { memory_id, kind, before_status }
+  //   memory_archived: { memory_id, kind, reason }
+  //   memory_pinned:   { memory_id, kind, pin_reason }
+  //   memory_injected: { memory_id, kind, slice_slug, intent_class }
+  //   memory_cited:    { memory_id, kind, urn }
+  | 'memory_derived'
+  | 'memory_approved'
+  | 'memory_archived'
+  | 'memory_pinned'
+  | 'memory_injected'
+  | 'memory_cited'
+  // Wiki Layer (migration 022, Phase 6 — Two-Level Second Brain).
+  // The compileWikiPages workflow emits `wiki_page_compiled` per
+  // page (re)compiled. Slices emit `wiki_page_injected` per page
+  // surfaced to the prompt. The agent route's onFinish emits
+  // `wiki_page_cited` per page whose URN the response referenced
+  // (urn:rev:{tenant}:wiki_page:{id}). lintWiki emits
+  // `wiki_page_lint_warning` per orphan / broken-link / decay /
+  // contradiction it surfaces. consolidateMemories emits
+  // `memory_superseded` per dedup hit.
+  // Payload conventions:
+  //   wiki_page_compiled:    { page_id, kind, slug, source_atom_count, was_changed }
+  //   wiki_page_injected:    { page_id, kind, slice_slug, intent_class }
+  //   wiki_page_cited:       { page_id, kind, urn }
+  //   wiki_page_lint_warning:{ page_id, kind, warning_type, detail }
+  //   memory_superseded:     { memory_id, superseded_by, similarity, kind }
+  | 'wiki_page_compiled'
+  | 'wiki_page_injected'
+  | 'wiki_page_cited'
+  | 'wiki_page_lint_warning'
+  | 'memory_superseded'
   | 'error'
 
 /**

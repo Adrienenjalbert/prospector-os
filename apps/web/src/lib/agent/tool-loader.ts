@@ -13,6 +13,12 @@ import {
   isCrmWriteEnabled,
   TIER2_WRITE_TOOL_SLUGS,
 } from '@/lib/tier2/config'
+import { getCachedByTenant } from './cached-tool-registry'
+
+// Re-export the invalidator so admin-side mutators can import it from
+// the same module they import the loader from. This keeps the
+// "remember to invalidate" surface small.
+export { invalidateTenantCache as invalidateToolRegistryCache } from './cached-tool-registry'
 
 /**
  * The tool registry makes the agent platform config-driven: tools are rows in
@@ -180,18 +186,35 @@ export async function loadToolsForAgent(opts: LoadToolsOptions): Promise<{
   // production.
   const tier2GateEnabled = process.env.CRM_WRITES_TIER2_GATE === 'on'
 
-  const [registryRes, tenantRes] = await Promise.all([
-    supabase
-      .from('tool_registry')
-      .select(
-        'slug, display_name, description, available_to_roles, enabled, is_builtin, tool_type, execution_config, citation_config, deprecated_at, deprecation_replacement',
-      )
-      .eq('tenant_id', tenantId)
-      .eq('enabled', true)
-      // Skip soft-deprecated rows. The partial index added in
-      // migration 012 means this filter costs nothing on rows with
-      // `deprecated_at IS NULL`.
-      .is('deprecated_at', null),
+  // B3.3: cache the per-tenant registry rows for an hour. Tool
+  // definitions change rarely (admin edits ≈ 1/day in production),
+  // and the rows themselves carry no per-request data — the per-turn
+  // state (interactionId, conversationId, role) is wired through the
+  // middleware below, not the row payload. Safe to cache.
+  //
+  // Tenant cache is invalidated explicitly from any code path that
+  // mutates `tool_registry` (see `invalidateTenantCache` callers in
+  // tool-management endpoints).
+  const [registryRows, tenantRes] = await Promise.all([
+    getCachedByTenant<ToolRegistryRow[]>(tenantId, async () => {
+      const res = await supabase
+        .from('tool_registry')
+        .select(
+          'slug, display_name, description, available_to_roles, enabled, is_builtin, tool_type, execution_config, citation_config, deprecated_at, deprecation_replacement',
+        )
+        .eq('tenant_id', tenantId)
+        .eq('enabled', true)
+        // Skip soft-deprecated rows. The partial index added in
+        // migration 012 means this filter costs nothing on rows with
+        // `deprecated_at IS NULL`.
+        .is('deprecated_at', null)
+      if (res.error) {
+        // On error, throw so the cache does NOT memoize a bad result.
+        // The route's outer catch handles it.
+        throw new Error(`tool_registry query failed: ${res.error.message}`)
+      }
+      return (res.data ?? []) as ToolRegistryRow[]
+    }),
     tier2GateEnabled
       ? supabase
           .from('tenants')
@@ -199,13 +222,18 @@ export async function loadToolsForAgent(opts: LoadToolsOptions): Promise<{
           .eq('id', tenantId)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null } as const),
-  ])
-  const { data, error } = registryRes
-
-  if (error) {
-    console.warn('[tool-loader] tool_registry query failed:', error.message)
-    return { tools: {}, loaded: [], missingHandlers: [] }
-  }
+  ]).catch((err) => {
+    // Cache loader threw OR the parallel tenant lookup failed. Either
+    // way, log and degrade to empty so a registry outage doesn't
+    // 500 every agent turn — the route's static-fallback factory
+    // takes over below.
+    console.warn(
+      '[tool-loader] tool_registry load failed:',
+      err instanceof Error ? err.message : err,
+    )
+    return [[] as ToolRegistryRow[], { data: null, error: null } as const] as const
+  })
+  const data: ToolRegistryRow[] = registryRows
 
   const tier2Config = decodeTier2Config(
     (tenantRes as { data: { crm_write_config?: unknown } | null }).data

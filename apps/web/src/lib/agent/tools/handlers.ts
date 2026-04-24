@@ -13,6 +13,12 @@ import {
   createCrmTaskHandler,
 } from './handlers/crm-write'
 import { recordConversationNoteHandler } from './handlers/record-conversation-note'
+import { webSearchHandler } from './handlers/web-search'
+import {
+  findSimilarAccountsHandler,
+  extractMeddpiccGapsHandler,
+  summariseAccountHealthHandler,
+} from './handlers/account-intelligence'
 
 /**
  * Bridge between the tool_registry (DB) and the existing tool factories.
@@ -160,4 +166,17 @@ export function registerBuiltinToolHandlers(): void {
   // ai_conversations row. The handler resolves the conversation by
   // (user, tenant, thread_type) so it works without a route change.
   registerToolHandler(recordConversationNoteHandler)
+  // D7.1 — grounded web-search. Replaces the hallucinated
+  // runDeepResearch path with a real provider (Tavily by default).
+  // Available to every surface; tenants opt in by adding the row to
+  // tool_registry + setting WEB_SEARCH_PROVIDER / TAVILY_API_KEY.
+  registerToolHandler(webSearchHandler)
+  // C2 — account-intelligence bundle. Three tier-2-compliant tools
+  // that close the obvious "I'm on this account, what do I need to
+  // know?" gaps in the agent's tool surface. Each one is gated to
+  // selling roles + admin via the tool_registry rows; this just
+  // makes the handler available.
+  registerToolHandler(findSimilarAccountsHandler)
+  registerToolHandler(extractMeddpiccGapsHandler)
+  registerToolHandler(summariseAccountHealthHandler)
 }

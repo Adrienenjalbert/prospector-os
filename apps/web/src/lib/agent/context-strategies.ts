@@ -158,6 +158,22 @@ export async function assembleContextForStrategy(opts: {
 }): Promise<AgentContext | null> {
   const { tenantId, repId, selection, pageContext } = opts
 
+  // B4.2: skip the rep-wide priority/stalled/signal queries when the
+  // packer's per-object slices already cover that ground. For
+  // `account_deep` and `deal_deep` strategies the relevant data
+  // lives in the active object's slice (current-deal-health,
+  // current-company-snapshot, recent-signals scoped to the company),
+  // so the rep-wide fan-out queries are pure waste — and they don't
+  // even feed the prompt for these strategies.
+  //
+  // Net per-turn DB-query reduction on deep-strategy turns: 3 fewer
+  // (priority_accounts, stalled, signals fan-out).
+  const deepSkip: Parameters<typeof assembleAgentContext>[3] = {
+    skipPriorityAccounts: true,
+    skipStalledDeals: true,
+    skipSignals: true,
+  }
+
   switch (selection.strategy) {
     case 'rep_centric':
       return assembleAgentContext(repId, tenantId, pageContext)
@@ -169,23 +185,33 @@ export async function assembleContextForStrategy(opts: {
       return assembleAgentContext(repId, tenantId, pageContext)
 
     case 'account_deep': {
-      // Hand the account id through to the existing assembler so the agent
-      // has the normal bookend plus the `current_account` anchor the context
-      // builder already supports.
-      const ctx = await assembleAgentContext(repId, tenantId, {
-        ...pageContext,
-        page: pageContext?.page ?? `/objects/companies/${selection.activeCompanyId}`,
-        accountId: selection.activeCompanyId ?? undefined,
-      })
+      // Hand the account id through so the agent has the normal
+      // bookend plus the `current_account` anchor; skip the rep-wide
+      // queries the packer covers separately.
+      const ctx = await assembleAgentContext(
+        repId,
+        tenantId,
+        {
+          ...pageContext,
+          page: pageContext?.page ?? `/objects/companies/${selection.activeCompanyId}`,
+          accountId: selection.activeCompanyId ?? undefined,
+        },
+        deepSkip,
+      )
       return ctx
     }
 
     case 'deal_deep': {
-      const ctx = await assembleAgentContext(repId, tenantId, {
-        ...pageContext,
-        page: pageContext?.page ?? `/objects/deals/${selection.activeDealId}`,
-        dealId: selection.activeDealId ?? undefined,
-      })
+      const ctx = await assembleAgentContext(
+        repId,
+        tenantId,
+        {
+          ...pageContext,
+          page: pageContext?.page ?? `/objects/deals/${selection.activeDealId}`,
+          dealId: selection.activeDealId ?? undefined,
+        },
+        deepSkip,
+      )
       return ctx
     }
 
@@ -234,6 +260,11 @@ export async function assembleContextPack(opts: {
   signalTypes?: string[]
   /** Active deal stage (raw CRM string). */
   dealStage?: string | null
+  /**
+   * Most-recent user message text. Forwarded to SliceLoadCtx so RAG
+   * slices (C5.2) can embed the query for similarity retrieval.
+   */
+  userMessageText?: string | null
 }): Promise<PackedContext> {
   // Resolve per-tenant overrides from business_profiles.role_definitions —
   // wires up the previously-dead context_strategy field. This is the single
@@ -263,6 +294,7 @@ export async function assembleContextPack(opts: {
     tenantOverrides,
     interactionId: opts.interactionId ?? null,
     tokenBudget: opts.tokenBudget,
+    userMessageText: opts.userMessageText ?? null,
     supabase: opts.supabase,
   })
 }

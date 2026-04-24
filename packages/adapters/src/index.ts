@@ -27,6 +27,9 @@ export type {
   CooldownOptions,
   PushBudgetOptions,
   DispatchResult,
+  SlackBlock,
+  SlackBlockMessage,
+  SlackMessage,
 } from './notifications/slack-dispatcher'
 export {
   SupabaseCooldownStore,
@@ -60,4 +63,24 @@ export { TranscriptIngester } from './transcripts'
 export type {
   TranscriptWebhookPayload,
   TranscriptSearchResult,
+  TranscriptIngesterOptions,
 } from './transcripts'
+
+// C5.1 — five additional embedding pipelines (companies, signals,
+// notes, exemplars, framework chunks). All use OpenAI
+// text-embedding-3-small via the same generic embedder. Drives the
+// new RAG slices wired into the agent runtime in C5.2.
+//
+// Phase 6 (Two-Level Second Brain) adds two more pipelines —
+// runMemoriesEmbedder (atoms) and runWikiPagesEmbedder (compiled
+// pages) — both using the same content-hash idempotency pattern.
+export {
+  runCompaniesEmbedder,
+  runSignalsEmbedder,
+  runNotesEmbedder,
+  runExemplarsEmbedder,
+  runFrameworksEmbedder,
+  runMemoriesEmbedder,
+  runWikiPagesEmbedder,
+} from './embeddings'
+export type { EmbedderResult } from './embeddings'

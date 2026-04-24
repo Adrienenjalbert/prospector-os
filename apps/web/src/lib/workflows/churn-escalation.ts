@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { generateText } from 'ai'
+import { generateObject } from 'ai'
 import { SlackDispatcher, SupabaseCooldownStore } from '@prospector/adapters'
-import { emitAgentEvent, urn } from '@prospector/core'
+import { emitAgentEvent, urn, ChurnLetterSchema, type ChurnLetter } from '@prospector/core'
+import { loadMemoriesByScope } from '@/lib/memory/writer'
 
 import {
   startWorkflow,
@@ -51,6 +52,15 @@ interface GatheredEvidence {
   metrics: Array<{ label: string; value: string; urn: string }>
   open_signals: Array<{ title: string; urn: string }>
   recent_transcript_excerpts: Array<{ snippet: string; urn: string }>
+  /**
+   * Smart Memory Layer Phase 2 — tenant-derived loss themes for
+   * comparable accounts. Quoting these makes the escalation feel like
+   * pattern-matching on the CSM's own history rather than a generic
+   * "we noticed X" letter. Always optional; the validator never
+   * requires citing them, and they're only included when at least
+   * one matching memory exists.
+   */
+  loss_theme_memories: Array<{ title: string; body: string; urn: string }>
 }
 
 interface DraftLetter {
@@ -165,6 +175,44 @@ export async function runChurnEscalation(
             urn: urn.transcript(ctx.tenantId!, t.id),
           }))
 
+        // Resolve the company's industry so the loss-theme lookup
+        // prefers same-industry memories.
+        let companyIndustry: string | null = null
+        const { data: companyIndustryRow } = await ctx.supabase
+          .from('companies')
+          .select('industry')
+          .eq('id', company.id)
+          .eq('tenant_id', ctx.tenantId!)
+          .maybeSingle()
+        companyIndustry =
+          typeof companyIndustryRow?.industry === 'string' &&
+          companyIndustryRow.industry.length > 0
+            ? companyIndustryRow.industry
+            : null
+
+        // Up to 2 loss-themes — tenant-mined patterns of why
+        // comparable accounts churned. Failures degrade silently;
+        // an empty array means no patterns yet, not an error.
+        let lossThemeMemories: GatheredEvidence['loss_theme_memories'] = []
+        try {
+          const scoped = await loadMemoriesByScope(ctx.supabase, {
+            tenant_id: ctx.tenantId!,
+            kind: 'loss_theme',
+            industry: companyIndustry ?? undefined,
+            limit: 2,
+          })
+          lossThemeMemories = scoped.map((m) => ({
+            title: m.title,
+            body: m.body,
+            urn: urn.memory(ctx.tenantId!, m.id),
+          }))
+        } catch (err) {
+          console.warn(
+            `[churn-escalation] loss_theme memory load failed:`,
+            err,
+          )
+        }
+
         return {
           tenant_id: ctx.tenantId,
           company_id: company.id,
@@ -173,6 +221,7 @@ export async function runChurnEscalation(
           metrics,
           open_signals: openSignals,
           recent_transcript_excerpts: excerpts,
+          loss_theme_memories: lossThemeMemories,
         }
       },
     },
@@ -196,14 +245,20 @@ export async function runChurnEscalation(
                   : ''
 
               const prompt = buildDraftPrompt(evidence, guidance ?? '', revisionGuidance)
-              const { text } = await generateText({
+              // B4.1: switched from `generateText` + JSON.parse to
+              // `generateObject` with the shared ChurnLetterSchema.
+              // Schema validation is server-side; malformed model
+              // output throws a typed error rather than degrading
+              // silently to an empty letter.
+              const { object } = await generateObject({
                 model: getModel('anthropic/claude-sonnet-4'),
+                schema: ChurnLetterSchema,
                 prompt,
                 maxTokens: 1200,
                 temperature: iteration === 0 ? 0.5 : 0.3,
               })
 
-              return parseDraft(text)
+              return adaptChurnLetter(object)
             },
             validator: (draft) => validateDraft(draft, evidence),
           },
@@ -377,6 +432,20 @@ function buildDraftPrompt(
     .map((s) => `- ${s.title}  (urn: ${s.urn})`)
     .join('\n')
 
+  // Loss-theme block (Phase 2). Only included when we have at least
+  // one matching memory; otherwise omitted so the prompt stays
+  // compact for greenfield tenants.
+  const lossThemesBlock =
+    ev.loss_theme_memories.length > 0
+      ? [
+          ``,
+          `Patterns from comparable lost accounts (use to anticipate the customer's reasons; cite the urn inline if quoted):`,
+          ev.loss_theme_memories
+            .map((m) => `- ${m.title}: ${m.body.slice(0, 220)} (urn: ${m.urn})`)
+            .join('\n'),
+        ].join('\n')
+      : ''
+
   return [
     `You are drafting a churn-escalation message that the CSM will send to a paying customer.`,
     `Tone: empathetic, specific, action-oriented. MISSION principle: cite or shut up — every number must map to a urn below. Do not invent any figures.`,
@@ -389,6 +458,7 @@ function buildDraftPrompt(
     ``,
     `Open signals:`,
     signalsBlock || '(none)',
+    lossThemesBlock,
     ``,
     guidance ? `Owner guidance: ${guidance}` : '',
     revisionGuidance,
@@ -400,21 +470,19 @@ function buildDraftPrompt(
     .join('\n')
 }
 
-function parseDraft(text: string): DraftLetter {
-  const clean = text.replace(/^```json\s*|\s*```$/g, '').trim()
-  let parsed: Partial<DraftLetter>
-  try {
-    parsed = JSON.parse(clean) as Partial<DraftLetter>
-  } catch {
-    // Return a shape the validator will reject — the next iteration gets a
-    // chance to correct.
-    return { subject: '', body: clean, cited_urns: [], word_count: clean.split(/\s+/).length }
-  }
-  const body = String(parsed.body ?? '')
+/**
+ * Adapt the validated `ChurnLetterSchema` output (from generateObject)
+ * into the legacy `DraftLetter` shape the validator expects. Two
+ * schemas exist transitionally so I don't have to rewrite the
+ * validator + dispatch step in the same PR; the adapter is a one-line
+ * surface that goes away the moment we collapse the two shapes.
+ */
+function adaptChurnLetter(letter: ChurnLetter): DraftLetter {
+  const body = letter.body_markdown
   return {
-    subject: String(parsed.subject ?? ''),
+    subject: letter.subject,
     body,
-    cited_urns: Array.isArray(parsed.cited_urns) ? parsed.cited_urns : [],
+    cited_urns: letter.cited_urns,
     word_count: body.split(/\s+/).filter(Boolean).length,
   }
 }

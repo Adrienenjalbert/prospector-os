@@ -174,6 +174,73 @@ async function runAgent(
 // Main
 // ---------------------------------------------------------------------------
 
+/**
+ * Load `accepted` cases from the eval_cases DB table on top of the
+ * static GOLDEN_EVAL_CASES seed set (A2.4). This is what makes
+ * MISSION's "eval suite grows from real production failures" promise
+ * real — every accepted case enters the next CI run.
+ *
+ * Best-effort: if Supabase env is unset (CI without DB) or the query
+ * fails, we proceed with the static seed only and log a warning.
+ */
+async function loadAcceptedDbCases(): Promise<EvalCase[]> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return []
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createClient } = require('@supabase/supabase-js') as typeof import('@supabase/supabase-js')
+    const supabase = createClient(url, key, { auth: { persistSession: false } })
+
+    const { data, error } = await supabase
+      .from('eval_cases')
+      .select('id, category, role, question, expected_tool_calls, expected_citation_types, expected_answer_summary')
+      .eq('status', 'accepted')
+      .limit(500)
+
+    if (error) {
+      console.warn('[evals] failed to load accepted cases from DB:', error.message)
+      return []
+    }
+
+    type EvalCaseRow = {
+      id: string
+      category: string | null
+      role: string | null
+      question: string | null
+      expected_tool_calls: string[] | null
+      expected_citation_types: string[] | null
+      expected_answer_summary: string | null
+    }
+
+    const validCategories: EvalCase['category'][] = ['concierge', 'account', 'portfolio']
+    const validRoles: EvalCase['role'][] = ['ae', 'nae', 'csm', 'ad', 'leader']
+
+    return (data as EvalCaseRow[] | null ?? [])
+      .filter(
+        (r) =>
+          r.id &&
+          r.question &&
+          r.category &&
+          (validCategories as string[]).includes(r.category) &&
+          r.role &&
+          (validRoles as string[]).includes(r.role),
+      )
+      .map((r) => ({
+        id: `db-${r.id}`,
+        category: r.category as EvalCase['category'],
+        role: r.role as EvalCase['role'],
+        question: r.question!,
+        expected_tools: r.expected_tool_calls ?? [],
+        expected_citation_types: r.expected_citation_types ?? [],
+        rubric: r.expected_answer_summary ?? 'Response is grounded, cites sources, and ends with the Next Steps block.',
+      }))
+  } catch (err) {
+    console.warn('[evals] DB-cases loader threw:', err)
+    return []
+  }
+}
+
 async function main(): Promise<void> {
   const threshold = Number(process.env.EVAL_PASS_RATE_THRESHOLD ?? '0.75')
   const subset = process.env.EVAL_SUBSET ?? 'goldens'
@@ -184,7 +251,13 @@ async function main(): Promise<void> {
   // Touch supabase env so missing-env warnings show up in CI logs early.
   void getSupabase()
 
-  let cases: EvalCase[] = GOLDEN_EVAL_CASES
+  // Static seed + accepted DB cases (A2.4). Smoke runs stick to seed
+  // only so they stay deterministic on local laptops without DB env.
+  const dbCases = subset === 'smoke' ? [] : await loadAcceptedDbCases()
+  if (dbCases.length > 0) {
+    console.log(`[evals] loaded ${dbCases.length} accepted DB cases (suite is growing!)`)
+  }
+  let cases: EvalCase[] = [...GOLDEN_EVAL_CASES, ...dbCases]
   if (subset === 'smoke') {
     cases = GOLDEN_EVAL_CASES.slice(0, 3)
   }

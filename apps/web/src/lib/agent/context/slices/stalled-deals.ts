@@ -5,6 +5,7 @@ import {
   fmtMoney,
   urnInline,
 } from './_helpers'
+import { loadMemoriesByScope } from '@/lib/memory/writer'
 
 /**
  * `stalled-deals` — opportunities the rep owns that are flagged stalled
@@ -34,6 +35,14 @@ interface StalledDealRow {
   currency: string | null
   days_in_stage: number
   median_days: number
+  /**
+   * Smart Memory Layer Phase 4 — the WON-only median for this stage,
+   * sourced from the `motion_step` memories the derive-sales-motion
+   * workflow writes. When present, this is a tighter benchmark than
+   * the all-deals `median_days` from `funnel_benchmarks` and gets
+   * quoted in the prompt as the deviation reference.
+   */
+  won_median_days: number | null
   stall_reason: string | null
   expected_close_date: string | null
 }
@@ -118,6 +127,25 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
       (benchRes.data ?? []).map((b) => [b.stage_name, b.median_days_in_stage]),
     )
 
+    // Phase 4 — pull won-deal medians per stage from motion_step
+    // memories. We fetch one per distinct stage. Failure is silent;
+    // rows just fall back to the funnel_benchmarks median.
+    const wonMedianByStage = new Map<string, number>()
+    for (const stage of stageNames) {
+      try {
+        const mem = (await loadMemoriesByScope(ctx.supabase, {
+          tenant_id: ctx.tenantId,
+          kind: 'motion_step',
+          stage,
+          limit: 1,
+        }))[0]
+        const m = Number(mem?.evidence?.counts?.median_days ?? 0)
+        if (m > 0) wonMedianByStage.set(stage, m)
+      } catch {
+        // ignore — best-effort enrichment
+      }
+    }
+
     const rows: StalledDealRow[] = dealRows.map((d) => ({
       id: d.id,
       crm_id: d.crm_id,
@@ -129,6 +157,7 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
       currency: (d as { currency?: string | null }).currency ?? null,
       days_in_stage: d.days_in_stage ?? 0,
       median_days: medianByStage.get(d.stage) ?? 14,
+      won_median_days: wonMedianByStage.get(d.stage) ?? null,
       stall_reason: d.stall_reason,
       expected_close_date: d.expected_close_date,
     }))
@@ -156,7 +185,13 @@ export const stalledDealsSlice: ContextSlice<StalledDealRow> = {
     const tenantId = fmtCtx?.tenantId ?? ''
     const lines = rows.slice(0, 6).map((r) => {
       const reason = r.stall_reason ? ` — ${r.stall_reason}` : ''
-      return `- ${r.company_name} "${r.name}" ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (median ${r.median_days}d), ${fmtMoney(r.value, r.currency)}${reason}`
+      // Prefer the won-only median (Phase 4) when available — it's
+      // a tighter benchmark than the all-deals funnel median.
+      const benchmarkFragment =
+        r.won_median_days != null && r.won_median_days > 0
+          ? `wins close in ${r.won_median_days}d`
+          : `median ${r.median_days}d`
+      return `- ${r.company_name} "${r.name}" ${urnInline(tenantId, 'opportunity', r.id)} — ${r.stage} ${r.days_in_stage}d (${benchmarkFragment}), ${fmtMoney(r.value, r.currency)}${reason}`
     })
     return `### Stalled deals (${rows.length})\n${lines.join('\n')}`
   },
