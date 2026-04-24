@@ -77,6 +77,7 @@ const allNavEntries: NavEntry[] = [
       { href: '/admin/config', label: 'Config', roles: ['admin', 'revops'] },
       { href: '/admin/memory', label: 'Memory', roles: ['admin', 'revops', 'manager'] },
       { href: '/admin/wiki', label: 'Wiki', roles: ['admin', 'revops', 'manager'] },
+      { href: '/admin/triggers', label: 'Triggers', roles: ['admin', 'revops', 'manager'] },
       { href: '/admin/adaptation', label: 'Adaptation', roles: ['admin', 'revops', 'manager'] },
       { href: '/admin/calibration', label: 'Calibration', roles: ['admin', 'revops'] },
       { href: '/admin/roi', label: 'ROI', roles: ['admin', 'revops', 'manager'] },

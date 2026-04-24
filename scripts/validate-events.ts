@@ -167,6 +167,33 @@ const PAYLOAD_CONTRACTS: Record<string, PayloadContract> = {
   memory_superseded: {
     required: ['memory_id', 'superseded_by'],
   },
+  // Composite Trigger Layer (migration 024, Phase 7).
+  // mineCompositeTriggers emits trigger_detected per match.
+  // Slices/tools emit trigger_injected per surfaced row. Agent route
+  // emits trigger_cited per URN matched in onFinish. /admin/triggers
+  // emits trigger_acted / trigger_dismissed. lintTriggers emits
+  // trigger_expired. Connection miners emit bridge_detected per edge.
+  trigger_detected: {
+    required: ['trigger_id', 'pattern', 'score'],
+  },
+  trigger_injected: {
+    required: ['trigger_id', 'pattern'],
+  },
+  trigger_cited: {
+    required: ['trigger_id', 'pattern'],
+  },
+  trigger_acted: {
+    required: ['trigger_id', 'pattern'],
+  },
+  trigger_dismissed: {
+    required: ['trigger_id', 'pattern'],
+  },
+  trigger_expired: {
+    required: ['trigger_id', 'pattern'],
+  },
+  bridge_detected: {
+    required: ['edge_kind', 'src_kind', 'dst_kind'],
+  },
 }
 
 // ---------------------------------------------------------------------------

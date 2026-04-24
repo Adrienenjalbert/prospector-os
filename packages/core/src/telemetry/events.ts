@@ -120,6 +120,28 @@ export type AgentEventType =
   | 'wiki_page_cited'
   | 'wiki_page_lint_warning'
   | 'memory_superseded'
+  // Composite Trigger Layer (migration 024, Phase 7).
+  // mineCompositeTriggers emits `trigger_detected` per match.
+  // Slices / tools emit `trigger_injected` per surfaced trigger.
+  // Agent route's onFinish emits `trigger_cited` per URN matched.
+  // /admin/triggers actions emit `trigger_acted` / `trigger_dismissed`.
+  // lintTriggers emits `trigger_expired` per row that ages out.
+  // Connection miners emit `bridge_detected` per new edge written.
+  // Payload conventions:
+  //   trigger_detected:  { trigger_id, pattern, score, components }
+  //   trigger_injected:  { trigger_id, pattern, slice_slug, intent_class }
+  //   trigger_cited:     { trigger_id, pattern, urn }
+  //   trigger_acted:     { trigger_id, pattern, recommended_tool, by_user }
+  //   trigger_dismissed: { trigger_id, pattern, reason }
+  //   trigger_expired:   { trigger_id, pattern, age_days }
+  //   bridge_detected:   { edge_id, edge_kind, src_kind, dst_kind, miner }
+  | 'trigger_detected'
+  | 'trigger_injected'
+  | 'trigger_cited'
+  | 'trigger_acted'
+  | 'trigger_dismissed'
+  | 'trigger_expired'
+  | 'bridge_detected'
   | 'error'
 
 /**

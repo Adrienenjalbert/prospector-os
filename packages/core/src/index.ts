@@ -11,6 +11,7 @@ export * from './types/platform'
 export * from './types/structured-outputs'
 export * from './types/memory'
 export * from './types/wiki'
+export * from './types/triggers'
 
 // Scoring Engine
 export { computeICPScore } from './scoring/icp-scorer'

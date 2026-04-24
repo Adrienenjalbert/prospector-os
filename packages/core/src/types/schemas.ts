@@ -32,6 +32,7 @@ export const ContactRoleSchema = z.enum([
   'blocker',
 ])
 export const SignalTypeSchema = z.enum([
+  // Phase 1-3 (existing 8)
   'hiring_surge',
   'funding',
   'leadership_change',
@@ -40,6 +41,18 @@ export const SignalTypeSchema = z.enum([
   'competitor_mention',
   'seasonal_peak',
   'negative_news',
+  // Phase 5 (transcript-signals + champion-alumni). Aligned with
+  // migration 024's widened DB CHECK constraint.
+  'champion_alumni',
+  'churn_risk',
+  'price_objection',
+  'champion_missing',
+  // Phase 7 (composite triggers + adapter sources)
+  'intent_topic',
+  'tech_stack_change',
+  'job_change',
+  'press_event',
+  'tradeshow_attendance',
 ])
 export const SignalUrgencySchema = z.enum([
   'immediate',

@@ -19,6 +19,12 @@ import {
   extractMeddpiccGapsHandler,
   summariseAccountHealthHandler,
 } from './handlers/account-intelligence'
+import {
+  findWarmIntrosHandler,
+  findActiveBuyersHandler,
+  summariseTriggerHandler,
+  composeTriggerExplanationHandler,
+} from './handlers/trigger-tools'
 
 /**
  * Bridge between the tool_registry (DB) and the existing tool factories.
@@ -179,4 +185,12 @@ export function registerBuiltinToolHandlers(): void {
   registerToolHandler(findSimilarAccountsHandler)
   registerToolHandler(extractMeddpiccGapsHandler)
   registerToolHandler(summariseAccountHealthHandler)
+  // Phase 7 (Section 5) — composite trigger + bridge tool bundle.
+  // 4 standalone handlers; tool_registry rows are seeded by
+  // scripts/seed-tools.ts so per-tenant gating + role allow-lists
+  // apply via the existing loader path.
+  registerToolHandler(findWarmIntrosHandler)
+  registerToolHandler(findActiveBuyersHandler)
+  registerToolHandler(summariseTriggerHandler)
+  registerToolHandler(composeTriggerExplanationHandler)
 }

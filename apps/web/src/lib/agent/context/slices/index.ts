@@ -22,6 +22,8 @@ import { glossarySlice } from './glossary'
 import { motionFingerprintSlice } from './motion-fingerprint'
 import { repPlaybookSlice } from './rep-playbook'
 import { reflectionInsightsSlice } from './reflection-insights'
+import { triggerNowSlice } from './trigger-now'
+import { bridgeOpportunitiesSlice } from './bridge-opportunities'
 
 /**
  * Single source of truth for every slice in the pack. Adding a new slice =
@@ -56,6 +58,8 @@ export const SLICES: Record<string, ContextSlice<unknown>> = {
   [motionFingerprintSlice.slug]: motionFingerprintSlice as ContextSlice<unknown>,
   [repPlaybookSlice.slug]: repPlaybookSlice as ContextSlice<unknown>,
   [reflectionInsightsSlice.slug]: reflectionInsightsSlice as ContextSlice<unknown>,
+  [triggerNowSlice.slug]: triggerNowSlice as ContextSlice<unknown>,
+  [bridgeOpportunitiesSlice.slug]: bridgeOpportunitiesSlice as ContextSlice<unknown>,
 }
 
 export const SLICE_SLUGS = Object.keys(SLICES) as readonly string[]
@@ -97,6 +101,8 @@ export const STRATEGY_BUNDLES: Record<
     'glossary',
     'motion-fingerprint',
     'rep-playbook',
+    'trigger-now',
+    'bridge-opportunities',
   ],
   account_centric: [
     'current-company-snapshot',
@@ -118,6 +124,8 @@ export const STRATEGY_BUNDLES: Record<
     'glossary',
     'motion-fingerprint',
     'rep-playbook',
+    'trigger-now',
+    'bridge-opportunities',
   ],
   portfolio_centric: [
     'priority-accounts',
@@ -131,6 +139,7 @@ export const STRATEGY_BUNDLES: Record<
     'conversation-memory',
     'rep-playbook',
     'reflection-insights',
+    'trigger-now',
   ],
   team_centric: [
     'funnel-comparison',
@@ -165,4 +174,6 @@ export {
   motionFingerprintSlice,
   repPlaybookSlice,
   reflectionInsightsSlice,
+  triggerNowSlice,
+  bridgeOpportunitiesSlice,
 }

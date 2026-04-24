@@ -84,3 +84,34 @@ export {
   runWikiPagesEmbedder,
 } from './embeddings'
 export type { EmbedderResult } from './embeddings'
+
+// Phase 7 (Composite Triggers + Relationship Graph + Pluggable
+// Enrichment) adapters. Each interface is a typed contract; the
+// reference impl is the only one wired to a vendor today, the
+// stubs ship the interface so the signals cron can compose them
+// uniformly when a customer brings paid keys.
+export type {
+  IntentDataAdapter,
+  IntentSignalRow,
+  IntentAdapterCapabilities,
+  FetchIntentOpts,
+} from './intent/interface'
+export { TavilyNewsAdapter } from './intent/tavily-news'
+export { BomboraAdapter } from './intent/bombora'
+
+export type {
+  TechStackAdapter,
+  TechStackChangeRow,
+  TechStackAdapterCapabilities,
+  FetchTechStackChangesOpts,
+} from './tech-stack/interface'
+export { BuiltWithAdapter } from './tech-stack/builtwith'
+
+export type {
+  JobChangeAdapter,
+  JobChangeRow,
+  JobChangeAdapterCapabilities,
+  FetchJobChangesOpts,
+} from './job-change/interface'
+export { ApolloJobChangeAdapter } from './job-change/apollo'
+export { LinkedInSalesNavAdapter } from './job-change/linkedin-sn'

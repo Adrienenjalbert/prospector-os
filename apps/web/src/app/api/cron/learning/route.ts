@@ -28,6 +28,13 @@ import {
   enqueueConsolidateMemories,
   enqueueLintWiki,
   enqueueReflectMemories,
+  enqueueRefreshContacts,
+  enqueueMineReverseAlumni,
+  enqueueMineCoworkerTriangles,
+  enqueueMineInternalMovers,
+  enqueueMineCompositeTriggers,
+  enqueueCompileBridgeNeighbourhoods,
+  enqueueLintTriggers,
 } from '@/lib/workflows'
 
 /**
@@ -141,6 +148,41 @@ export async function GET(req: Request) {
         // workflow once per week per tenant. Writes both reflection
         // memory atoms AND a reflection_weekly wiki page.
         enqueueReflectMemories(supabase, tenantId),
+        // Phase 7 (Section 1.2) — bulk re-enrichment of contact-level
+        // fields the connection miners depend on. Daily,
+        // <=500 contacts/tenant. Refreshes previous_companies +
+        // linkedin_url for active-deal + flagged contacts. Emits
+        // job_change signal when domain differs.
+        enqueueRefreshContacts(supabase, tenantId),
+        // Phase 7 (Section 3.2) — connection miners. All three are
+        // deterministic SQL (no LLM cost). Order is independent;
+        // dispatcher serialises per tenant via workflow_runs.
+        // mine-reverse-alumni: prospect contacts who used to work
+        // at one of our customers → bridges_to edges.
+        enqueueMineReverseAlumni(supabase, tenantId),
+        // mine-coworker-triangles: 2 contacts at different prospects
+        // who both worked at the same intermediate company →
+        // structural bridges_to + coworked_with edges.
+        enqueueMineCoworkerTriangles(supabase, tenantId),
+        // mine-internal-movers: contacts whose title changed at a
+        // tracked company → job_change signal feeding the
+        // job_change_at_existing_account composite trigger.
+        enqueueMineInternalMovers(supabase, tenantId),
+        // Phase 7 (Section 3.5) — compile entity_company_neighbourhood
+        // wiki pages from inbound bridges_to edges. Runs AFTER the
+        // connection miners (above) so the bridges are fresh.
+        enqueueCompileBridgeNeighbourhoods(supabase, tenantId),
+        // Phase 7 (Section 2.2) — mine-composite-triggers MUST run
+        // AFTER the connection miners + signals cron because its
+        // pattern matchers compose signals × bridges × enrichment.
+        // The dispatcher runs all enqueued workflows in submission
+        // order per tenant, so listing this last in the array is the
+        // ordering guarantee we get.
+        enqueueMineCompositeTriggers(supabase, tenantId),
+        // Phase 7 (Section 7.1) — daily lifecycle maintenance for
+        // triggers. Expires stale rows (prior_beta += 1) and
+        // dismisses orphans (company hard-deleted). Pure SQL.
+        enqueueLintTriggers(supabase, tenantId),
       ])
       let ok = 0
       for (const r of results) {

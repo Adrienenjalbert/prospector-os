@@ -29,6 +29,10 @@ export const WIKI_PAGE_KINDS = [
   'entity_persona', // role / archetype (champion, EB, decision_maker)
   'entity_competitor', // named competitor
   'entity_stage', // pipeline stage
+  // Phase 7 (Section 3.5) — per-company neighbourhood page,
+  // compiled when a company accumulates >=3 inbound bridges_to
+  // edges. Surfaces the warm-path constellation around the account.
+  'entity_company_neighbourhood',
 
   // Concept pages — tenant-wide tenets.
   'concept_motion', // the tenant's sales motion (compiled from motion_step atoms)
@@ -115,6 +119,7 @@ export const WIKI_PAGE_KIND_LABELS: Record<WikiPageKind, string> = {
   entity_persona: 'Persona',
   entity_competitor: 'Competitor',
   entity_stage: 'Pipeline stage',
+  entity_company_neighbourhood: 'Company neighbourhood',
   concept_motion: 'Sales motion',
   concept_icp: 'ICP',
   concept_glossary: 'Glossary',

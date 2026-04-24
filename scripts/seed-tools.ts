@@ -837,6 +837,118 @@ const BUILTIN_TOOLS: ToolSeed[] = [
     is_builtin: true,
     enabled: true,
   },
+  // -------------------------------------------------------------------------
+  // Phase 7 (Section 5) — composite trigger + bridge tool bundle.
+  // Four agent-callable tools that surface the new triggers + bridges
+  // layer mid-conversation. All tier-2-compliant: typed schemas,
+  // { data, citations } outputs, tenant-scoped queries.
+  // -------------------------------------------------------------------------
+  {
+    slug: 'find_warm_intros',
+    display_name: 'Find Warm Intros',
+    description:
+      "For a target company, return the top inbound `bridges_to` edges (warm-intro paths from your existing customers / contacts). Use when the rep asks 'how can I get into Acme', 'do we know anyone there', or before a cold-outreach attempt. Returns bridge edges + bridging contact names + recommended draft tool. Cite the bridging company URN inline so the citation pill deep-links.",
+    category: 'data_query',
+    tool_type: 'builtin',
+    execution_config: { handler: 'find_warm_intros' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        company_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID of the target company.',
+        },
+        max_results: {
+          type: 'number',
+          default: 3,
+          description: 'Cap on returned bridges. Default 3.',
+        },
+      },
+      required: ['company_id'],
+    },
+    available_to_roles: ['nae', 'ae', 'growth_ae', 'ad', 'csm'],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'find_active_buyers',
+    display_name: 'Find Active Buyers',
+    description:
+      "Return open composite triggers ordered by trigger_score desc. Use when the rep asks 'who should I prioritise this week', 'show me hot accounts', or 'what's in the queue'. Each trigger row carries the rationale (one line) and the recommended_tool slug — chain into draft_alumni_intro, schedule_meeting, etc. Optional pattern filter narrows to a specific trigger family.",
+    category: 'data_query',
+    tool_type: 'builtin',
+    execution_config: { handler: 'find_active_buyers' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        pattern: {
+          type: 'string',
+          description: "Optional trigger pattern slug (e.g. 'funding_plus_leadership_window').",
+        },
+        min_score: {
+          type: 'number',
+          default: 0.5,
+          minimum: 0,
+          maximum: 1,
+        },
+        max_results: {
+          type: 'number',
+          default: 5,
+        },
+      },
+      required: [],
+    },
+    available_to_roles: [...ALL_ROLES],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'summarise_trigger',
+    display_name: 'Summarise Trigger',
+    description:
+      "Given a trigger UUID, return the rationale, components (signal titles + bridge counts + contact counts), and recommended action. Use when the agent surfaced a trigger and the rep asks 'why is this hot' or 'what's the evidence'. Citations link to component signal + company URNs.",
+    category: 'data_query',
+    tool_type: 'builtin',
+    execution_config: { handler: 'summarise_trigger' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        trigger_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID of the trigger to summarise.',
+        },
+      },
+      required: ['trigger_id'],
+    },
+    available_to_roles: [...ALL_ROLES],
+    is_builtin: true,
+    enabled: true,
+  },
+  {
+    slug: 'compose_trigger_explanation',
+    display_name: 'Compose Trigger Explanation',
+    description:
+      "For a company, return ALL open + recently-acted triggers ranked by score, plus a single `headline` string the pre-call brief or Slack DM should lead with. Use during pre-call brief generation or when assembling 'why now' rationale for an outreach draft. Returns the strongest trigger as headline + the full ranked list for context.",
+    category: 'analysis',
+    tool_type: 'builtin',
+    execution_config: { handler: 'compose_trigger_explanation' },
+    parameters_schema: {
+      type: 'object',
+      properties: {
+        company_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'UUID of the company.',
+        },
+      },
+      required: ['company_id'],
+    },
+    available_to_roles: [...ALL_ROLES],
+    is_builtin: true,
+    enabled: true,
+  },
 ]
 
 // ---------------------------------------------------------------------------

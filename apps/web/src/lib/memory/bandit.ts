@@ -122,43 +122,24 @@ export async function loadWikiPagePriors(
 }
 
 // ---------------------------------------------------------------------------
-// Thompson adjustment (same math as the slice bandit)
+// Thompson adjustment — delegates to shared bandit/beta math (Phase 7)
 // ---------------------------------------------------------------------------
+//
+// Phase 7 (Section 2.3) extracted the Beta math into
+// `apps/web/src/lib/bandit/beta.ts` so the trigger bandit (Phase 7)
+// shares one implementation with the memory + wiki page bandits
+// (Phase 6). The wrapper exports below preserve the prior call sites
+// (`thompsonAdjustForMemory`, `MIN_SAMPLES_FOR_MEMORY_BANDIT`) so
+// Phase 6 callers don't need to be touched.
 
-/**
- * Same threshold as the slice / tool bandit. Below this, the posterior
- * is too thin to act on and the call site should fall back to the
- * heuristic (confidence DESC for atoms, last_compiled_at DESC for pages).
- */
-export const MIN_SAMPLES_FOR_MEMORY_BANDIT = 10
+import { thompsonAdjust as _thompsonAdjust, MIN_SAMPLES_FOR_BANDIT as _MIN } from '@/lib/bandit/beta'
 
-/**
- * Thompson-sample one prior. Returns a score adjustment in roughly
- * [-2, +2] using the sampled posterior's distance from 0.5. Same
- * formula as the slice bandit so the magnitudes are interchangeable
- * when both feed the same downstream ranking.
- *
- * Returns 0 below MIN_SAMPLES_FOR_MEMORY_BANDIT — the posterior is
- * not yet trustworthy enough to sway ordering.
- */
+export const MIN_SAMPLES_FOR_MEMORY_BANDIT = _MIN
+
 export function thompsonAdjustForMemory(
   prior: MemoryPrior | WikiPagePrior | undefined,
 ): number {
-  if (!prior) return 0
-  // alpha + beta - 2 = number of observed events. (Beta(1,1) is the
-  // uniform prior; subtract the 2 prior pseudo-counts so cold-start
-  // memories don't count themselves.)
-  const sampleCount = (prior.prior_alpha + prior.prior_beta) - 2
-  if (sampleCount < MIN_SAMPLES_FOR_MEMORY_BANDIT) return 0
-  const mean = prior.prior_alpha / (prior.prior_alpha + prior.prior_beta)
-  const variance =
-    (prior.prior_alpha * prior.prior_beta) /
-    ((prior.prior_alpha + prior.prior_beta) ** 2 * (prior.prior_alpha + prior.prior_beta + 1))
-  const u1 = Math.max(Math.random(), 1e-9)
-  const u2 = Math.random()
-  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
-  const sampled = Math.max(0, Math.min(1, mean + z * Math.sqrt(variance)))
-  return Math.round((sampled - 0.5) * 4 * 10) / 10
+  return _thompsonAdjust(prior)
 }
 
 // ---------------------------------------------------------------------------

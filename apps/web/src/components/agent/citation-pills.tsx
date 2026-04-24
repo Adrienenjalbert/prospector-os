@@ -11,6 +11,7 @@ import {
   BarChart3,
   Brain,
   BookOpen,
+  Zap,
 } from 'lucide-react'
 
 import { getCitationsForInteraction, type CitationRecord } from '@/app/actions/citations'
@@ -36,6 +37,8 @@ const ICON: Record<string, React.ElementType> = {
   memory: Brain,
   // Phase 6 (Two-Level Second Brain): compiled wiki pages.
   wiki_page: BookOpen,
+  // Phase 7 (Composite Triggers): typed buying-trigger events.
+  trigger: Zap,
 }
 
 function label(source: string): string {

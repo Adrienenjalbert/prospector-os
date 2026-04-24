@@ -5,8 +5,10 @@ import { CalibrationRollbackButton } from '@/components/admin/calibration-rollba
 import {
   MEMORY_KIND_LABELS,
   WIKI_PAGE_KIND_LABELS,
+  TRIGGER_PATTERN_LABELS,
   type MemoryKind,
   type WikiPageKind,
+  type TriggerPattern,
 } from '@prospector/core'
 
 export const metadata = { title: 'Per-tenant adaptation' }
@@ -133,6 +135,40 @@ export default async function AdaptationPage() {
       .limit(200),
   ])
 
+  // Phase 7 KPIs — triggers + bridges this week. Run as a separate
+  // batch so the Phase 6 await does not block on the new tables (which
+  // may not exist on tenants pre-migration 024).
+  const [triggersRes, bridgeEdgesRes, triggerEventsRes] = await Promise.all([
+    supabase
+      .from('triggers')
+      .select('id, pattern, status, trigger_score, detected_at, acted_at')
+      .eq('tenant_id', profile.tenant_id)
+      .gte('detected_at', sevenDaysAgo)
+      .limit(2000),
+    supabase
+      .from('memory_edges')
+      .select('id, edge_kind, src_kind, dst_kind, created_at')
+      .eq('tenant_id', profile.tenant_id)
+      .in('edge_kind', ['bridges_to', 'coworked_with', 'alumni_of'])
+      .gte('created_at', sevenDaysAgo)
+      .limit(2000),
+    supabase
+      .from('agent_events')
+      .select('event_type', { head: false })
+      .eq('tenant_id', profile.tenant_id)
+      .in('event_type', [
+        'trigger_detected',
+        'trigger_injected',
+        'trigger_cited',
+        'trigger_acted',
+        'trigger_dismissed',
+        'trigger_expired',
+        'bridge_detected',
+      ])
+      .gte('created_at', sevenDaysAgo)
+      .limit(2000),
+  ])
+
   // Aggregate Phase 6 KPIs.
   const recentAtoms = (recentAtomsRes.data ?? []) as Array<{
     id: string
@@ -193,6 +229,69 @@ export default async function AdaptationPage() {
   for (const w of lintWarnings) {
     const t = (w.payload?.warning_type as string | undefined) ?? 'unknown'
     lintWarningCounts[t] = (lintWarningCounts[t] ?? 0) + 1
+  }
+
+  // Phase 7 — trigger + bridge KPIs.
+  const triggers = (triggersRes.data ?? []) as Array<{
+    id: string
+    pattern: string
+    status: string
+    trigger_score: number
+    detected_at: string
+    acted_at: string | null
+  }>
+  const bridgeEdges = (bridgeEdgesRes.data ?? []) as Array<{
+    id: string
+    edge_kind: string
+    src_kind: string
+    dst_kind: string
+    created_at: string
+  }>
+  const triggerEvents = (triggerEventsRes.data ?? []) as Array<{ event_type: string }>
+
+  const triggerEventCounts: Record<string, number> = {
+    trigger_detected: 0,
+    trigger_cited: 0,
+    trigger_acted: 0,
+    trigger_dismissed: 0,
+    trigger_expired: 0,
+    bridge_detected: 0,
+  }
+  for (const e of triggerEvents) {
+    if (e.event_type in triggerEventCounts) triggerEventCounts[e.event_type] += 1
+  }
+
+  // Per-pattern roll-up: detected/acted/dismissed/expired counts.
+  const triggerByPattern = new Map<
+    string,
+    { detected: number; acted: number; dismissed: number; expired: number; open: number }
+  >()
+  for (const t of triggers) {
+    const slot = triggerByPattern.get(t.pattern) ?? {
+      detected: 0,
+      acted: 0,
+      dismissed: 0,
+      expired: 0,
+      open: 0,
+    }
+    slot.detected += 1
+    if (t.status === 'acted') slot.acted += 1
+    else if (t.status === 'dismissed') slot.dismissed += 1
+    else if (t.status === 'expired') slot.expired += 1
+    else if (t.status === 'open') slot.open += 1
+    triggerByPattern.set(t.pattern, slot)
+  }
+  const triggerPatternRows = Array.from(triggerByPattern.entries())
+    .map(([pattern, stats]) => ({
+      pattern,
+      ...stats,
+      conversion: stats.detected > 0 ? stats.acted / stats.detected : 0,
+    }))
+    .sort((a, b) => b.detected - a.detected)
+
+  const bridgeYieldCounts: Record<string, number> = {}
+  for (const e of bridgeEdges) {
+    bridgeYieldCounts[e.edge_kind] = (bridgeYieldCounts[e.edge_kind] ?? 0) + 1
   }
 
   return (
@@ -393,6 +492,125 @@ export default async function AdaptationPage() {
           <p className="mt-3 text-xs text-zinc-500">
             No new atoms or pages this week. Mining workflows run nightly at
             02:00 UTC; check back tomorrow.
+          </p>
+        )}
+      </section>
+
+      {/* Phase 7 — composite triggers + bridge KPIs (Section 8). */}
+      <section className="mt-8">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-zinc-200">
+            Triggers + bridges this week
+          </h2>
+          <Link
+            href="/admin/triggers"
+            className="text-[11px] text-zinc-500 hover:text-zinc-300"
+          >
+            Open /admin/triggers →
+          </Link>
+        </div>
+        <p className="mt-1 text-[11px] text-zinc-500">
+          Composite triggers detected vs acted, plus connection-miner
+          bridge yield (Phase 7).
+        </p>
+
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <KpiCard
+            label="trigger_detected"
+            value={triggerEventCounts.trigger_detected}
+            sublabel="open + lifecycled this week"
+          />
+          <KpiCard
+            label="trigger_acted"
+            value={triggerEventCounts.trigger_acted}
+            sublabel={
+              triggerEventCounts.trigger_detected > 0
+                ? `${(
+                    (triggerEventCounts.trigger_acted /
+                      triggerEventCounts.trigger_detected) *
+                    100
+                  ).toFixed(0)}% conversion`
+                : 'no detections yet'
+            }
+          />
+          <KpiCard
+            label="trigger_cited"
+            value={triggerEventCounts.trigger_cited}
+            sublabel="agent surfaced + cited"
+          />
+          <KpiCard
+            label="bridge_detected"
+            value={triggerEventCounts.bridge_detected}
+            sublabel={`${bridgeEdges.length} edges total this week`}
+          />
+        </div>
+
+        {triggerPatternRows.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-[11px] uppercase tracking-wide text-zinc-500">
+              Per-pattern conversion (detected → acted)
+            </h3>
+            <div className="mt-2 overflow-hidden rounded-md border border-zinc-800">
+              <table className="min-w-full divide-y divide-zinc-800 text-xs">
+                <thead className="bg-zinc-900/40 text-left text-[10px] uppercase tracking-wide text-zinc-500">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Pattern</th>
+                    <th className="px-3 py-2 text-right font-medium">Detected</th>
+                    <th className="px-3 py-2 text-right font-medium">Acted</th>
+                    <th className="px-3 py-2 text-right font-medium">Dismissed</th>
+                    <th className="px-3 py-2 text-right font-medium">Expired</th>
+                    <th className="px-3 py-2 text-right font-medium">Open</th>
+                    <th className="px-3 py-2 text-right font-medium">Conv.</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 bg-zinc-950/40">
+                  {triggerPatternRows.map((row) => (
+                    <tr key={row.pattern}>
+                      <td className="px-3 py-2 text-zinc-300">
+                        {TRIGGER_PATTERN_LABELS[row.pattern as TriggerPattern] ?? row.pattern}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.detected}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-emerald-300">
+                        {row.acted}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-500">
+                        {row.dismissed}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-500">
+                        {row.expired}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-300">
+                        {row.open}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {(row.conversion * 100).toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {Object.keys(bridgeYieldCounts).length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+            {Object.entries(bridgeYieldCounts).map(([kind, count]) => (
+              <span
+                key={kind}
+                className="rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-400"
+              >
+                {kind.replace(/_/g, ' ')}: {count}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {triggerPatternRows.length === 0 && bridgeEdges.length === 0 && (
+          <p className="mt-3 text-xs text-zinc-500">
+            No triggers or bridges this week. Phase 7 workflows run nightly;
+            connection miners need ~1 week of contact enrichment data before
+            bridges accumulate.
           </p>
         )}
       </section>

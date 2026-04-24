@@ -152,6 +152,7 @@ export interface Signal {
 }
 
 export type SignalType =
+  // Phase 1-3 (existing 8 ontology types)
   | 'hiring_surge'
   | 'funding'
   | 'leadership_change'
@@ -160,6 +161,20 @@ export type SignalType =
   | 'competitor_mention'
   | 'seasonal_peak'
   | 'negative_news'
+  // Phase 5 (transcript-signals + champion-alumni-detector). Migration
+  // 024 widens the DB CHECK so these inserts stop failing silently.
+  | 'champion_alumni'
+  | 'churn_risk'
+  | 'price_objection'
+  | 'champion_missing'
+  // Phase 7 (composite triggers + new adapter sources). New
+  // intent/enrichment vendors (Tavily, Bombora, BuiltWith, LinkedIn
+  // Sales Nav, Apollo enrichPerson) write rows of these types.
+  | 'intent_topic'
+  | 'tech_stack_change'
+  | 'job_change'
+  | 'press_event'
+  | 'tradeshow_attendance'
 
 export type SignalUrgency = 'immediate' | 'this_week' | 'this_month'
 

@@ -156,6 +156,12 @@ export default async function AdminWikiPage({
         <div className="flex items-start gap-2">
           {profile.role === 'admin' && <WikiExportButton />}
           <Link
+            href="/admin/wiki/graph"
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+          >
+            Graph view
+          </Link>
+          <Link
             href="/admin/wiki/schema"
             className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
           >

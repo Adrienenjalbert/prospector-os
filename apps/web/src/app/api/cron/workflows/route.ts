@@ -34,6 +34,13 @@ import {
   runConsolidateMemories,
   runLintWiki,
   runReflectMemories,
+  runRefreshContacts,
+  runMineReverseAlumni,
+  runMineCoworkerTriangles,
+  runMineInternalMovers,
+  runMineCompositeTriggers,
+  runCompileBridgeNeighbourhoods,
+  runLintTriggers,
   type WorkflowRunRow,
 } from '@/lib/workflows'
 
@@ -190,6 +197,53 @@ export async function GET(req: Request) {
             // Writes reflection memory atoms + reflection_weekly
             // wiki page + cites edges. Idempotent per ISO week.
             await runReflectMemories(supabase, row.id)
+            break
+          case 'refresh_contacts':
+            // Phase 7 (Section 1.2) — bulk re-enrichment of
+            // contact-level fields. Daily, <=500 contacts/tenant.
+            // Refreshes previous_companies + linkedin_url for active-
+            // deal + flagged contacts. Emits job_change signal when
+            // domain differs.
+            await runRefreshContacts(supabase, row.id)
+            break
+          case 'mine_reverse_alumni':
+            // Phase 7 (Section 3.2) — find bridges_to edges where a
+            // prospect contact previously worked at our customer.
+            // Pure SQL + inline entity resolution; no LLM cost.
+            await runMineReverseAlumni(supabase, row.id)
+            break
+          case 'mine_coworker_triangles':
+            // Phase 7 (Section 3.2) — 3-way coworker bridges.
+            // Structural strength: stronger than reverse-alumni
+            // because the topology gates spurious connections.
+            await runMineCoworkerTriangles(supabase, row.id)
+            break
+          case 'mine_internal_movers':
+            // Phase 7 (Section 3.2) — internal job changes detected
+            // via title diffs after refresh-contacts. Emits
+            // job_change signal feeding job_change_at_existing_account
+            // composite trigger.
+            await runMineInternalMovers(supabase, row.id)
+            break
+          case 'mine_composite_triggers':
+            // Phase 7 (Section 2.2) — the architectural pivot.
+            // Composes signals × bridges × enrichment into typed
+            // first-class trigger rows. 7 pattern matchers (5 live,
+            // 2 awaiting adapters). One Sonnet rationale call per
+            // match; idempotent natural keys.
+            await runMineCompositeTriggers(supabase, row.id)
+            break
+          case 'compile_bridge_neighbourhoods':
+            // Phase 7 (Section 3.5) — compile entity_company_neighbourhood
+            // wiki pages from inbound bridges_to edges. One Sonnet
+            // call per company with >=3 bridges; bounded ~10k tokens/
+            // tenant/night.
+            await runCompileBridgeNeighbourhoods(supabase, row.id)
+            break
+          case 'lint_triggers':
+            // Phase 7 (Section 7.1) — daily trigger lifecycle: expire
+            // stale, dismiss orphans. Pure SQL; no LLM cost.
+            await runLintTriggers(supabase, row.id)
             break
           default:
             console.warn(

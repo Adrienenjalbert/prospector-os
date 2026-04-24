@@ -155,11 +155,51 @@ export async function runReflectMemories(
               .in('id', hotMemoryIds)
           : { data: [] }
 
+        // Phase 7 (Section 7.2) — also gather trigger conversion
+        // stats per pattern over the same window. The reflection
+        // LLM gets a summary block of `pattern X: detected=N,
+        // acted=K, dismissed=D, expired=E` so it can observe
+        // "funding_plus_leadership converted 3x better than
+        // hot_lookalike this week" — pattern-level learning that
+        // the per-row Beta posterior can't see.
+        const { data: triggerRows } = await ctx.supabase
+          .from('triggers')
+          .select('pattern, status, detected_at, acted_at')
+          .eq('tenant_id', ctx.tenantId)
+          .gte('detected_at', since)
+          .limit(2000)
+
+        const triggerStats = new Map<
+          string,
+          { detected: number; acted: number; dismissed: number; expired: number; open: number }
+        >()
+        for (const t of triggerRows ?? []) {
+          const pattern = t.pattern as string
+          const slot = triggerStats.get(pattern) ?? {
+            detected: 0,
+            acted: 0,
+            dismissed: 0,
+            expired: 0,
+            open: 0,
+          }
+          slot.detected += 1
+          const status = t.status as string
+          if (status === 'acted') slot.acted += 1
+          else if (status === 'dismissed') slot.dismissed += 1
+          else if (status === 'expired') slot.expired += 1
+          else if (status === 'open') slot.open += 1
+          triggerStats.set(pattern, slot)
+        }
+
         return {
           outcomes: (outcomesRes.data ?? []) as OutcomeEventRow[],
           hot_memories: hotMemories ?? [],
           injection_counts: Array.from(injectionCounts.entries()),
           citation_counts: Array.from(citationCounts.entries()),
+          trigger_stats: Array.from(triggerStats.entries()).map(([pattern, stats]) => ({
+            pattern,
+            ...stats,
+          })),
         }
       },
     },
@@ -167,7 +207,7 @@ export async function runReflectMemories(
       name: 'reflect',
       run: async (ctx) => {
         if (!ctx.tenantId) throw new Error('Missing tenant')
-        const { outcomes, hot_memories } = ctx.stepState.gather as {
+        const { outcomes, hot_memories, trigger_stats } = ctx.stepState.gather as {
           outcomes: OutcomeEventRow[]
           hot_memories: Array<{
             id: string
@@ -177,9 +217,18 @@ export async function runReflectMemories(
             scope: Record<string, string | undefined>
             confidence: number
           }>
+          trigger_stats?: Array<{
+            pattern: string
+            detected: number
+            acted: number
+            dismissed: number
+            expired: number
+            open: number
+          }>
         }
 
-        if (outcomes.length === 0 && hot_memories.length === 0) {
+        const hasTriggerSignal = (trigger_stats ?? []).length > 0
+        if (outcomes.length === 0 && hot_memories.length === 0 && !hasTriggerSignal) {
           return { skipped: true, reason: 'no_signal_in_window' }
         }
 
@@ -206,6 +255,18 @@ export async function runReflectMemories(
           )
           .join('\n\n')
 
+        // Phase 7 (§7.2) — pattern-level trigger conversion summary.
+        // Empty when no triggers detected this window; LLM treats
+        // "(none)" as no signal.
+        const triggerStatsList = trigger_stats ?? []
+        const triggerBlock = triggerStatsList
+          .map((s) => {
+            const denom = Math.max(1, s.detected)
+            const conversion = s.acted / denom
+            return `PATTERN ${s.pattern}: detected=${s.detected}, acted=${s.acted}, dismissed=${s.dismissed}, expired=${s.expired}, open=${s.open}, conversion=${(conversion * 100).toFixed(0)}%`
+          })
+          .join('\n')
+
         const prompt = `You are the weekly reflection engine for a sales-AI per-tenant brain.
 
 Your job: synthesise 1-3 short cross-deal observations from the last ${REFLECTION_LOOKBACK_DAYS} days. The observations will be filed BOTH as memory atoms and as a reflection_weekly wiki page that admins / leaders read in Slack and Obsidian.
@@ -213,6 +274,7 @@ Your job: synthesise 1-3 short cross-deal observations from the last ${REFLECTIO
 # WHAT GOOD LOOKS LIKE
 - "This week, deals where the [persona-library memory] was cited closed 1.4× faster than deals where it wasn't" — concrete, leans on a specific memory or outcome.
 - "Industry X had a 2× higher loss rate when [theme] was raised mid-pipeline" — quantitative if possible.
+- "Trigger pattern funding_plus_leadership_window converted 3x better than hot_lookalike this week — pattern-level adjustment recommended." — quantitative trigger-level finding.
 - NOT "the team is doing well" / "consider focusing on X" — those are vacuous.
 
 # OBSERVATION REQUIREMENTS
@@ -225,6 +287,9 @@ ${outcomeBlock || '(none)'}
 
 # MEMORIES INJECTED ≥${MEMORY_HOT_INJECTION_THRESHOLD}× AND CITED ≥1× IN THE WINDOW (${hot_memories.length} total)
 ${memoryBlock || '(none)'}
+
+# COMPOSITE TRIGGER PATTERNS — DETECTED IN THE WINDOW (${triggerStatsList.length} total)
+${triggerBlock || '(none)'}
 
 Synthesise the reflections now.`
 

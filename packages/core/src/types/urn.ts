@@ -35,6 +35,12 @@ export type UrnObjectType =
   // Pages are what slices read first; this URN deep-links to
   // /admin/wiki/[id]. The id portion is the wiki_pages.id UUID.
   | 'wiki_page'
+  // Composite Trigger Layer (migration 024, Phase 7).
+  // Typed N-ary "act now" events composed of (signal × bridge ×
+  // enrichment × time window). Carried as `subject_urn` on
+  // trigger_* events; deep-links to /admin/triggers/[id]. The id
+  // portion is the triggers.id UUID.
+  | 'trigger'
 
 export interface ParsedUrn {
   tenantId: string
@@ -104,4 +110,5 @@ export const urn = {
   interaction: (tenantId: string, id: string) => toUrn(tenantId, 'interaction', id),
   memory: (tenantId: string, id: string) => toUrn(tenantId, 'memory', id),
   wikiPage: (tenantId: string, id: string) => toUrn(tenantId, 'wiki_page', id),
+  trigger: (tenantId: string, id: string) => toUrn(tenantId, 'trigger', id),
 }
