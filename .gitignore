@@ -8,3 +8,14 @@ dist/
 *.tsbuildinfo
 .DS_Store
 prospector-v3/
+
+# Office app open-file locks (LibreOffice / Word / Excel)
+.~lock.*#
+~$*.xlsx
+~$*.docx
+~$*.doc
+~$*.ppt
+~$*.pptx
+
+# Auto-exported monthly ROI briefs (regenerable from live SQL)
+docs/initiatives/_trackers/monthly-roi-briefs/*.pdf

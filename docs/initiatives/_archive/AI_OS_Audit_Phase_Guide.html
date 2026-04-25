@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI OS — 2-Week Manual Audit Phase Guide</title>
+<style>
+  :root {
+    --teal: #004054;
+    --green: #0CD973;
+    --yellow: #F5A623;
+    --red: #E74C3C;
+    --light-blue: #EBFBFF;
+    --light-grey: #F7F8FA;
+    --border: #E0E4E8;
+    --text: #2D3748;
+    --muted: #718096;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: var(--text); background: #fff; line-height: 1.6; }
+
+  .header { background: var(--teal); color: #fff; padding: 48px 40px 36px; }
+  .header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .header p { font-size: 15px; opacity: 0.85; max-width: 720px; }
+  .header .dates { display: inline-block; background: rgba(255,255,255,0.15); padding: 6px 16px; border-radius: 6px; margin-top: 12px; font-size: 14px; font-weight: 600; }
+
+  .nav { background: #fff; border-bottom: 1px solid var(--border); padding: 0 40px; position: sticky; top: 0; z-index: 100; }
+  .nav-inner { display: flex; gap: 0; overflow-x: auto; }
+  .nav a { padding: 14px 18px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; white-space: nowrap; border-bottom: 3px solid transparent; transition: all 0.2s; }
+  .nav a:hover, .nav a.active { color: var(--teal); border-bottom-color: var(--green); }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+
+  h2 { font-size: 22px; color: var(--teal); margin: 40px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--green); }
+  h3 { font-size: 17px; color: var(--teal); margin: 28px 0 12px; }
+  h4 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 8px; }
+  p { margin-bottom: 12px; font-size: 15px; }
+
+  .callout { background: var(--light-blue); border-left: 4px solid var(--teal); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; font-size: 14px; }
+  .callout strong { color: var(--teal); }
+  .callout-warn { background: #FFF8E1; border-left-color: var(--yellow); }
+  .callout-success { background: #E8F5E9; border-left-color: var(--green); }
+
+  .pillar-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 20px 0; }
+  .pillar { background: var(--light-grey); border-radius: 10px; padding: 20px; border-top: 4px solid var(--teal); }
+  .pillar.process { border-top-color: #2196F3; }
+  .pillar.data { border-top-color: var(--yellow); }
+  .pillar.outcome { border-top-color: var(--green); }
+  .pillar h4 { margin-top: 0; color: var(--teal); }
+  .pillar ul { font-size: 13px; padding-left: 18px; }
+  .pillar ul li { margin-bottom: 6px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th { background: var(--teal); color: #fff; padding: 10px 14px; text-align: left; font-weight: 600; font-size: 13px; }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:nth-child(even) { background: var(--light-grey); }
+
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+  .tag-process { background: #E3F2FD; color: #1565C0; }
+  .tag-data { background: #FFF8E1; color: #F57F17; }
+  .tag-outcome { background: #E8F5E9; color: #2E7D32; }
+
+  .timeline { position: relative; padding-left: 32px; margin: 20px 0; }
+  .timeline::before { content: ''; position: absolute; left: 12px; top: 0; bottom: 0; width: 3px; background: var(--border); border-radius: 2px; }
+  .timeline-item { position: relative; margin-bottom: 20px; }
+  .timeline-item::before { content: ''; position: absolute; left: -25px; top: 6px; width: 11px; height: 11px; border-radius: 50%; background: var(--teal); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--teal); }
+  .timeline-item.week2::before { background: var(--green); box-shadow: 0 0 0 2px var(--green); }
+  .timeline-date { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+  .timeline-content { font-size: 14px; margin-top: 4px; }
+
+  .template-box { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; font-family: 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+
+  .scorecard { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 16px 0; }
+  .score-item { background: var(--light-grey); border-radius: 8px; padding: 14px; }
+  .score-item label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .score-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 4px; }
+
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { padding: 8px 0 8px 28px; position: relative; font-size: 14px; border-bottom: 1px solid var(--border); }
+  .checklist li::before { content: '☐'; position: absolute; left: 0; color: var(--muted); font-size: 16px; }
+
+  .owner-badge { display: inline-block; background: var(--teal); color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+
+  @media (max-width: 768px) {
+    .pillar-grid { grid-template-columns: 1fr; }
+    .scorecard { grid-template-columns: 1fr; }
+    .header { padding: 32px 20px; }
+    .container { padding: 24px 16px; }
+    .nav { padding: 0 16px; }
+  }
+
+  @media print {
+    .nav { display: none; }
+    .header { padding: 24px; }
+    h2 { page-break-before: always; }
+    h2:first-of-type { page-break-before: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>AI Revenue OS — Manual Audit Phase Guide</h1>
+  <p>Do it by hand first. Understand the process, validate the data, prove the outcomes — then build the system around what works.</p>
+  <div class="dates">📅 28 April — 9 May 2026 &nbsp;|&nbsp; 2 Weeks &nbsp;|&nbsp; 6 Initiatives</div>
+</div>
+
+<div class="nav">
+  <div class="nav-inner">
+    <a href="#philosophy" class="active">Philosophy</a>
+    <a href="#three-pillars">3 Pillars</a>
+    <a href="#week1">Week 1</a>
+    <a href="#week2">Week 2</a>
+    <a href="#init6">Init 6: Data</a>
+    <a href="#init1">Init 1: New Biz</a>
+    <a href="#init3">Init 3: AD</a>
+    <a href="#init4">Init 4: CSM</a>
+    <a href="#init5">Init 5: Leadership</a>
+    <a href="#init2">Init 2: Growth</a>
+    <a href="#templates">Templates</a>
+    <a href="#scoring">Scoring</a>
+    <a href="#gonogo">Go/No-Go</a>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ======== PHILOSOPHY ======== -->
+<section id="philosophy">
+<h2>Why Manual First?</h2>
+
+<div class="callout">
+  <strong>Core Principle:</strong> If you can't do it manually in 30 minutes, you can't spec it for automation. Every AI workflow we build must be modelled on a human process we've already validated.
+</div>
+
+<p>The 2-week audit phase exists to answer three questions before writing a single line of automation:</p>
+
+<div class="pillar-grid">
+  <div class="pillar process">
+    <h4>🔵 Process</h4>
+    <p style="font-size:14px;font-weight:600;margin-bottom:8px;">What actually happens today?</p>
+    <ul>
+      <li>Map as-is workflows step by step</li>
+      <li>Identify where time is wasted</li>
+      <li>Find the "golden path" vs. edge cases</li>
+      <li>Document who does what, when, and why</li>
+    </ul>
+  </div>
+  <div class="pillar data">
+    <h4>🟡 Data</h4>
+    <p style="font-size:14px;font-weight:600;margin-bottom:8px;">What data exists and can we access it?</p>
+    <ul>
+      <li>Audit every data source needed</li>
+      <li>Check access, freshness, quality</li>
+      <li>Identify gaps before they block a build</li>
+      <li>Map cross-system joins required</li>
+    </ul>
+  </div>
+  <div class="pillar outcome">
+    <h4>🟢 Outcome</h4>
+    <p style="font-size:14px;font-weight:600;margin-bottom:8px;">Can we create useful output by hand?</p>
+    <ul>
+      <li>Manually create 3+ real outputs per initiative</li>
+      <li>Test with actual stakeholders for feedback</li>
+      <li>Validate that the output is worth automating</li>
+      <li>Capture the "golden example" for AI to replicate</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout-warn callout">
+  <strong>Anti-pattern to avoid:</strong> Building a system that produces beautiful outputs nobody asked for. The manual phase forces you to validate demand <em>before</em> investing in automation.
+</div>
+</section>
+
+<!-- ======== THREE PILLARS ======== -->
+<section id="three-pillars">
+<h2>The Three Audit Pillars — Detailed</h2>
+
+<h3>🔵 PROCESS Audit</h3>
+<p>For each initiative, you are documenting the current human workflow. The goal is a step-by-step map that an AI system can eventually replicate or accelerate.</p>
+
+<h4>What to capture</h4>
+<ul class="checklist">
+  <li><strong>Trigger:</strong> What starts this workflow? (New lead, call completed, QBR scheduled, etc.)</li>
+  <li><strong>Steps:</strong> Walk through each action — what systems are opened, what data is pulled, what document is created</li>
+  <li><strong>Time:</strong> How long does each step take? Where are the bottlenecks?</li>
+  <li><strong>People:</strong> Who is involved? Who hands off to whom?</li>
+  <li><strong>Exceptions:</strong> What happens when the standard process breaks? What edge cases exist?</li>
+  <li><strong>Output:</strong> What's the deliverable at the end? Who receives it? In what format?</li>
+</ul>
+
+<h4>How to capture it</h4>
+<p>Shadow real users doing real work. Don't ask them to describe their process — watch them do it. People often skip steps they've automated in their heads. Sit with Brett during pre-call prep. Sit with an AD during QBR prep. Sit with a CSM during account review.</p>
+
+<h3>🟡 DATA Audit</h3>
+<p>For each initiative, you are verifying that the data the AI system would need actually exists, is accessible, and is trustworthy.</p>
+
+<h4>Data audit checklist per source</h4>
+<table>
+  <tr><th>Question</th><th>Why It Matters</th></tr>
+  <tr><td>Does the data exist?</td><td>Sometimes the field exists but is never populated</td></tr>
+  <tr><td>Can we access it programmatically?</td><td>Dashboard access ≠ API access. Check for MCP/API availability</td></tr>
+  <tr><td>How fresh is the data?</td><td>Real-time vs. daily sync vs. weekly export — each has implications</td></tr>
+  <tr><td>What's the completeness rate?</td><td>If 40% of records are missing key fields, the AI output will be unreliable</td></tr>
+  <tr><td>Who owns this data source?</td><td>No owner = no one to fix issues when they arise</td></tr>
+  <tr><td>Are there access/permission blockers?</td><td>IT approvals, licence costs, data governance policies</td></tr>
+</table>
+
+<h3>🟢 OUTCOME Validation</h3>
+<p>For each initiative, you are manually creating the exact output the AI system would produce — using real data, for real stakeholders, and collecting real feedback.</p>
+
+<h4>Outcome validation criteria</h4>
+<table>
+  <tr><th>Criterion</th><th>What "Pass" Looks Like</th></tr>
+  <tr><td>Usefulness</td><td>Stakeholder would use this output in their workflow without significant changes</td></tr>
+  <tr><td>Accuracy</td><td>Data points are correct and current; no misleading information</td></tr>
+  <tr><td>Timeliness</td><td>Output can be produced fast enough to be useful (pre-call, pre-QBR, etc.)</td></tr>
+  <tr><td>Format</td><td>Output format (Slack, doc, deck) matches how stakeholders actually consume information</td></tr>
+  <tr><td>Repeatability</td><td>The process for creating this output can be described clearly enough to automate</td></tr>
+</table>
+</section>
+
+<!-- ======== WEEK 1 ======== -->
+<section id="week1">
+<h2>Week 1: Discover & Map (28 Apr — 2 May)</h2>
+
+<div class="callout">
+  <strong>Week 1 focus:</strong> Process mapping and data auditing. By Friday you should have a clear picture of what exists, what's accessible, and what's missing across all 6 initiatives.
+</div>
+
+<div class="timeline">
+  <div class="timeline-item">
+    <div class="timeline-date">Mon 28 Apr</div>
+    <div class="timeline-content">
+      <strong>Kick off audit.</strong> Begin Init 6 (Foundation) and Init 1 (Quick Win) process mapping simultaneously. Start data source inventory for Tableau/HubSpot.
+      <br><span class="owner-badge">Adrien</span> <span class="owner-badge">Olga</span>
+    </div>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-date">Tue 29 Apr</div>
+    <div class="timeline-content">
+      <strong>Shadow sessions.</strong> Observe AE pre-call prep (Init 1). Begin Init 3 and Init 4 process interviews with ADs and CSMs.
+      <br><span class="owner-badge">Adrien</span>
+    </div>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-date">Wed 30 Apr</div>
+    <div class="timeline-content">
+      <strong>Data deep dive.</strong> Audit Tableau MCP with Bill. Check Snowflake table access. Map HubSpot/Salesforce fields for account context. Begin Init 5 process mapping with James.
+      <br><span class="owner-badge">Adrien</span> <span class="owner-badge">Bill</span>
+    </div>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-date">Thu 1 May</div>
+    <div class="timeline-content">
+      <strong>Transcript decision.</strong> Confirm with Tom: which transcript platform, access level, data format. Collect first batch of real call transcripts for Init 1. Begin Init 2 process mapping.
+      <br><span class="owner-badge">Tom</span>
+    </div>
+  </div>
+  <div class="timeline-item">
+    <div class="timeline-date">Fri 2 May</div>
+    <div class="timeline-content">
+      <strong>Week 1 checkpoint.</strong> All process maps should be drafted. Data audit should identify clear ✅/⚠️/❌ for each source. Flag blockers for week 2 outcome work.
+      <br><span class="owner-badge">Adrien</span> <span class="owner-badge">Olga</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ======== WEEK 2 ======== -->
+<section id="week2">
+<h2>Week 2: Build & Test Outcomes (5 — 9 May)</h2>
+
+<div class="callout-success callout">
+  <strong>Week 2 focus:</strong> Create real outputs by hand. Test them with stakeholders. Collect feedback. These manual outputs become the "golden examples" that define what the automated system must produce.
+</div>
+
+<div class="timeline">
+  <div class="timeline-item week2">
+    <div class="timeline-date">Mon 5 May</div>
+    <div class="timeline-content">
+      <strong>Begin manual output creation.</strong> Start with Init 6 (manually answer 5 data questions) and Init 1 (create 3 pre-call briefs). These are highest-confidence initiatives.
+    </div>
+  </div>
+  <div class="timeline-item week2">
+    <div class="timeline-date">Tue 6 May</div>
+    <div class="timeline-content">
+      <strong>Init 3 & 4 outputs.</strong> Create C-suite briefing note (Init 3). Create account health risk summaries (Init 4). Begin Init 2 expansion roadmap.
+    </div>
+  </div>
+  <div class="timeline-item week2">
+    <div class="timeline-date">Wed 7 May</div>
+    <div class="timeline-content">
+      <strong>Stakeholder feedback.</strong> Test Init 1 pre-call briefs with Brett. Test Init 4 risk summaries with Sarah. Test Init 6 Slack summaries with Tom & Leonie.
+    </div>
+  </div>
+  <div class="timeline-item week2">
+    <div class="timeline-date">Thu 8 May</div>
+    <div class="timeline-content">
+      <strong>Final outputs & scoring.</strong> Complete Init 5 pipeline synthesis memo (test with James). Compile readiness scorecard. Begin Go/No-Go recommendation.
+    </div>
+  </div>
+  <div class="timeline-item week2">
+    <div class="timeline-date">Fri 9 May</div>
+    <div class="timeline-content">
+      <strong>Audit complete.</strong> Present Go/No-Go to James & Tom. Confirm build sequence. Document reusable templates. Hand off to Sprint 1 planning.
+      <br><span class="tag tag-outcome">MILESTONE</span>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ======== INITIATIVE PLAYBOOKS ======== -->
+<section id="init6">
+<h2>🏗️ Init 6 — Revenue Data Concierge (Foundation)</h2>
+<p><span class="owner-badge">Owner: James/Tom</span> &nbsp; <span class="owner-badge">Build: Adrien/Olga</span> &nbsp; <span class="owner-badge">Pilot: Tom & Leonie</span></p>
+
+<h3>Process Audit</h3>
+<p>Map how ADs and CSMs currently pull account data. Document every system they log into (Tableau, ACP, Snowflake, HubSpot) and the manual steps involved. Target: understand the "15 minutes to pull a data point" pain that this initiative solves.</p>
+
+<h3>Data Audit</h3>
+<table>
+  <tr><th>Data Source</th><th>What's Needed</th><th>Owner</th><th>Risk</th></tr>
+  <tr><td>Tableau</td><td>Fulfillment metrics, site data, billing</td><td>Bill</td><td><span class="tag tag-data">MEDIUM</span></td></tr>
+  <tr><td>HubSpot/Salesforce</td><td>Account context, contacts, deal stage</td><td>RevOps</td><td><span class="tag tag-process">LOW</span></td></tr>
+  <tr><td>Snowflake</td><td>Historical performance, churn signals</td><td>TBD</td><td><span class="tag" style="background:#FFEBEE;color:#C62828;">HIGH</span></td></tr>
+  <tr><td>ACP</td><td>Operational data, site metrics</td><td>Ops</td><td><span class="tag tag-data">MEDIUM</span></td></tr>
+</table>
+
+<h3>Outcome Tests</h3>
+<ol style="font-size:14px;padding-left:20px;">
+  <li>Manually answer 5 real natural-language data questions from team members</li>
+  <li>Create 3 sample Slack account health summaries using Tableau + CRM data</li>
+  <li>Time how long manual answers take vs. the &lt;60 second target</li>
+</ol>
+</section>
+
+<section id="init1">
+<h2>🎯 Init 1 — New Business Execution (Quick Win)</h2>
+<p><span class="owner-badge">Owner: Leonie</span> &nbsp; <span class="owner-badge">Build: Adrien/Olga</span> &nbsp; <span class="owner-badge">Pilot: Brett + AEs</span></p>
+
+<h3>Process Audit</h3>
+<p>Shadow 2-3 discovery calls. Document the gap between what a great pre-call brief looks like vs. what reps actually do before calls. Capture how long it takes, what tools they use, and where the process breaks down.</p>
+
+<h3>Data Audit</h3>
+<table>
+  <tr><th>Data Source</th><th>What's Needed</th><th>Owner</th><th>Risk</th></tr>
+  <tr><td>CRM (HubSpot)</td><td>Lead/contact data, company info, deal history</td><td>RevOps</td><td><span class="tag tag-process">LOW</span></td></tr>
+  <tr><td>Transcripts</td><td>Call recordings, meeting notes</td><td>Tom (decision)</td><td><span class="tag tag-data">MEDIUM</span></td></tr>
+  <tr><td>LinkedIn/Web</td><td>Stakeholder research, company news</td><td>N/A</td><td><span class="tag tag-process">LOW</span></td></tr>
+</table>
+
+<h3>Outcome Tests</h3>
+<ol style="font-size:14px;padding-left:20px;">
+  <li>Manually create 3 pre-call briefs for real upcoming meetings (pain points, questions, positioning, objections)</li>
+  <li>Analyse 1 real transcript — extract themes, commitments, objections → draft follow-up</li>
+  <li>Test both outputs with Brett: would he use this? What's missing?</li>
+</ol>
+</section>
+
+<section id="init3">
+<h2>📊 Init 3 — AD Strategic Narrative (Company Priority)</h2>
+<p><span class="owner-badge">Owner: Tom</span> &nbsp; <span class="owner-badge">Build: Adrien/Olga</span> &nbsp; <span class="owner-badge">Pilot: AD Team</span></p>
+
+<h3>Process Audit</h3>
+<p>Map how ADs currently prepare for QBRs and C-suite reviews. The pain point is turning "scattered, messy account realities" into executive narratives. Document the transformation process: raw data → insight → narrative → presentation.</p>
+
+<h3>Outcome Tests</h3>
+<ol style="font-size:14px;padding-left:20px;">
+  <li>Manually create 1 C-suite briefing note for a Tier 1 account (headline outcomes, ROI framing, stakeholder map, renewal narrative)</li>
+  <li>Draft a reusable strategic review narrative template</li>
+  <li>Test with Tom: does this capture the "soundboard" quality needed?</li>
+</ol>
+</section>
+
+<section id="init4">
+<h2>🛡️ Init 4 — CSM Retention Guardian</h2>
+<p><span class="owner-badge">Owner: Sarah</span> &nbsp; <span class="owner-badge">Build: Adrien/Olga</span> &nbsp; <span class="owner-badge">Pilot: CSM Team</span></p>
+
+<h3>Process Audit</h3>
+<p>Map how CSMs monitor account health. Focus on: how they detect churn risk signals today, how they synthesize meeting notes and service tickets, and what the escalation process looks like.</p>
+
+<h3>Outcome Tests</h3>
+<ol style="font-size:14px;padding-left:20px;">
+  <li>Manually create 3 account health risk summaries (synthesize notes + tickets + engagement data)</li>
+  <li>Draft a churn signal taxonomy from patterns observed during manual reviews</li>
+  <li>Test summaries with Sarah: do they capture root causes, not just symptoms?</li>
+</ol>
+</section>
+
+<section id="init5">
+<h2>🔍 Init 5 — Revenue Leadership Synthesis</h2>
+<p><span class="owner-badge">Owner: James</span> &nbsp; <span class="owner-badge">Build: Adrien/Olga</span> &nbsp; <span class="owner-badge">Pilot: Revenue Leadership</span></p>
+
+<h3>Process Audit</h3>
+<p>Shadow James's pipeline review process. Document what "tribal knowledge" exists — the heuristics and pattern-recognition rules that experienced leaders use but aren't codified. This becomes the business logic for automated synthesis.</p>
+
+<h3>Outcome Tests</h3>
+<ol style="font-size:14px;padding-left:20px;">
+  <li>Manually create 1 weekly pipeline synthesis memo (patterns, gaps, coaching themes)</li>
+  <li>Document 5+ "tribal knowledge" rules (when X happens, it usually means Y)</li>
+  <li>Test the memo with James: does it surface insights he'd otherwise miss?</li>
+</ol>
+</section>
+
+<section id="init2">
+<h2>📈 Init 2 — Growth AE Expansion (Deferred)</h2>
+<p><span class="owner-badge">Owner: Leonie</span> &nbsp; <span class="owner-badge">Build: Adrien/Olga</span> &nbsp; <span class="owner-badge">Pilot: Growth AE Team</span></p>
+
+<div class="callout-warn callout">
+  <strong>Deferred initiative.</strong> This initiative is lower priority but should still receive a lightweight audit to understand readiness. Focus on process mapping and a single outcome test.
+</div>
+
+<h3>Outcome Tests</h3>
+<ol style="font-size:14px;padding-left:20px;">
+  <li>Manually create 1 expansion roadmap for a client with active expansion discussions</li>
+  <li>Include: site priority list, headcount ramp assumptions, margin risk flags</li>
+</ol>
+</section>
+
+<!-- ======== TEMPLATES ======== -->
+<section id="templates">
+<h2>Audit Templates</h2>
+
+<h3>Process Map Template</h3>
+<div class="template-box">INITIATIVE: [Name]
+DATE OBSERVED: [Date]
+PERSON SHADOWED: [Name, Role]
+
+TRIGGER: What starts this workflow?
+→ [Description]
+
+STEP-BY-STEP WORKFLOW:
+1. [Action] → [System/Tool] → [Time taken]
+2. [Action] → [System/Tool] → [Time taken]
+3. [Action] → [System/Tool] → [Time taken]
+...
+
+TOTAL TIME: [X minutes]
+BOTTLENECK STEP: [Which step takes longest?]
+PAIN POINTS OBSERVED: [What frustrations did you see?]
+EDGE CASES: [What happens when the standard path breaks?]
+FINAL OUTPUT: [What deliverable is produced?]
+OUTPUT RECIPIENT: [Who gets it? In what format?]</div>
+
+<h3>Data Source Audit Template</h3>
+<div class="template-box">DATA SOURCE: [Name]
+SYSTEM: [Tableau / HubSpot / Snowflake / etc.]
+OWNER: [Person responsible]
+
+ACCESS:
+  ☐ Can view in UI
+  ☐ Can export manually
+  ☐ API/MCP access available
+  ☐ Real-time vs. [frequency] sync
+
+FIELDS NEEDED:
+  - [Field 1]: Completeness [X]% | Quality [Good/Fair/Poor]
+  - [Field 2]: Completeness [X]% | Quality [Good/Fair/Poor]
+  - [Field 3]: Completeness [X]% | Quality [Good/Fair/Poor]
+
+DATA FRESHNESS: [Real-time / Daily / Weekly / Other]
+KNOWN ISSUES: [Gaps, quality problems, access blockers]
+BLOCKER STATUS: ☐ Clear | ☐ Needs action: [describe]</div>
+
+<h3>Outcome Feedback Template</h3>
+<div class="template-box">INITIATIVE: [Name]
+OUTPUT TESTED: [Description of manual output]
+TESTED WITH: [Stakeholder name, role]
+DATE: [Date]
+
+CREATION TIME: [How long did it take to produce manually?]
+DATA SOURCES USED: [List all sources referenced]
+
+STAKEHOLDER FEEDBACK:
+  Usefulness (1-5): [Score]
+  "Would you use this in your workflow?" [Yes/No/With changes]
+  What's missing? [Feedback]
+  What should change? [Feedback]
+  What's most valuable? [Feedback]
+
+VERDICT: ☐ Ready to automate | ☐ Needs iteration | ☐ Rethink approach</div>
+</section>
+
+<!-- ======== SCORING ======== -->
+<section id="scoring">
+<h2>Initiative Readiness Scorecard</h2>
+
+<p>At the end of the audit, score each initiative on four dimensions. This drives the Go/No-Go decision and confirms or adjusts the build sequence.</p>
+
+<table>
+  <tr>
+    <th>Dimension</th>
+    <th>1 — Not Ready</th>
+    <th>3 — Partially Ready</th>
+    <th>5 — Ready</th>
+  </tr>
+  <tr>
+    <td><strong>Process Clarity</strong></td>
+    <td>Workflow unclear, many edge cases, no consensus on "right way"</td>
+    <td>Core workflow mapped but edge cases unresolved</td>
+    <td>Clear, repeatable workflow documented and validated by users</td>
+  </tr>
+  <tr>
+    <td><strong>Data Availability</strong></td>
+    <td>Key data sources missing, inaccessible, or unreliable</td>
+    <td>Most data available but some gaps or quality issues</td>
+    <td>All required data accessible, fresh, and quality-verified</td>
+  </tr>
+  <tr>
+    <td><strong>Output Quality</strong></td>
+    <td>Manual outputs rejected or heavily modified by stakeholders</td>
+    <td>Outputs useful but need significant iteration</td>
+    <td>Stakeholders would use outputs as-is in their workflow</td>
+  </tr>
+  <tr>
+    <td><strong>Stakeholder Buy-in</strong></td>
+    <td>No clear champion, low enthusiasm, unclear value</td>
+    <td>Champion identified but broader team uncertain</td>
+    <td>Active champion + team excited to use automated version</td>
+  </tr>
+</table>
+
+<div class="callout">
+  <strong>Decision rule:</strong> Initiatives scoring ≥16/20 proceed to Sprint 1 build. Initiatives scoring 12-15 proceed with caveats (documented risks). Initiatives scoring &lt;12 need additional groundwork before building.
+</div>
+
+<h3>Blank Scorecard</h3>
+<table>
+  <tr>
+    <th>Initiative</th>
+    <th>Process (1-5)</th>
+    <th>Data (1-5)</th>
+    <th>Output (1-5)</th>
+    <th>Buy-in (1-5)</th>
+    <th>Total</th>
+    <th>Verdict</th>
+  </tr>
+  <tr><td>Init 6: Data Concierge</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>Init 1: New Business</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>Init 3: AD Narrative</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>Init 4: CSM Retention</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>Init 5: Leadership</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>Init 2: Growth AE</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+</table>
+</section>
+
+<!-- ======== GO/NO-GO ======== -->
+<section id="gonogo">
+<h2>Go/No-Go Framework</h2>
+
+<h3>End-of-Audit Decision Meeting</h3>
+<p><strong>Attendees:</strong> Adrien, Olga, James, Tom &nbsp;|&nbsp; <strong>Date:</strong> Friday 9 May 2026</p>
+
+<h4>Agenda</h4>
+<ol style="font-size:14px;padding-left:20px;">
+  <li><strong>Audit findings summary</strong> — scorecard results for all 6 initiatives (5 min)</li>
+  <li><strong>Data blockers</strong> — what's inaccessible and what it means for the build (5 min)</li>
+  <li><strong>Output demos</strong> — show the best manual outputs and stakeholder feedback (10 min)</li>
+  <li><strong>Build sequence recommendation</strong> — confirm or adjust based on evidence (5 min)</li>
+  <li><strong>Sprint 1 scope agreement</strong> — what we commit to building first (5 min)</li>
+</ol>
+
+<h4>Decision criteria</h4>
+<table>
+  <tr><th>Signal</th><th>Go</th><th>Conditional Go</th><th>No-Go</th></tr>
+  <tr>
+    <td>Scorecard total</td>
+    <td>≥16/20</td>
+    <td>12-15/20</td>
+    <td>&lt;12/20</td>
+  </tr>
+  <tr>
+    <td>Data availability</td>
+    <td>All sources accessible</td>
+    <td>Core sources accessible, gaps have workarounds</td>
+    <td>Critical data missing with no path to access</td>
+  </tr>
+  <tr>
+    <td>Stakeholder feedback</td>
+    <td>"I'd use this every day"</td>
+    <td>"Useful but needs work"</td>
+    <td>"Not sure this helps"</td>
+  </tr>
+  <tr>
+    <td>Process clarity</td>
+    <td>Clear workflow, edge cases documented</td>
+    <td>Core workflow clear, some unknowns</td>
+    <td>No consensus on process</td>
+  </tr>
+</table>
+
+<div class="callout-success callout">
+  <strong>After Go decision:</strong> Manual outputs become the "golden examples" and test cases for Sprint 1. Process maps become the automation specs. Data audit becomes the connector requirements. Nothing is thrown away — every piece of audit work feeds directly into the build.
+</div>
+</section>
+
+<footer style="margin-top:60px;padding:24px 0;border-top:1px solid var(--border);text-align:center;color:var(--muted);font-size:12px;">
+  AI Revenue OS — Manual Audit Phase Guide &nbsp;|&nbsp; Blackbaud &nbsp;|&nbsp; Confidential — Internal Use Only &nbsp;|&nbsp; April 2026
+</footer>
+
+</div>
+</body>
+</html>
