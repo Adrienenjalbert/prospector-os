@@ -116,6 +116,22 @@ export interface BusinessProfile {
    */
   objection_handlers?: Array<{ objection: string; response: string }>
 
+  /**
+   * Per-tenant few-shot exemplars mined nightly from positive
+   * interactions (A1.1). Keyed by `${role}:${intent_class}`, each value
+   * is an array of `{ q, a }` pairs the prompt builder can splice in
+   * as few-shot examples for matching turns.
+   *
+   * Storage: `business_profiles.exemplars` (JSONB, added in migration
+   * 002). The miner writes here; `formatBusinessContext` reads only
+   * the entries that match the current turn's `(role, intent_class)`
+   * so the prompt stays bounded.
+   *
+   * Optional for backwards compatibility — tenants without mined data
+   * see no exemplars block.
+   */
+  exemplars?: Record<string, Array<{ q: string; a: string }>>
+
   agent_name: string
   agent_mission: string | null
   brand_voice: string | null

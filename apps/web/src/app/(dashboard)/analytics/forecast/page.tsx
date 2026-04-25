@@ -1,3 +1,4 @@
+import { computeBootstrapForecast } from '@prospector/core'
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { formatGbp } from '@/lib/utils'
 import { ForecastDashboard } from './forecast-dashboard'
@@ -17,6 +18,12 @@ interface ForecastNumbers {
   avgCycleDays: number
   winRate: number
   icpQualifiedPct: number
+  /**
+   * C6.4 — bootstrap forecast confidence band. Replaces the
+   * arbitrary 1.3× multiplier the page used as a fallback when no
+   * benchmark target was set.
+   */
+  band: { p10: number; p50: number; p90: number; mean: number; iterations: number }
 }
 
 type FetchResult =
@@ -99,9 +106,46 @@ async function fetchForecastData(): Promise<FetchResult> {
       .order('created_at', { ascending: false })
       .limit(1)
 
+    // C6.4 — derive a real win-rate per opportunity from the
+    // expected_revenue / value ratio (expected_revenue =
+    // value × propensity / 100, so ratio ≈ propensity ÷ 100). We
+    // already have propensity-adjusted expected_revenue on the row;
+    // assume value ≈ expected_revenue / max(0.05, ratio) when value
+    // isn't selected, OR use a proxy (priority_tier → win-rate
+    // bucket) as a fallback. We pull `value` explicitly here.
+    const { data: oppsForBootstrap } = await supabase
+      .from('opportunities')
+      .select('value, expected_revenue, propensity, priority_tier')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('is_closed', false)
+      .limit(2000)
+
+    const bootstrapInput = (oppsForBootstrap ?? []).map((o) => {
+      const value = Number(o.value ?? o.expected_revenue ?? 0)
+      const propensity = Math.max(0, Math.min(100, Number(o.propensity ?? 0)))
+      // Fallback: when propensity is missing, derive from tier so
+      // the forecast still has a defensible number.
+      const winRate = propensity > 0
+        ? propensity / 100
+        : (o.priority_tier ?? '').toUpperCase() === 'HOT'
+          ? 0.65
+          : (o.priority_tier ?? '').toUpperCase() === 'WARM'
+            ? 0.35
+            : 0.15
+      return { value, winRate }
+    })
+
+    const band = computeBootstrapForecast({
+      opportunities: bootstrapInput,
+      iterations: 1000,
+    })
+
+    // Target preference: explicit benchmark > bootstrap p90 (an
+    // "aspirational ceiling" the rep would hit if every probable
+    // deal lands). Replaces the arbitrary `closedValue × 1.3` fallback.
     const target = benchmarks?.[0]?.target_value
       ? Number(benchmarks[0].target_value)
-      : Math.max(closedValue * 1.3, 5_000_000)
+      : band.p90
 
     return {
       state: 'ok',
@@ -119,6 +163,7 @@ async function fetchForecastData(): Promise<FetchResult> {
         avgCycleDays: avgCycle,
         winRate,
         icpQualifiedPct: icpPct,
+        band,
       },
     }
   } catch {
@@ -163,8 +208,12 @@ export default async function ForecastPage() {
   const committedPct = forecast.target > 0 ? Math.round(((forecast.closed + forecast.committed) / forecast.target) * 100) : 0
   const bestCasePct = forecast.target > 0 ? Math.round(((forecast.closed + forecast.committed + forecast.upside) / forecast.target) * 100) : 0
 
-  const confidenceLow = forecast.closed + forecast.committed * 0.6
-  const confidenceHigh = forecast.closed + forecast.committed + forecast.upside * 0.7
+  // C6.4 — confidence band derived from a real bootstrap simulation
+  // (1000 iterations) instead of the heuristic
+  // `closed + committed × 0.6 / closed + committed + upside × 0.7`
+  // bands. The new band reflects per-deal win-rate uncertainty.
+  const confidenceLow = forecast.closed + forecast.band.p10
+  const confidenceHigh = forecast.closed + forecast.band.p90
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -210,9 +259,14 @@ export default async function ForecastPage() {
         {/* Confidence Band */}
         <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-2.5">
           <div className="flex items-center justify-between text-[10px] text-zinc-500">
-            <span>Weighted Confidence Band</span>
+            <span>
+              Bootstrap confidence band (P10–P90, {forecast.band.iterations.toLocaleString()} sims)
+            </span>
             <span className="font-mono text-zinc-300">
               {formatGbp(confidenceLow)} — {formatGbp(confidenceHigh)}
+              <span className="ml-2 text-zinc-500">
+                · P50 {formatGbp(forecast.closed + forecast.band.p50)}
+              </span>
             </span>
           </div>
           <div className="mt-1.5 relative h-2 w-full rounded-full bg-zinc-800">

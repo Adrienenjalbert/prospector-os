@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { TranscriptIngester } from '@prospector/adapters'
 import type { TranscriptWebhookPayload } from '@prospector/adapters'
-import { emitAgentEvent, urn } from '@prospector/core'
+import { transcriptIngesterAiOptions } from '@/lib/agent/transcript-ai-gateway'
 import {
   runWorkflow,
   startWorkflow,
@@ -43,18 +43,25 @@ export async function runTranscriptIngest(
       run: async (ctx) => {
         if (!ctx.tenantId) throw new Error('Missing tenant for transcript ingest')
         const payload = ctx.input as unknown as TranscriptWebhookPayload
-        const ingester = new TranscriptIngester(ctx.supabase, ctx.tenantId)
+        // B3.4: wire the AI Gateway-backed summariser so the LLM call
+        // benefits from gateway routing (failover, observability).
+        // The embedder still uses the adapter's built-in fallback
+        // until `@ai-sdk/openai` lands as a dep.
+        const ingester = new TranscriptIngester(
+          ctx.supabase,
+          ctx.tenantId,
+          transcriptIngesterAiOptions(),
+        )
         const id = await ingester.ingest(payload)
 
-        await emitAgentEvent(ctx.supabase, {
-          tenant_id: ctx.tenantId,
-          event_type: 'response_finished',
-          subject_urn: urn.transcript(ctx.tenantId, id),
-          payload: {
-            workflow: 'transcript_ingest',
-            source: payload.source,
-          },
-        })
+        // No agent_event emit here — the workflow runner already records
+        // completion in `workflow_runs`. Previously this step emitted
+        // `event_type='response_finished'` with a minimal payload, which
+        // /admin/roi treated as a chat turn (zero citations,
+        // zero-token), polluting the cited-% and per-rep adoption
+        // metrics. The transcript ingest is a system event, not a rep
+        // interaction — track it via the workflow_runs row, not the
+        // agent_events stream.
 
         return { transcript_id: id }
       },

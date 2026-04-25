@@ -160,19 +160,27 @@ export function createAgentTools(
   }
 }
 
+export interface PromptBuildOpts {
+  /** Current turn's classified intent (drives exemplar selection). */
+  intentClass?: string
+  /** Active role (drives exemplar selection + playbook framing). */
+  role?: string
+}
+
 export async function buildSystemPromptForAgent(
   agentType: AgentType,
   tenantId: string,
   agentContext: AgentContext | null,
   packed: PackedContext | null = null,
+  opts: PromptBuildOpts = {},
 ): Promise<string> {
   switch (agentType) {
     case 'pipeline-coach':
-      return buildPipelineCoachPrompt(tenantId, agentContext, packed)
+      return buildPipelineCoachPrompt(tenantId, agentContext, packed, opts)
     case 'account-strategist':
-      return buildAccountStrategistPrompt(tenantId, agentContext, packed)
+      return buildAccountStrategistPrompt(tenantId, agentContext, packed, opts)
     case 'leadership-lens':
-      return buildLeadershipLensPrompt(tenantId, agentContext, packed)
+      return buildLeadershipLensPrompt(tenantId, agentContext, packed, opts)
     case 'onboarding-coach':
       return buildOnboardingCoachPrompt(tenantId)
   }
@@ -180,27 +188,28 @@ export async function buildSystemPromptForAgent(
 
 /**
  * Cache-aware variant of `buildSystemPromptForAgent`. Returns the system
- * prompt as `(staticPrefix, dynamicSuffix)` parts so the route can mark
- * the prefix as cacheable via Anthropic's `cacheControl: ephemeral`
- * provider option. ~50% input-token reduction within a session.
+ * prompt as `(staticPrefix, dynamicSuffix, cacheableSuffix)` parts so
+ * the route can mark prefix + trailing rules as cacheable via Anthropic's
+ * two `cacheControl: ephemeral` breakpoints (B3.1).
  *
- * Onboarding-coach has no prompt-caching split today (its prompt is
- * already small + tenant-specific) — returns the whole thing in
- * `staticPrefix` for callers that just want a single string.
+ * Onboarding-coach returns the whole prompt in `staticPrefix` so it
+ * benefits from a single cache breakpoint (B3.2) — repeat onboarding
+ * turns within the 5-min window get the prefix cached.
  */
 export async function buildSystemPromptParts(
   agentType: AgentType,
   tenantId: string,
   agentContext: AgentContext | null,
   packed: PackedContext | null = null,
+  opts: PromptBuildOpts = {},
 ): Promise<SystemPromptParts> {
   switch (agentType) {
     case 'pipeline-coach':
-      return buildPipelineCoachPromptParts(tenantId, agentContext, packed)
+      return buildPipelineCoachPromptParts(tenantId, agentContext, packed, opts)
     case 'account-strategist':
-      return buildAccountStrategistPromptParts(tenantId, agentContext, packed)
+      return buildAccountStrategistPromptParts(tenantId, agentContext, packed, opts)
     case 'leadership-lens':
-      return buildLeadershipLensPromptParts(tenantId, agentContext, packed)
+      return buildLeadershipLensPromptParts(tenantId, agentContext, packed, opts)
     case 'onboarding-coach': {
       const single = await buildOnboardingCoachPrompt(tenantId)
       return { staticPrefix: single, dynamicSuffix: '' }

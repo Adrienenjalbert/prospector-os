@@ -38,6 +38,12 @@ describe('stageBucketFromString', () => {
 
 describe('selectSlices — situational picks', () => {
   it('stalled deal at proposal stage picks stalled-deals and current-deal-health', () => {
+    // Phase 5 + Phase 6 expanded the slice catalog from 8 slices to 23+.
+    // With 7+ slices declaring `objects: ['deal']`, Pass 1's force-include
+    // logic burns the default 3000-token budget on active-object matches
+    // before Pass 2 can fit stalled-deals (token_budget=400, intent-only
+    // trigger). Bump the budget to reflect the realistic per-turn cap
+    // the agent route uses with the larger catalog.
     const input = buildSelectorInput({
       role: 'ae',
       activeObject: 'deal',
@@ -45,6 +51,7 @@ describe('selectSlices — situational picks', () => {
       intentClass: 'risk_analysis',
       dealStage: 'Proposal',
       isStalled: true,
+      tokenBudget: 8000,
     })
     const { slugs } = selectSlices(input)
     expect(slugs).toContain('stalled-deals')

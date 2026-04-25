@@ -292,26 +292,94 @@ async function callAgentForText(
   repId: string,
   messageText: string,
 ): Promise<string> {
-  const { assembleAgentContext } = await import('@/lib/agent/context-builder')
-  const { createAgentTools, buildSystemPromptForAgent } = await import('@/lib/agent/tools')
+  // Track D — Slack and dashboard share the same per-turn assembly
+  // via `assembleAgentRun`. The only thing this route does
+  // differently from the dashboard is:
+  //   - generateText (final) instead of streamText (incremental)
+  //   - no compaction (Slack DMs are single-turn)
+  //   - no rep-level rate-limit (the Slack adapter cooldown owns
+  //     this for proactive pushes; reactive DMs are user-driven so
+  //     a separate budget cap is not needed at this layer)
+  //
+  // Everything else — tool loading, context pack, citations,
+  // intent-aware model selection, cache breakpoints — comes
+  // straight from the shared helper so the rep gets the SAME
+  // answer in Slack as in the dashboard for the same question.
+  const { createClient } = await import('@supabase/supabase-js')
+  const { generateText } = await import('ai')
+  const { getModel } = await import('@/lib/agent/model-registry')
+  const { assembleAgentRun } = await import('@/lib/agent/run-agent')
 
-  const { generateText, convertToCoreMessages } = await import('ai')
-  const { anthropic } = await import('@ai-sdk/anthropic')
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  )
 
-  const agentContext = await assembleAgentContext(repId, tenantId)
-  const systemPrompt = await buildSystemPromptForAgent('pipeline-coach', tenantId, agentContext)
-  const tools = createAgentTools(tenantId, repId, 'pipeline-coach')
+  // Tenant context: we need the AI budget snapshot + model routing
+  // overrides so `chooseModel` can do its 90%-budget Haiku downgrade.
+  // Pre-this-change Slack hardcoded Haiku so a tenant on Sonnet
+  // budget got Sonnet on the dashboard but Haiku in Slack — the
+  // exact behaviour-drift the parity contract bans.
+  const { data: tenantRow } = await supabase
+    .from('tenants')
+    .select('crm_type, ai_token_budget_monthly, ai_tokens_used_current, business_config')
+    .eq('id', tenantId)
+    .maybeSingle()
+
+  const tokensUsed = (tenantRow?.ai_tokens_used_current as number | null) ?? 0
+  const budget = (tenantRow?.ai_token_budget_monthly as number | null) ?? 1_000_000
+  const modelRouting =
+    ((tenantRow?.business_config as Record<string, unknown> | null)?.model_routing as
+      | Record<string, string>
+      | null) ?? null
+
+  // Lightweight intent classification (mirror of the agent route's
+  // regex set in apps/web/src/app/api/agent/route.ts:classifyIntent).
+  // Kept inline rather than imported to avoid a circular dep across
+  // the route boundary.
+  const t = messageText.toLowerCase()
+  const intentClass: import('@/lib/agent/context').IntentClass = /(draft|write|email|outreach)/.test(t)
+    ? 'draft_outreach'
+    : /(stall|risk|stuck)/.test(t)
+      ? 'risk_analysis'
+      : /(brief|prep|meeting)/.test(t)
+        ? 'meeting_prep'
+        : /(why|cause|diagnose)/.test(t)
+          ? 'diagnosis'
+          : 'general_query'
+
+  const interactionId = crypto.randomUUID()
+
+  const assembled = await assembleAgentRun({
+    supabase,
+    tenantId,
+    repId,
+    userId: repId, // Slack uses rep crm id for telemetry scoping
+    role: 'ae',
+    agentTypeOverride: 'pipeline-coach',
+    activeUrn: null,
+    pageContext: undefined,
+    userMessageText: messageText,
+    intentClass,
+    messages: [{ role: 'user', content: messageText }],
+    interactionId,
+    crmType: (tenantRow?.crm_type as string | null) ?? null,
+    tokensUsedThisMonth: tokensUsed,
+    monthlyBudget: budget,
+    tenantModelRouting: modelRouting,
+    // Slack DMs default to brief — the rep is on their phone, the
+    // signal-over-noise rule says ≤150 words.
+    repCommStyle: 'brief',
+  })
 
   const result = await generateText({
-    model: anthropic('claude-haiku-4-20250514'),
-    system: systemPrompt,
-    messages: convertToCoreMessages([
-      { role: 'user' as const, content: messageText },
-    ]),
-    tools,
-    maxSteps: 3,
+    model: getModel(assembled.modelId),
+    messages: assembled.messages,
+    tools: assembled.tools,
+    maxSteps: 8, // dashboard parity (was 4)
     temperature: 0.3,
-    maxTokens: 2000,
+    maxTokens: assembled.responseTokenCap,
   })
 
   return result.text || 'Sorry, I could not generate a response.'

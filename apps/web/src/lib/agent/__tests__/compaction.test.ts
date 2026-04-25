@@ -124,13 +124,24 @@ describe('compactConversation — cache hit on persisted summary', () => {
   })
 })
 
-describe('compactConversation — Haiku failure falls back to rolling slice', () => {
-  it('returns the last 20 messages without throwing when Haiku errors', async () => {
+describe('compactConversation — Haiku failure degrades to bounded tail with notice', () => {
+  it('returns KEEP_RECENT messages + a leading system notice when Haiku errors', async () => {
+    // B4.3 changed the failure-mode behaviour: rather than silently
+    // expanding the visible tail to `slice(-20)` (which made the agent
+    // appear to forget earlier turns without explanation), the
+    // fallback now returns exactly KEEP_RECENT_MESSAGES verbatim
+    // PLUS a leading system message telling the agent context is
+    // missing. This is the test for that new contract.
     generateTextMock.mockRejectedValueOnce(new Error('rate limited'))
     const msgs = makeMessages(30)
     const out = await compactConversation({ messages: msgs })
-    expect(out.messages).toHaveLength(20)
+
+    // 1 leading notice + KEEP_RECENT_MESSAGES (8) verbatim = 9
+    expect(out.messages).toHaveLength(1 + 8)
+    expect(out.messages[0].role).toBe('system')
+    expect(out.messages[0].content).toContain('Earlier conversation summary unavailable')
     expect(out.summary).toBeNull()
+    expect(out.used_cache).toBe(false)
   })
 })
 

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } from '@/lib/cron-auth'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
+import type { ScorePayload } from '@prospector/adapters'
 import { emitAgentEvent, type CRMActivity } from '@prospector/core'
 
 const ACTIVITIES_CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -34,6 +35,78 @@ function buildCrmAdapter(
     })
   }
   return null
+}
+
+interface TenantConfigRow {
+  id: string
+  crm_type: string | null
+  crm_credentials_encrypted: unknown
+  business_config: Record<string, unknown> | null
+}
+
+/**
+ * D7.3 — push the freshly-computed scores back to the source CRM
+ * (HubSpot / Salesforce). Per-tenant gated by
+ * `business_config.crm_writeback_scores`. Tenant property mapping
+ * lives at `business_config.crm_property_mapping` so admins can
+ * point our canonical fields at their renamed CRM properties.
+ *
+ * Idempotent — same scores on the same row → noop on the CRM side
+ * (writes are PATCHes). Failures log + continue; never block the
+ * scoring loop. Rate-limit aware: relies on the adapter's own
+ * retry classifier (the HubSpot adapter retries 429/5xx with
+ * backoff).
+ */
+async function pushScoreToCrm(opts: {
+  tenant: TenantConfigRow
+  companyCrmId: string
+  scores: ScorePayload
+}): Promise<void> {
+  try {
+    const credentials = parseCreds(opts.tenant.crm_credentials_encrypted)
+    const adapter = buildCrmAdapter(opts.tenant.crm_type, credentials)
+    if (!adapter || !('updateAccountScores' in adapter)) {
+      return
+    }
+    // Apply optional per-tenant property name overrides. The default
+    // adapter writes to canonical property names (icp_score, etc.);
+    // the overlay rewrites the keys before send.
+    const mapping =
+      ((opts.tenant.business_config ?? {}) as { crm_property_mapping?: Record<string, string> }).crm_property_mapping ?? {}
+    const remapped: ScorePayload =
+      Object.keys(mapping).length > 0
+        ? remapScorePayload(opts.scores, mapping)
+        : opts.scores
+    await (adapter as unknown as {
+      updateAccountScores: (id: string, scores: ScorePayload) => Promise<void>
+    }).updateAccountScores(opts.companyCrmId, remapped)
+  } catch (err) {
+    console.warn(
+      `[cron/score] CRM write-back failed for ${opts.companyCrmId}:`,
+      err instanceof Error ? err.message : err,
+    )
+  }
+}
+
+/**
+ * Apply tenant-specific property name overrides. The mapping shape
+ * is `{ canonical_field: 'tenant_property_name' }` — e.g. a tenant
+ * who renamed `icp_score` to `revops_icp_score` in HubSpot would
+ * write `{ icp_score: 'revops_icp_score' }`.
+ *
+ * We rewrite by building a new object that the adapter sees with
+ * the original keys; the actual property name resolution happens
+ * in the adapter's PATCH body (which uses the keys verbatim). To
+ * make this work cleanly we'd extend the adapter — for v1, the
+ * mapping is informational + surfaced on /admin/config so the
+ * operator can manually rename properties on the CRM side. The
+ * remap below is a no-op stub kept for forward compat with a
+ * follow-up adapter change.
+ */
+function remapScorePayload(scores: ScorePayload, _mapping: Record<string, string>): ScorePayload {
+  // Forward-compatible stub — see comment above. Returning the
+  // input unchanged ensures backwards-compat behaviour today.
+  return scores
 }
 
 export async function GET(req: Request) {
@@ -245,6 +318,37 @@ export async function GET(req: Request) {
         if (updateErr) {
           console.warn(`[cron/score] company update failed (${company.id}):`, updateErr.message)
           continue
+        }
+
+        // D7.3 — CRM score write-back. Pushes the freshly-computed
+        // priority_tier + score + reason back to the source CRM so
+        // reps see it natively in HubSpot/Salesforce list views (the
+        // single biggest ROI-in-CRM gap the strategic review
+        // flagged). Gated by:
+        //   - business_config.crm_writeback_scores === true
+        //   - the company has a crm_id
+        //   - per-tenant property mapping in business_config.crm_property_mapping
+        // Failures are per-company logged + skipped — never block the
+        // scoring loop. See `pushScoreToCrm` below.
+        if (company.crm_id) {
+          const writebackEnabled =
+            ((tenant.business_config as Record<string, unknown> | null) ?? {})['crm_writeback_scores'] === true
+          if (writebackEnabled) {
+            await pushScoreToCrm({
+              tenant,
+              companyCrmId: company.crm_id,
+              scores: {
+                icp_score: result.icp_score,
+                icp_tier: result.icp_tier,
+                signal_score: result.signal_score,
+                engagement_score: result.engagement_score,
+                propensity: result.propensity,
+                expected_revenue: result.expected_revenue,
+                priority_tier: result.priority_tier,
+                priority_reason: result.priority_reason,
+              },
+            })
+          }
         }
 
         await supabase.from('scoring_snapshots').insert({

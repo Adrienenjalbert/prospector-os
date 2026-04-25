@@ -6,7 +6,18 @@ import {
   assembleContextPack,
   pickContextStrategy,
 } from '@/lib/agent/context-strategies'
-import { consumedSlicesFromResponse, type IntentClass } from '@/lib/agent/context'
+import {
+  consumedSlicesFromResponse,
+  citedMemoryIdsFromResponse,
+  injectedMemoryIdsFromPacked,
+  type IntentClass,
+  type PackedContext,
+} from '@/lib/agent/context'
+import {
+  updateMemoryPosteriors,
+  updateWikiPagePosteriors,
+} from '@/lib/memory/bandit'
+import type { AgentContext } from '@prospector/core'
 import {
   AGENT_TYPES,
   buildSystemPromptForAgent,
@@ -24,15 +35,25 @@ import {
 } from '@prospector/core'
 import { recordCitationsFromToolResult } from '@/lib/agent/citations'
 import { chooseModel, getModel } from '@/lib/agent/model-registry'
-import { compactConversation } from '@/lib/agent/compaction'
+import { getHaikuThumbsUpRate } from '@/lib/agent/intent-quality'
+import {
+  loadProfilesForPrompt,
+  synthesizePackerSuccessContext,
+} from '@/lib/agent/profile-loader'
+import { compactConversation, COMPACTION_CONSTANTS } from '@/lib/agent/compaction'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
-// Phase 3.9: ROLLING_MESSAGE_LIMIT remains as the persistence cap on
-// `ai_conversations.messages` (we don't want unbounded growth there
-// either), but the ACTUAL prompt the model sees now goes through
-// compactConversation() which keeps the last 8 verbatim and Haiku-
-// summarises the older half into a system message.
-const ROLLING_MESSAGE_LIMIT = 40
+// `ROLLING_MESSAGE_LIMIT` is the persistence cap on
+// `ai_conversations.messages`. It must be at least the compaction tail
+// size (KEEP_RECENT_MESSAGES) so the model can always reload the
+// verbatim window from history; anything beyond the tail gets
+// summarised into `summary_text` on the conversation row, so storing
+// more raw turns past the tail is wasted bytes (and risks UIs that
+// render history showing more than the model ever saw).
+//
+// Keep ~2x the tail to give a small "look-back" buffer for analytics
+// surfaces or future compaction retries.
+const ROLLING_MESSAGE_LIMIT = COMPACTION_CONSTANTS.KEEP_RECENT_MESSAGES * 2
 const USAGE_MONTH_KEY = 'prospector_ai_usage_month'
 
 function currentUsageMonthKey(): string {
@@ -68,6 +89,16 @@ function classifyIntent(lastUserText: string): IntentClass {
   if (/(what|who|show|list|find)/.test(t)) return 'lookup'
   return 'general_query'
 }
+
+// `deriveIntentHints` lived here pre-PR3. It read the legacy
+// AgentContext to compute (dealStage, isStalled, signalTypes) hints
+// for the packer's slice selector. PR3 reverses the run order
+// (packer first, profile-loader second), so by the time the
+// AgentContext exists the packer has already shipped — there's
+// nowhere to thread the hints. Dropped along with the per-turn
+// legacy-assembler call. If a future PR re-wires hints via a small
+// targeted query (active deal stage + stalled lookup), the function
+// can be reinstated; the prior implementation is in git history.
 
 const requestSchema = z.object({
   messages: z.array(
@@ -210,9 +241,28 @@ export async function POST(req: Request) {
       )
     }
 
+    // D7.2 — intent-aware routing. The route already has the intent
+    // classified above; pass it through alongside the per-tenant
+    // model_routing override so the chooseModel policy can downgrade
+    // cheap intents to Haiku safely.
+    //
+    // Quality gate (PR1): load the tenant's historical Haiku
+    // thumbs-up rate for this intent so chooseModel can refuse the
+    // downgrade when production data shows Haiku regresses quality
+    // for THIS tenant on THIS intent. The loader returns undefined
+    // when sample_count < 10 (or on any error), which chooseModel
+    // treats as "no gate signal — apply default policy".
+    const tenantBizConfig = (tenantRow.business_config as Record<string, unknown> | null) ?? {}
+    const tenantModelRouting = (tenantBizConfig.model_routing ?? null) as
+      | Record<string, string>
+      | null
+    const haikuThumbsUpRate = await getHaikuThumbsUpRate(supabase, tenantId, intentClass)
     const modelId = chooseModel({
       tokensUsedThisMonth: tokensUsed,
       monthlyBudget: budget,
+      intentClass,
+      tenantOverride: tenantModelRouting ?? undefined,
+      historicalHaikuThumbsUpRate: haikuThumbsUpRate,
     })
 
     const interactionId = crypto.randomUUID()
@@ -281,41 +331,87 @@ export async function POST(req: Request) {
       activeUrn: subjectUrn,
     })
 
-    // Run the legacy assembler and the new Context Pack packer in parallel.
-    // Phase 1 keeps both — the legacy AgentContext stays the source of
-    // truth for prompt builders, the PackedContext layers in URN-cited
-    // slice citations into the citation collector and emits per-slice
-    // telemetry the bandit + attribution workflows rely on.
-    const [agentContext, packed] = await Promise.all([
-      dispatch.agentType === 'onboarding-coach'
-        ? Promise.resolve(null)
-        : assembleContextForStrategy({
-            supabase,
-            tenantId,
-            repId,
-            selection: contextSelection,
-            pageContext: context.pageContext,
-          }),
-      dispatch.agentType === 'onboarding-coach'
-        ? Promise.resolve(null)
-        : assembleContextPack({
-            supabase,
-            tenantId,
-            repId,
-            userId: user.id,
-            role: dispatch.role,
-            selection: contextSelection,
-            intentClass: intentClass,
-            pageContext: context.pageContext,
-            interactionId,
-            crmType: tenantRow.crm_type ?? null,
-          }).catch((err) => {
-            // Context Pack failures must NEVER break a turn — log and
-            // proceed with the legacy AgentContext only.
-            console.warn('[agent] context-pack failed:', err)
-            return null
-          }),
-    ])
+    // PR3: Run the packer FIRST. The legacy `assembleContextForStrategy`
+    // is now the packer-failure fallback, not an unconditional parallel
+    // fetch.
+    //
+    // Trade-off: when the packer runs first, we don't yet have the
+    // `intentHints` that used to come from the legacy AgentContext —
+    // so the slice selector falls back to defaults
+    // (stage='other', isStalled=false, signalTypes=[]). This matches
+    // the existing Slack behaviour (run-agent.ts already calls the
+    // packer without hints). Net effect: minor relevance loss for
+    // `whenStalled`-triggered + signal-substring-scored slices on
+    // rep_centric/portfolio strategies. For deep strategies the
+    // legacy assembler already skipped the queries that fed those
+    // hints (B4.2), so no change.
+    //
+    // The saving: packer-success path replaces 7-9 legacy queries
+    // with a single rep_profile load (the only legacy field the
+    // prompt builders still consume). The packer is the source of
+    // truth for slice rendering via `formatPackedSections(packed)`.
+    const isOnboardingDispatch = dispatch.agentType === 'onboarding-coach'
+
+    const packed: PackedContext | null = isOnboardingDispatch
+      ? null
+      : await assembleContextPack({
+          supabase,
+          tenantId,
+          repId,
+          userId: user.id,
+          role: dispatch.role,
+          selection: contextSelection,
+          intentClass: intentClass,
+          pageContext: context.pageContext,
+          interactionId,
+          crmType: tenantRow.crm_type ?? null,
+          // C5.2: forward the user message so RAG slices can do
+          // similarity retrieval keyed on the actual question.
+          userMessageText: lastUserMessage,
+        }).catch((err) => {
+          // Context Pack failures must NEVER break a turn — log and
+          // proceed with the legacy AgentContext only.
+          console.warn('[agent] context-pack failed:', err)
+          return null
+        })
+
+    // Resolve `agentContext` based on whether the packer succeeded.
+    // Success path: just the rep_profile (one query). Failure path:
+    // full legacy assembler (preserves pre-PR3 graceful degradation).
+    let agentContext: AgentContext | null
+    if (isOnboardingDispatch) {
+      agentContext = null
+    } else if (packed) {
+      const profiles = await loadProfilesForPrompt(supabase, tenantId, repId)
+      agentContext = synthesizePackerSuccessContext(profiles)
+      if (!agentContext) {
+        // Misconfigured tenant (no rep_profile row matching crm_id)
+        // — drop into the legacy assembler so the prompt at least
+        // gets the rest of its data. Avoids a silent regression
+        // where the rep header reads "the rep" forever.
+        console.warn(
+          '[agent] profile-loader returned null rep_profile — falling back to legacy assembler',
+        )
+        agentContext = await assembleContextForStrategy({
+          supabase,
+          tenantId,
+          repId,
+          selection: contextSelection,
+          pageContext: context.pageContext,
+        })
+      }
+    } else {
+      // Packer failed — full legacy assembler is the graceful
+      // degradation path. Preserves pre-PR3 behaviour exactly.
+      agentContext = await assembleContextForStrategy({
+        supabase,
+        tenantId,
+        repId,
+        selection: contextSelection,
+        pageContext: context.pageContext,
+      })
+    }
+
 
     // Forward slice citations into the collector so the same UI pills
     // surface them. Cite-or-shut-up holds for context evidence too.
@@ -325,16 +421,17 @@ export async function POST(req: Request) {
       }
     }
 
-    // Build the system prompt as parts so the static prefix can be marked
-    // for Anthropic prompt caching. Cache window is 5 minutes (Anthropic
-    // ephemeral TTL) — matches typical chat-session length, so turn 2
-    // onwards reuses the cached static portion (~50% input-token
-    // reduction on the cached tokens, ~90% latency reduction).
+    // Build the system prompt as parts so both the static prefix AND
+    // the trailing behaviour-rules block can be marked for Anthropic
+    // prompt caching (B3.1 — two breakpoints). `intentClass` + `role`
+    // drive per-turn exemplar selection (A1.1) — the dynamic suffix
+    // splices the matching mined few-shots when present.
     const promptParts = await buildSystemPromptParts(
       dispatch.agentType,
       tenantId,
       agentContext,
       packed,
+      { intentClass, role: dispatch.role },
     )
 
     // Compact the message history (Phase 3.9). Threads ≤ 12 messages
@@ -352,30 +449,62 @@ export async function POST(req: Request) {
       conversationId: activeConversationId,
     })
 
-    // Anthropic supports multiple system messages and per-message
-    // providerOptions. We send two: one cacheable (static), one not
-    // (dynamic). When there is no dynamic content (onboarding-coach), fall
-    // back to the plain `system: string` form so we don't pay for an
-    // unnecessary message-array construction.
+    // Anthropic supports up to 4 cache breakpoints; we use TWO here
+    // (B3.1) so both the tenant/role-stable PREFIX and the
+    // tenant/role-stable trailing BEHAVIOUR RULES get cached, while
+    // per-turn dynamic data flows uncached between them. Layout:
+    //
+    //   system: staticPrefix      ← cached (breakpoint 1)
+    //   system: dynamicSuffix     ← per-turn, never cached
+    //   system: cacheableSuffix   ← cached (breakpoint 2) — usually
+    //                                commonBehaviourRules() at ~1.2k
+    //                                tokens. Kept at the end of the
+    //                                prompt for the lost-in-the-middle
+    //                                attention bonus on citation
+    //                                discipline.
+    //
+    // Onboarding-coach has no dynamic suffix and no cacheable suffix
+    // today, but we still cache its single static prefix (B3.2) — every
+    // onboarding-coach turn after the first re-uses the same large
+    // prompt, so caching it is pure win.
     const baseUserMessages = convertToCoreMessages(compacted.messages)
 
-    const useCaching = promptParts.dynamicSuffix.length > 0
-    const messagesForStream: CoreMessage[] = useCaching
-      ? [
-          {
-            role: 'system' as const,
-            content: promptParts.staticPrefix,
-            providerOptions: {
-              anthropic: { cacheControl: { type: 'ephemeral' } },
-            },
-          },
-          {
-            role: 'system' as const,
-            content: promptParts.dynamicSuffix,
-          },
-          ...baseUserMessages,
-        ]
-      : baseUserMessages
+    const cacheableSuffix = promptParts.cacheableSuffix ?? ''
+    const hasDynamic = promptParts.dynamicSuffix.length > 0
+    const hasCacheableSuffix = cacheableSuffix.length > 0
+
+    const messagesForStream: CoreMessage[] = []
+
+    // Always cache the static prefix when we have any further parts to
+    // stitch in. This is the B3.2 fix: previously the onboarding-coach
+    // (no dynamic, no suffix) fell into the `useCaching=false` branch
+    // and lost the cache entirely. Now even the prefix-only case caches.
+    messagesForStream.push({
+      role: 'system' as const,
+      content: promptParts.staticPrefix,
+      providerOptions: {
+        anthropic: { cacheControl: { type: 'ephemeral' } },
+      },
+    })
+
+    if (hasDynamic) {
+      messagesForStream.push({
+        role: 'system' as const,
+        content: promptParts.dynamicSuffix,
+      })
+    }
+
+    if (hasCacheableSuffix) {
+      messagesForStream.push({
+        role: 'system' as const,
+        content: cacheableSuffix,
+        providerOptions: {
+          anthropic: { cacheControl: { type: 'ephemeral' } },
+        },
+      })
+    }
+
+    messagesForStream.push(...baseUserMessages)
 
     const toolCallsMade: string[] = []
 
@@ -404,7 +533,6 @@ export async function POST(req: Request) {
 
     const result = streamText({
       model: getModel(modelId),
-      ...(useCaching ? {} : { system: promptParts.staticPrefix }),
       messages: messagesForStream,
       tools,
       maxSteps: 8,
@@ -486,10 +614,49 @@ export async function POST(req: Request) {
             .join('\n\n')
             .trim()
 
-          const usageTotal = event.steps.reduce(
-            (acc, s) => acc + (s.usage?.totalTokens ?? 0),
-            0
-          )
+          // Sum every dimension the AI SDK exposes so the
+          // `agent_token_costs_daily` view (P0.1) can compute USD
+          // cost per model with the cache-read discount applied.
+          // The AI SDK's `usage` object surfaces `promptTokens`,
+          // `completionTokens`, `totalTokens`, and (for Anthropic
+          // when the prompt cache hits) `cachedPromptTokens` /
+          // `cacheReadInputTokens` via providerMetadata. We accept
+          // multiple property names so we stay robust to SDK churn.
+          let usageInput = 0
+          let usageOutput = 0
+          let usageCachedInput = 0
+          let usageTotal = 0
+          for (const s of event.steps) {
+            const u = s.usage as
+              | {
+                  totalTokens?: number
+                  promptTokens?: number
+                  completionTokens?: number
+                  cachedPromptTokens?: number
+                  inputTokens?: number
+                  outputTokens?: number
+                }
+              | undefined
+            if (!u) continue
+            usageTotal += u.totalTokens ?? 0
+            usageInput += u.promptTokens ?? u.inputTokens ?? 0
+            usageOutput += u.completionTokens ?? u.outputTokens ?? 0
+            // Anthropic's cache-read counter lives at one of these
+            // names depending on SDK version. Prefer providerMetadata
+            // when present (more authoritative) and fall back.
+            const pm = (s as unknown as {
+              providerMetadata?: {
+                anthropic?: {
+                  cacheReadInputTokens?: number
+                  cacheCreationInputTokens?: number
+                }
+              }
+            }).providerMetadata
+            usageCachedInput +=
+              pm?.anthropic?.cacheReadInputTokens ??
+              u.cachedPromptTokens ??
+              0
+          }
 
           const baseMessages = messages.map(m => ({
             role: m.role as 'user' | 'assistant',
@@ -614,10 +781,75 @@ export async function POST(req: Request) {
               }))
               void emitAgentEvents(supabase, consumedEvents)
             }
+
+            // Phase 6 (1.2) — close the memory bandit loop. Emit one
+            // memory_cited per atom URN the response touched and one
+            // wiki_page_cited per page URN. Then batch-update the per-row
+            // Beta posterior on tenant_memories.prior_alpha/beta (and
+            // wiki_pages.prior_alpha/beta) — alpha += 1 per cited id,
+            // beta += 1 per injected id. The packer already emitted
+            // memory_injected / wiki_page_injected during load.
+            const cited = citedMemoryIdsFromResponse(assistantText, tenantId)
+            const injected = injectedMemoryIdsFromPacked(packed)
+
+            const memoryCitedEvents: AgentEventInput[] = cited.memoryIds.map((memoryId) => ({
+              tenant_id: tenantId,
+              interaction_id: interactionId,
+              user_id: user.id,
+              role: userRole,
+              event_type: 'memory_cited' as const,
+              subject_urn: urn.memory(tenantId, memoryId),
+              payload: {
+                memory_id: memoryId,
+                kind: 'unknown', // resolved post-hoc via tenant_memories join
+                urn: urn.memory(tenantId, memoryId),
+                intent_class: intentClass,
+              },
+            }))
+            const pageCitedEvents: AgentEventInput[] = cited.wikiPageIds.map((pageId) => ({
+              tenant_id: tenantId,
+              interaction_id: interactionId,
+              user_id: user.id,
+              role: userRole,
+              event_type: 'wiki_page_cited' as const,
+              subject_urn: urn.wikiPage(tenantId, pageId),
+              payload: {
+                page_id: pageId,
+                kind: 'unknown', // resolved post-hoc via wiki_pages join
+                urn: urn.wikiPage(tenantId, pageId),
+                intent_class: intentClass,
+              },
+            }))
+            const allCitedEvents = [...memoryCitedEvents, ...pageCitedEvents]
+            if (allCitedEvents.length > 0) {
+              void emitAgentEvents(supabase, allCitedEvents)
+            }
+
+            // Posterior updates — fire-and-forget. The memory-bandit
+            // module swallows any per-row failures so a single dead row
+            // can't break the whole turn's learning signal.
+            void updateMemoryPosteriors(
+              supabase,
+              tenantId,
+              injected.memoryIds,
+              cited.memoryIds,
+            )
+            void updateWikiPagePosteriors(
+              supabase,
+              tenantId,
+              injected.wikiPageIds,
+              cited.wikiPageIds,
+            )
           }
 
           // response_finished is the "label anchor" for attribution + eval growth.
           // Carries the summary metrics the optimiser will key off nightly.
+          //
+          // Token breakdown is split into (input | output | cached_input)
+          // so `agent_token_costs_daily` (migration 018 / P0.1) can
+          // compute precise USD cost per model with the prompt-cache
+          // discount applied. `tokens_total` is kept for legacy
+          // consumers (existing /admin/roi cited-rate calc).
           await emitAgentEvent(supabase, {
             tenant_id: tenantId,
             interaction_id: interactionId,
@@ -633,6 +865,9 @@ export async function POST(req: Request) {
               tool_calls: toolCallsMade,
               citation_count: citations.getCitations().length,
               tokens_total: usageTotal,
+              input_tokens: usageInput,
+              output_tokens: usageOutput,
+              cached_input_tokens: usageCachedInput,
               response_length: assistantText.length,
               slices_loaded: packed?.hydrated ?? [],
               slices_consumed: packed

@@ -109,10 +109,20 @@ export async function runContextSliceCalibration(
         const feedback = (ctx.stepState.load_feedback as { rows: FeedbackRow[] }).rows
 
         // interaction_id -> 'positive' | 'negative' (latest feedback wins)
+        //
+        // Reads `payload.value` because that is the key
+        // `recordAgentFeedback` writes (see
+        // apps/web/src/app/actions/implicit-feedback.ts ~line 113). Earlier
+        // versions of this code expected `payload.feedback` and silently
+        // produced an empty verdict map on every run — the slice bandit
+        // therefore never learned from real feedback. We also accept the
+        // legacy `payload.feedback` shape so historical events still
+        // contribute during the migration window.
         const verdict = new Map<string, 'positive' | 'negative'>()
         for (const f of feedback) {
           if (!f.interaction_id) continue
-          const v = (f.payload as { feedback?: string } | null)?.feedback
+          const payload = f.payload as { value?: string; feedback?: string } | null
+          const v = payload?.value ?? payload?.feedback
           if (v === 'positive' || v === 'negative') verdict.set(f.interaction_id, v)
         }
 

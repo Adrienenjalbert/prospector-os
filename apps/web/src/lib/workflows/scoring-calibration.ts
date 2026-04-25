@@ -189,6 +189,64 @@ export async function runScoringCalibration(
 
         if (!ctx.tenantId) throw new Error('Missing tenant')
 
+        // Auto-apply gating (A2.5). The PRD's contract is:
+        //   "Auto-apply mode is available *only* once a tenant has 3+
+        //    approved cycles for that change type."
+        //
+        // Enforcement is two-step:
+        //   1. The analyzer's `shouldAutoApply` returns true only when
+        //      the analytical signal is strong enough (sample size,
+        //      AUC lift, confidence band).
+        //   2. THIS workflow then layers a tenant-history gate on top:
+        //      we only auto-apply when the tenant has both opted-in
+        //      via `business_config.auto_apply_scoring=true` AND
+        //      accumulated >= AUTO_APPLY_REQUIRED_APPROVALS approved
+        //      scoring proposals in the recent past.
+        //
+        // Both gates must pass. Without the historical-approvals gate
+        // the system would auto-apply on tenant 1's very first run if
+        // the analyzer happened to be confident — which violates the
+        // "human keeps the keys" operating principle on day one.
+        const AUTO_APPLY_REQUIRED_APPROVALS = 3
+        const AUTO_APPLY_HISTORY_DAYS = 180
+
+        let shouldAutoApplyNow = false
+        let autoApplyReason: string | null = null
+        if (analyzed.auto_apply) {
+          // Tenant opt-in is the first hard gate.
+          const { data: tenant } = await ctx.supabase
+            .from('tenants')
+            .select('business_config')
+            .eq('id', ctx.tenantId)
+            .single()
+          const optIn =
+            ((tenant?.business_config as Record<string, unknown> | null) ?? {})
+              .auto_apply_scoring === true
+
+          if (optIn) {
+            // Historical-approvals gate.
+            const since = new Date(
+              Date.now() - AUTO_APPLY_HISTORY_DAYS * 24 * 60 * 60 * 1000,
+            ).toISOString()
+            const { count: approvedCount } = await ctx.supabase
+              .from('calibration_proposals')
+              .select('id', { count: 'exact', head: true })
+              .eq('tenant_id', ctx.tenantId)
+              .eq('config_type', 'scoring')
+              .eq('status', 'approved')
+              .gte('created_at', since)
+
+            if ((approvedCount ?? 0) >= AUTO_APPLY_REQUIRED_APPROVALS) {
+              shouldAutoApplyNow = true
+              autoApplyReason = `analyzer high-confidence + tenant opt-in + ${approvedCount} prior approvals`
+            } else {
+              autoApplyReason = `analyzer high-confidence + tenant opt-in but only ${approvedCount ?? 0} prior approvals (need ${AUTO_APPLY_REQUIRED_APPROVALS})`
+            }
+          } else {
+            autoApplyReason = 'analyzer high-confidence but tenant has not opted into auto-apply'
+          }
+        }
+
         // Schema-correct insert. Each column matches `calibration_proposals`
         // (see migration 002 / packages/db/schema/schema.sql).
         //   - config_type    : which JSONB column on `tenants` this proposes
@@ -199,25 +257,81 @@ export async function runScoringCalibration(
         //   - proposed_config: the weights to apply if approved (NOT the
         //                      whole analysis blob — that was the bug)
         //   - analysis       : the full diagnostic output the admin UI
-        //                      and /admin/adaptation render
-        const { error } = await ctx.supabase
+        //                      and /admin/adaptation render. We attach an
+        //                      `auto_apply_decision` block so the
+        //                      operator can see WHY the system did or
+        //                      didn't auto-apply.
+        const enrichedAnalysis = {
+          ...analyzed.analysis,
+          auto_apply_decision: {
+            applied: shouldAutoApplyNow,
+            reason: autoApplyReason,
+          },
+        }
+
+        const status = shouldAutoApplyNow ? 'approved' : 'pending'
+        const nowIso = new Date().toISOString()
+
+        const { data: proposalRow, error } = await ctx.supabase
           .from('calibration_proposals')
           .insert({
             tenant_id: ctx.tenantId,
             config_type: 'scoring',
             current_config: { propensity_weights: analyzed.analysis.current_weights },
             proposed_config: { propensity_weights: analyzed.analysis.proposed_weights },
-            analysis: analyzed.analysis,
-            status: 'pending',
-            created_at: new Date().toISOString(),
+            analysis: enrichedAnalysis,
+            status,
+            applied_at: shouldAutoApplyNow ? nowIso : null,
+            created_at: nowIso,
           })
+          .select('id')
+          .single()
         if (error) {
           console.warn('[scoring-calibration] proposal insert:', error.message)
           throw new Error(`Failed to insert calibration proposal: ${error.message}`)
         }
 
+        // If we auto-applied, write the tenant config + ledger row in
+        // the same step so the change is visible to the next score run
+        // tomorrow without an admin click.
+        if (shouldAutoApplyNow && proposalRow?.id) {
+          const { data: tenant } = await ctx.supabase
+            .from('tenants')
+            .select('scoring_config')
+            .eq('id', ctx.tenantId)
+            .single()
+          const beforeWeights =
+            (tenant?.scoring_config as { propensity_weights?: PropensityWeights } | null)
+              ?.propensity_weights ?? null
+          const updatedConfig = {
+            ...((tenant?.scoring_config as Record<string, unknown> | null) ?? {}),
+            propensity_weights: analyzed.analysis.proposed_weights,
+          }
+          const { error: writeErr } = await ctx.supabase
+            .from('tenants')
+            .update({ scoring_config: updatedConfig })
+            .eq('id', ctx.tenantId)
+          if (writeErr) {
+            console.warn('[scoring-calibration] auto-apply tenant write failed:', writeErr.message)
+          } else {
+            const observedLift =
+              analyzed.analysis.proposed_auc - analyzed.analysis.model_auc
+            await ctx.supabase.from('calibration_ledger').insert({
+              tenant_id: ctx.tenantId,
+              change_type: 'scoring_weights',
+              target_path: 'tenants.scoring_config.propensity_weights',
+              before_value: beforeWeights,
+              after_value: analyzed.analysis.proposed_weights,
+              observed_lift: observedLift,
+              applied_by: null,
+              notes: `Auto-applied (${autoApplyReason ?? 'opt-in path'}); proposal ${proposalRow.id}`,
+            })
+          }
+        }
+
         return {
-          auto_apply: analyzed.auto_apply ?? false,
+          auto_applied: shouldAutoApplyNow,
+          auto_apply_reason: autoApplyReason,
           confidence: analyzed.analysis.confidence,
           sample_size: analyzed.analysis.sample_size,
           model_auc: analyzed.analysis.model_auc,

@@ -15,6 +15,9 @@
     "validate:workflows:warn": "tsx scripts/validate-workflows.ts --warn",
     "validate:tools": "tsx scripts/validate-tools.ts",
     "validate:tools:warn": "tsx scripts/validate-tools.ts --warn",
+    "validate:events": "tsx scripts/validate-events.ts",
+    "validate:events:warn": "tsx scripts/validate-events.ts --warn",
+    "audit:engagement": "tsx scripts/audit-engagement-data.ts",
     "evals": "npm run evals --workspace=@prospector/web",
     "evals:smoke": "npm run evals:smoke --workspace=@prospector/web"
   },

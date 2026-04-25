@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { generateText } from 'ai'
+import { generateObject } from 'ai'
 import { SlackDispatcher, SupabaseCooldownStore } from '@prospector/adapters'
-import { emitAgentEvent, urn } from '@prospector/core'
+import { emitAgentEvent, urn, ChurnLetterSchema, type ChurnLetter } from '@prospector/core'
+import { loadMemoriesByScope } from '@/lib/memory/writer'
 
 import {
   startWorkflow,
@@ -51,6 +52,15 @@ interface GatheredEvidence {
   metrics: Array<{ label: string; value: string; urn: string }>
   open_signals: Array<{ title: string; urn: string }>
   recent_transcript_excerpts: Array<{ snippet: string; urn: string }>
+  /**
+   * Smart Memory Layer Phase 2 — tenant-derived loss themes for
+   * comparable accounts. Quoting these makes the escalation feel like
+   * pattern-matching on the CSM's own history rather than a generic
+   * "we noticed X" letter. Always optional; the validator never
+   * requires citing them, and they're only included when at least
+   * one matching memory exists.
+   */
+  loss_theme_memories: Array<{ title: string; body: string; urn: string }>
 }
 
 interface DraftLetter {
@@ -165,6 +175,44 @@ export async function runChurnEscalation(
             urn: urn.transcript(ctx.tenantId!, t.id),
           }))
 
+        // Resolve the company's industry so the loss-theme lookup
+        // prefers same-industry memories.
+        let companyIndustry: string | null = null
+        const { data: companyIndustryRow } = await ctx.supabase
+          .from('companies')
+          .select('industry')
+          .eq('id', company.id)
+          .eq('tenant_id', ctx.tenantId!)
+          .maybeSingle()
+        companyIndustry =
+          typeof companyIndustryRow?.industry === 'string' &&
+          companyIndustryRow.industry.length > 0
+            ? companyIndustryRow.industry
+            : null
+
+        // Up to 2 loss-themes — tenant-mined patterns of why
+        // comparable accounts churned. Failures degrade silently;
+        // an empty array means no patterns yet, not an error.
+        let lossThemeMemories: GatheredEvidence['loss_theme_memories'] = []
+        try {
+          const scoped = await loadMemoriesByScope(ctx.supabase, {
+            tenant_id: ctx.tenantId!,
+            kind: 'loss_theme',
+            industry: companyIndustry ?? undefined,
+            limit: 2,
+          })
+          lossThemeMemories = scoped.map((m) => ({
+            title: m.title,
+            body: m.body,
+            urn: urn.memory(ctx.tenantId!, m.id),
+          }))
+        } catch (err) {
+          console.warn(
+            `[churn-escalation] loss_theme memory load failed:`,
+            err,
+          )
+        }
+
         return {
           tenant_id: ctx.tenantId,
           company_id: company.id,
@@ -173,6 +221,7 @@ export async function runChurnEscalation(
           metrics,
           open_signals: openSignals,
           recent_transcript_excerpts: excerpts,
+          loss_theme_memories: lossThemeMemories,
         }
       },
     },
@@ -183,27 +232,57 @@ export async function runChurnEscalation(
         const evidence = ctx.stepState.gather_evidence as GatheredEvidence
         const { guidance } = ctx.input as unknown as ChurnEscalationInput
 
+        // PR2: split the prompt into (a) a static cacheable system
+        // block carrying the evidence + tone rules + output format,
+        // and (b) a tiny per-iteration user message carrying only the
+        // validator's revision guidance. Anthropic's ephemeral prompt
+        // cache TTL (~5 min) covers any realistic loop duration, so
+        // iterations 2-5 read the evidence pack from cache instead of
+        // re-billing it every time.
+        //
+        // Pre-this-change the draft loop re-sent the entire evidence
+        // pack uncached on every iteration — measured at ~1k input
+        // tokens × up to 5 iterations × per Sonnet input rate. That
+        // was the worst-case ~$0.08/tenant/day line item in the
+        // strategic review (§14). Caching cuts iterations 2-5 to the
+        // cache-read rate (10× cheaper).
+        const cacheableSystem = buildCacheableSystem(evidence, guidance ?? '')
+
         const { passed, iterations, lastResult, lastReasons } = await loopUntil<DraftLetter>(
           {
             maxIterations: 5,
             freshContext: false,
             step: async ({ iteration, previousReasons }) => {
-              const revisionGuidance =
-                previousReasons.length > 0
-                  ? `\n\nPREVIOUS ATTEMPT FAILED validation:\n- ${previousReasons.join(
-                      '\n- ',
-                    )}\n\nFix every reason above.`
-                  : ''
-
-              const prompt = buildDraftPrompt(evidence, guidance ?? '', revisionGuidance)
-              const { text } = await generateText({
+              const userMessage = buildIterationUser(previousReasons, iteration)
+              // B4.1: switched from `generateText` + JSON.parse to
+              // `generateObject` with the shared ChurnLetterSchema.
+              // Schema validation is server-side; malformed model
+              // output throws a typed error rather than degrading
+              // silently to an empty letter.
+              //
+              // PR2: messages-shape (system + user) instead of bare
+              // `prompt`, so the system block can carry
+              // `providerOptions.anthropic.cacheControl: ephemeral`.
+              // Mirrors the cache layout the agent route uses for
+              // `commonBehaviourRules()` (B3.1).
+              const { object } = await generateObject({
                 model: getModel('anthropic/claude-sonnet-4'),
-                prompt,
+                schema: ChurnLetterSchema,
+                messages: [
+                  {
+                    role: 'system',
+                    content: cacheableSystem,
+                    providerOptions: {
+                      anthropic: { cacheControl: { type: 'ephemeral' } },
+                    },
+                  },
+                  { role: 'user', content: userMessage },
+                ],
                 maxTokens: 1200,
                 temperature: iteration === 0 ? 0.5 : 0.3,
               })
 
-              return parseDraft(text)
+              return adaptChurnLetter(object)
             },
             validator: (draft) => validateDraft(draft, evidence),
           },
@@ -363,12 +442,30 @@ export async function runChurnEscalation(
 
 // ---------------------------------------------------------------------------
 // Draft helpers — builder, parser, validator.
+//
+// PR2: the legacy `buildDraftPrompt` is split into two helpers so the
+// generateObject call can use the messages shape with prompt caching:
+//
+//   buildCacheableSystem(evidence, guidance)
+//     → static across all iterations of the loopUntil. Carries the
+//       evidence pack, tone rules, output format. Marked
+//       `cacheControl: ephemeral` at the call site so iterations
+//       2..5 read it from cache.
+//
+//   buildIterationUser(previousReasons, iteration)
+//     → tiny, per-iteration. Carries only the validator's revision
+//       guidance and the iteration index. The first iteration emits
+//       the canonical "draft the letter" instruction; subsequent
+//       iterations emit the failure list.
+//
+// Splitting this way is what makes PR2 worth shipping — without the
+// split, the cached portion would change every iteration and the
+// cache would never hit.
 // ---------------------------------------------------------------------------
 
-function buildDraftPrompt(
+export function buildCacheableSystem(
   ev: GatheredEvidence,
   guidance: string,
-  revisionGuidance: string,
 ): string {
   const metricsBlock = ev.metrics
     .map((m) => `- ${m.label}: ${m.value}  (urn: ${m.urn})`)
@@ -376,6 +473,20 @@ function buildDraftPrompt(
   const signalsBlock = ev.open_signals
     .map((s) => `- ${s.title}  (urn: ${s.urn})`)
     .join('\n')
+
+  // Loss-theme block (Phase 2). Only included when we have at least
+  // one matching memory; otherwise omitted so the prompt stays
+  // compact for greenfield tenants.
+  const lossThemesBlock =
+    ev.loss_theme_memories.length > 0
+      ? [
+          ``,
+          `Patterns from comparable lost accounts (use to anticipate the customer's reasons; cite the urn inline if quoted):`,
+          ev.loss_theme_memories
+            .map((m) => `- ${m.title}: ${m.body.slice(0, 220)} (urn: ${m.urn})`)
+            .join('\n'),
+        ].join('\n')
+      : ''
 
   return [
     `You are drafting a churn-escalation message that the CSM will send to a paying customer.`,
@@ -389,32 +500,47 @@ function buildDraftPrompt(
     ``,
     `Open signals:`,
     signalsBlock || '(none)',
+    lossThemesBlock,
     ``,
     guidance ? `Owner guidance: ${guidance}` : '',
-    revisionGuidance,
     ``,
-    `Output JSON only, no markdown fences:`,
-    `{"subject": "<subject line>", "body": "<letter body, <= 400 words, include citations as [urn:rev:...]>", "cited_urns": ["urn:rev:...", ...]}`,
+    `Output schema fields:`,
+    `- subject: short subject line`,
+    `- body_markdown: letter body, <= 400 words, include citations inline as [urn:rev:...]`,
+    `- cited_urns: array of every URN you cited`,
   ]
     .filter(Boolean)
     .join('\n')
 }
 
-function parseDraft(text: string): DraftLetter {
-  const clean = text.replace(/^```json\s*|\s*```$/g, '').trim()
-  let parsed: Partial<DraftLetter>
-  try {
-    parsed = JSON.parse(clean) as Partial<DraftLetter>
-  } catch {
-    // Return a shape the validator will reject — the next iteration gets a
-    // chance to correct.
-    return { subject: '', body: clean, cited_urns: [], word_count: clean.split(/\s+/).length }
+export function buildIterationUser(
+  previousReasons: string[],
+  iteration: number,
+): string {
+  if (iteration === 0 || previousReasons.length === 0) {
+    return 'Draft the escalation now. Cite at least 3 URNs from the evidence above. Stay within 400 words.'
   }
-  const body = String(parsed.body ?? '')
+  return [
+    'PREVIOUS ATTEMPT FAILED validation:',
+    ...previousReasons.map((r) => `- ${r}`),
+    '',
+    'Fix every reason above and re-emit the letter. Do not change the cited URNs to ones outside the evidence set.',
+  ].join('\n')
+}
+
+/**
+ * Adapt the validated `ChurnLetterSchema` output (from generateObject)
+ * into the legacy `DraftLetter` shape the validator expects. Two
+ * schemas exist transitionally so I don't have to rewrite the
+ * validator + dispatch step in the same PR; the adapter is a one-line
+ * surface that goes away the moment we collapse the two shapes.
+ */
+function adaptChurnLetter(letter: ChurnLetter): DraftLetter {
+  const body = letter.body_markdown
   return {
-    subject: String(parsed.subject ?? ''),
+    subject: letter.subject,
     body,
-    cited_urns: Array.isArray(parsed.cited_urns) ? parsed.cited_urns : [],
+    cited_urns: letter.cited_urns,
     word_count: body.split(/\s+/).filter(Boolean).length,
   }
 }

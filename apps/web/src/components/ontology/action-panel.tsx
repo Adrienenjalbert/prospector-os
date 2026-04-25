@@ -82,8 +82,26 @@ export function ActionPanel({ subjectUrn, subjectLabel, objectType }: ActionPane
   const applicable = ACTIONS.filter((a) => a.appliesTo.includes(objectType)).slice(0, 3)
 
   const onAction = (action: ActionSpec) => {
+    // Synthesise a stable client-side interaction id (urn:rev:action:...).
+    // The Action Panel fires before the agent route assigns its own
+    // interaction id, so passing null here used to make these events
+    // invisible to the attribution workflow (which joins on
+    // interaction_id + subject_urn). The synthetic URN gives attribution
+    // a stable join key while remaining recognisable as an action-driven
+    // (not chat-driven) interaction.
+    //
+    // Format: urn:rev:action:{actionId}:{day}:{rand}
+    //   - day component scopes dedup to "one click per action per day"
+    //     for ROI accounting (matches the day-scoped idempotency keys
+    //     used elsewhere in the runtime)
+    //   - random 6-char suffix avoids cross-tab collisions when a rep
+    //     opens the same action twice in one day
+    const day = new Date().toISOString().slice(0, 10)
+    const rand = Math.random().toString(36).slice(2, 8)
+    const syntheticInteractionId = `urn:rev:action:${action.id}:${day}:${rand}`
+
     start(() => {
-      void recordActionInvoked(null, action.id, subjectUrn)
+      void recordActionInvoked(syntheticInteractionId, action.id, subjectUrn)
     })
 
     window.dispatchEvent(
@@ -91,6 +109,12 @@ export function ActionPanel({ subjectUrn, subjectLabel, objectType }: ActionPane
         detail: {
           prompt: action.prompt(subjectLabel),
           activeUrn: subjectUrn,
+          // Surface the synthetic id so the chat can correlate the
+          // subsequent agent turn with this action — when the agent route
+          // sees this in pageContext it can link the new agent
+          // interaction back to the originating action via a
+          // `precedingActionUrn` field on `interaction_started`.
+          precedingActionUrn: syntheticInteractionId,
         },
       }),
     )

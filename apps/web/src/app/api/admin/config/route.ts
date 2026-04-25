@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
+import { recordAdminAction } from '@prospector/core'
+import {
+  applyTier2Update,
+  decodeTier2Config,
+  type Tier2WriteToggles,
+} from '@/lib/tier2/config'
 
 // Cap the JSON blob written to `tenants.<config>_config` so a malformed
 // or malicious payload cannot bloat the row past Postgres's practical
@@ -95,14 +101,50 @@ const scoringConfigSchema = z
   })
   .passthrough()
 
+// Phase 3 T3.2 — payload shape when `config_type === 'crm_write'`.
+// The endpoint accepts the three boolean toggles + an optional
+// `acknowledged: true` flag the admin sets when they tick the
+// acknowledgement checkbox. The rest of the audit-marker fields
+// (`_acknowledgement_signed`, `_enabled_at`, `_enabled_by`) are
+// computed server-side by `applyTier2Update` — clients can't write
+// them directly.
+const tier2RequestSchema = z.object({
+  log_activity: z.boolean(),
+  update_property: z.boolean(),
+  create_task: z.boolean(),
+  acknowledged: z.boolean().optional(),
+})
+
+// D7.3 — alternate request shape for the simple writeback toggle.
+// Different from the other config_types because it doesn't write to
+// a tenants.*_config column — it flips a flag inside business_config.
+// We accept a flat `{ kind, enabled }` body; the main handler
+// branches on the presence of `kind`.
+const writebackToggleSchema = z.object({
+  kind: z.literal('crm_writeback_scores'),
+  enabled: z.boolean(),
+})
+
 const requestSchema = z
   .object({
-    config_type: z.enum(['icp', 'scoring', 'funnel', 'signals']),
+    config_type: z.enum(['icp', 'scoring', 'funnel', 'signals', 'crm_write']),
     config_data: configDataSchema,
   })
   .superRefine((req, ctx) => {
     if (req.config_type === 'scoring') {
       const result = scoringConfigSchema.safeParse(req.config_data)
+      if (!result.success) {
+        for (const issue of result.error.issues) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['config_data', ...issue.path],
+            message: issue.message,
+          })
+        }
+      }
+    }
+    if (req.config_type === 'crm_write') {
+      const result = tier2RequestSchema.safeParse(req.config_data)
       if (!result.success) {
         for (const issue of result.error.issues) {
           ctx.addIssue({
@@ -163,6 +205,38 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
     }
 
+    // D7.3 — handle the simple writeback toggle BEFORE the
+    // config_type schema. The toggle uses a flat
+    // `{ kind, enabled }` body that doesn't fit
+    // requestSchema's shape; routing on `kind` keeps the API
+    // backwards compatible.
+    const writeback = writebackToggleSchema.safeParse(body)
+    if (writeback.success) {
+      const { data: tenantRow } = await supabase
+        .from('tenants')
+        .select('business_config')
+        .eq('id', profile.tenant_id)
+        .single()
+      const cfg = ((tenantRow?.business_config ?? {}) as Record<string, unknown>) ?? {}
+      const updated = { ...cfg, crm_writeback_scores: writeback.data.enabled }
+      const { error: writeErr } = await supabase
+        .from('tenants')
+        .update({ business_config: updated })
+        .eq('id', profile.tenant_id)
+      if (writeErr) {
+        return NextResponse.json({ error: writeErr.message }, { status: 500 })
+      }
+      void recordAdminAction(supabase, {
+        tenant_id: profile.tenant_id,
+        user_id: user.id,
+        action: 'crm_writeback.toggle',
+        target: 'tenants.business_config.crm_writeback_scores',
+        before: { enabled: cfg.crm_writeback_scores === true },
+        after: { enabled: writeback.data.enabled },
+      })
+      return NextResponse.json({ ok: true, enabled: writeback.data.enabled })
+    }
+
     const parsed = requestSchema.safeParse(body)
     if (!parsed.success) {
       return NextResponse.json(
@@ -178,8 +252,71 @@ export async function POST(req: Request) {
     }
 
     const { config_type, config_data } = parsed.data
-    const column = CONFIG_TYPE_TO_COLUMN[config_type]
 
+    // Phase 3 T3.2 — separate write path for tier-2 enablement.
+    // Reads the existing config, runs `applyTier2Update` to enforce
+    // the acknowledgement rule + compute audit markers, persists,
+    // and records an `admin_audit_log` row capturing before/after.
+    if (config_type === 'crm_write') {
+      const tier2Input = config_data as unknown as Tier2WriteToggles & {
+        acknowledged?: boolean
+      }
+
+      const { data: tenantRow } = await supabase
+        .from('tenants')
+        .select('crm_write_config')
+        .eq('id', profile.tenant_id)
+        .single()
+      const prev = decodeTier2Config(
+        (tenantRow as { crm_write_config?: unknown } | null)?.crm_write_config,
+      )
+
+      const update = applyTier2Update(prev, {
+        next: {
+          log_activity: tier2Input.log_activity,
+          update_property: tier2Input.update_property,
+          create_task: tier2Input.create_task,
+        },
+        acknowledged: tier2Input.acknowledged ?? false,
+        userId: user.id,
+        now: new Date(),
+      })
+
+      if (!update.ok) {
+        return NextResponse.json({ error: update.error }, { status: 400 })
+      }
+
+      const { error: writeErr } = await supabase
+        .from('tenants')
+        .update({ crm_write_config: update.config })
+        .eq('id', profile.tenant_id)
+
+      if (writeErr) {
+        console.error('[admin/config crm_write]', writeErr)
+        return NextResponse.json({ error: writeErr.message }, { status: 500 })
+      }
+
+      // Audit log — tier-2 enablement is a high-trust action.
+      // Recording before/after so an auditor can answer "who turned
+      // log_activity on for tenant X" + "did the acknowledgement
+      // get signed at that moment".
+      void recordAdminAction(supabase, {
+        tenant_id: profile.tenant_id,
+        user_id: user.id,
+        action: 'tier2.toggle',
+        target: 'tenants.crm_write_config',
+        before: prev,
+        after: update.config,
+        metadata: {
+          acknowledged_in_this_request: tier2Input.acknowledged ?? false,
+        },
+      })
+
+      return NextResponse.json({ ok: true, config: update.config })
+    }
+
+    // Default path — icp / scoring / funnel / signals updates.
+    const column = CONFIG_TYPE_TO_COLUMN[config_type as keyof typeof CONFIG_TYPE_TO_COLUMN]
     const { error } = await supabase
       .from('tenants')
       .update({ [column]: config_data })

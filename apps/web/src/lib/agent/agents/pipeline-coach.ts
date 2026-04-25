@@ -7,6 +7,7 @@ import {
   formatAgentHeader,
   formatBusinessContext,
   formatRepPreferences,
+  formatExemplars,
   commonBehaviourRules,
   commonSalesPlaybook,
   formatPackedSections,
@@ -457,6 +458,7 @@ export async function buildPipelineCoachPromptParts(
   tenantId: string,
   ctx: AgentContext | null,
   packed: PackedContext | null = null,
+  opts: { intentClass?: string; role?: string } = {},
 ): Promise<SystemPromptParts> {
   const profile = await loadBusinessProfile(tenantId)
 
@@ -503,10 +505,20 @@ export async function buildPipelineCoachPromptParts(
   const repPrefs = formatRepPreferences(ctx?.rep_profile ?? null)
   if (repPrefs) dynamicParts.push(repPrefs)
   dynamicParts.push(commonSalesPlaybook(ctx, { role: 'ae' }))
-  dynamicParts.push(commonBehaviourRules())
+
+  // Few-shot exemplars from prior thumbs-up turns (A1.1). Empty unless
+  // the tenant has accumulated mined exemplars matching (role,
+  // intent_class) — pure win when present, no token cost otherwise.
+  const exemplars = formatExemplars(profile, opts.role ?? 'ae', opts.intentClass ?? 'general_query')
+  if (exemplars) dynamicParts.push(exemplars)
+
   const dynamicSuffix = dynamicParts.join('\n\n')
 
-  return { staticPrefix, dynamicSuffix }
+  // `commonBehaviourRules()` lives in `cacheableSuffix` (B3.1): it is
+  // tenant- and role-stable text the agent route caches via a SECOND
+  // `cacheControl` breakpoint. Eliminates ~1.2k tokens of re-billed
+  // prompt on every warm turn.
+  return { staticPrefix, dynamicSuffix, cacheableSuffix: commonBehaviourRules() }
 }
 
 /**
@@ -518,7 +530,8 @@ export async function buildPipelineCoachPrompt(
   tenantId: string,
   ctx: AgentContext | null,
   packed: PackedContext | null = null,
+  opts: { intentClass?: string; role?: string } = {},
 ): Promise<string> {
-  const parts = await buildPipelineCoachPromptParts(tenantId, ctx, packed)
+  const parts = await buildPipelineCoachPromptParts(tenantId, ctx, packed, opts)
   return joinPromptParts(parts)
 }

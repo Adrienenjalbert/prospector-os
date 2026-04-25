@@ -113,6 +113,24 @@ async function getCachedSummary(
 }
 
 /**
+ * Structured failure logger so `compaction` failures are greppable in
+ * function logs without requiring tenant_id (which compaction does not
+ * receive). The agent route's onFinish handler emits a tenant-scoped
+ * `error` event of its own when a turn rolls up — this logger ensures
+ * the compaction-specific cause is preserved for ops triage.
+ */
+function recordCompactionFailure(
+  _supabase: SupabaseClient | undefined,
+  conversationId: string | null | undefined,
+  err: unknown,
+): void {
+  const message = err instanceof Error ? err.message : String(err)
+  console.warn(
+    `[compaction_failure] conversation_id=${conversationId ?? 'null'} message=${message.slice(0, 300)}`,
+  )
+}
+
+/**
  * Persist a freshly-generated summary back to ai_conversations so the
  * next turn can cache-hit. Fire-and-forget; failure shouldn't break
  * the turn (the next turn will just regenerate).
@@ -189,12 +207,25 @@ export async function compactConversation(opts: {
       })
       summary = text.trim()
     } catch (err) {
-      // If Haiku call fails (rate limit, network), fall back to the
-      // rolling-slice behaviour — preserves backwards compatibility
-      // and ensures a turn never breaks because compaction failed.
-      console.warn('[compaction] Haiku summary failed, falling back to rolling slice:', err)
+      // If Haiku call fails (rate limit, network), fall back to a
+      // safe-by-default behaviour: keep the same KEEP_RECENT_MESSAGES
+      // tail the success path uses, plus a leading system note so the
+      // model knows context is missing rather than silently forgetting.
+      // The previous `messages.slice(-20)` fallback expanded the visible
+      // tail without telling the agent it was operating on a degraded
+      // context — caused subtle "agent forgot earlier turns" bugs that
+      // were impossible to grep for.
+      console.warn('[compaction] Haiku summary failed, degrading to bounded tail:', err)
+      recordCompactionFailure(supabase, conversationId, err)
+      const noticeMessage: CompactInputMessage = {
+        role: 'system',
+        content:
+          'Earlier conversation summary unavailable due to a transient summariser error. ' +
+          'You are seeing only the most recent turns. If the rep references something not visible above, ' +
+          "say `I don't have that earlier context handy — could you re-share?` rather than guessing.",
+      }
       return {
-        messages: messages.slice(-20),
+        messages: [noticeMessage, ...messages.slice(-KEEP_RECENT_MESSAGES)],
         summary: null,
         summary_covers: 0,
         used_cache: false,
@@ -214,12 +245,19 @@ export async function compactConversation(opts: {
   // misclassification), the previous code prepended an empty
   // `{ role: 'system', content: '' }` message — Anthropic accepts it
   // but it pollutes the prompt with a phantom system role and confuses
-  // the cache-hit path next turn. Fall back to the rolling-slice
-  // behaviour explicitly so the turn still lands without phantom
-  // metadata.
+  // the cache-hit path next turn. Fall back to the same bounded-tail
+  // behaviour as the catch path so the agent knows context is missing.
   if (!summary) {
+    recordCompactionFailure(supabase, conversationId, new Error('empty_summary'))
+    const noticeMessage: CompactInputMessage = {
+      role: 'system',
+      content:
+        'Earlier conversation summary unavailable. ' +
+        'You are seeing only the most recent turns. If the rep references something not visible above, ' +
+        "say `I don't have that earlier context handy — could you re-share?` rather than guessing.",
+    }
     return {
-      messages: messages.slice(-20),
+      messages: [noticeMessage, ...messages.slice(-KEEP_RECENT_MESSAGES)],
       summary: null,
       summary_covers: 0,
       used_cache: false,

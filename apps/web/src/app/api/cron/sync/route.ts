@@ -4,6 +4,7 @@ import { forEachTenantChunked, statusFor } from '@/lib/cron-fanout'
 import { SalesforceAdapter, HubSpotAdapter } from '@prospector/adapters'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import { emitOutcomeEvent, urn, type OutcomeEventInput } from '@prospector/core'
+import { enqueueDeriveIcpOnWin } from '@/lib/workflows'
 
 /**
  * Compare a fresh CRM opportunity row against what we have in Postgres and
@@ -388,6 +389,19 @@ async function syncSalesforce(
       for (const e of events) {
         await emitOutcomeEvent(supabase, e)
       }
+      // Smart Memory Layer Phase 1 — re-derive ICP on every fresh win.
+      // Idempotency key in the workflow is per-day so multiple wins in
+      // the same sync collapse to one rebuild.
+      if (events.some((e) => e.event_type === 'deal_closed_won')) {
+        try {
+          await enqueueDeriveIcpOnWin(supabase, tenantId)
+        } catch (err) {
+          console.warn(
+            `[cron/sync] derive_icp enqueue failed (sf) tenant=${tenantId}:`,
+            err,
+          )
+        }
+      }
     }
   }
 
@@ -545,6 +559,19 @@ async function syncHubSpot(
     )
     for (const e of events) {
       await emitOutcomeEvent(supabase, e)
+    }
+    // Smart Memory Layer Phase 1 — re-derive ICP on every fresh win.
+    // Idempotency key in the workflow is per-day so multiple wins in
+    // the same sync collapse to one rebuild.
+    if (events.some((e) => e.event_type === 'deal_closed_won')) {
+      try {
+        await enqueueDeriveIcpOnWin(supabase, tenantId)
+      } catch (err) {
+        console.warn(
+          `[cron/sync] derive_icp enqueue failed (hs) tenant=${tenantId}:`,
+          err,
+        )
+      }
     }
   }
 

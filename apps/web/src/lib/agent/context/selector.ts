@@ -73,6 +73,12 @@ function scoreOne(
   if (t.intents?.includes(input.intentClass)) {
     score += 4
     reasons.push(`intent=${input.intentClass}:+4`)
+  } else if (input.secondaryIntents?.length && t.intents?.length) {
+    const secondaryMatch = input.secondaryIntents.find((si) => t.intents!.includes(si))
+    if (secondaryMatch) {
+      score += 2
+      reasons.push(`secondary_intent=${secondaryMatch}:+2`)
+    }
   }
 
   if (t.roles?.includes(input.role)) {
@@ -93,6 +99,11 @@ function scoreOne(
   if (t.whenStalled && input.isStalled) {
     score += 3
     reasons.push('stalled:+3')
+  }
+
+  if (t.whenUrgent && input.urgencyScore > 5) {
+    score += 3
+    reasons.push(`urgent(${input.urgencyScore}):+3`)
   }
 
   // Signal-type substring match — capped to +4 to avoid runaway when a
@@ -288,9 +299,11 @@ export function buildSelectorInput(opts: {
   activeObject: ContextSelectorInput['activeObject']
   activeUrn: string | null
   intentClass: IntentClass
+  secondaryIntents?: IntentClass[]
   dealStage?: string | null
   isStalled?: boolean
   signalTypes?: string[]
+  urgencyScore?: number
   tokenBudget?: number
   tenantOverrides?: TenantContextOverrides
   banditPriors?: ContextSelectorInput['bandit_priors']
@@ -303,7 +316,9 @@ export function buildSelectorInput(opts: {
     isStalled: opts.isStalled ?? false,
     signalTypes: opts.signalTypes ?? [],
     intentClass: opts.intentClass,
-    token_budget: opts.tokenBudget ?? 2000,
+    secondaryIntents: opts.secondaryIntents,
+    urgencyScore: opts.urgencyScore ?? 0,
+    token_budget: opts.tokenBudget ?? 3000,
     tenant_overrides: opts.tenantOverrides,
     bandit_priors: opts.banditPriors,
   }
