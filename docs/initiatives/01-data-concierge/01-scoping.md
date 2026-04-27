@@ -127,11 +127,11 @@ Tool: lookup_fulfilment / lookup_billing / lookup_acp_metric → Tableau MCP, wi
 
 If Redash MCP ships, it is treated as **Tier 2** (full harness — typed
 input, citations out, retry classified, telemetry emitted) per
-[`MISSION.md`](../../../MISSION.md) §3.
+[`ARCHITECTURE.md`](../../../ARCHITECTURE.md) §3.2.
 
 ---
 
-## 4. Tools to ship (Tier 2, fully harnessed per `MISSION.md` §3)
+## 4. Tools to ship (Tier 2, fully harnessed per `ARCHITECTURE.md` §3.2)
 
 All tools follow the `{ data, citations }` contract. All are
 **read-only** (no writes back to Tableau / Redash). Each one uses the
@@ -180,7 +180,7 @@ Auth via OAuth2 service account stored encrypted in
 |---|---|
 | Connection string + OAuth credentials | Per-tenant in `tenants` row, encrypted via [`apps/web/src/lib/crypto.ts`](../../../apps/web/src/lib/crypto.ts) pattern |
 | Field mapping | `connector_registry.field_mapping` JSONB |
-| Rate limit | 10 req/s. Returns 429 → classified as TRANSIENT, retried with backoff (per `MISSION.md` §3 Tool tier) |
+| Rate limit | 10 req/s. Returns 429 → classified as TRANSIENT, retried with backoff (per `ARCHITECTURE.md` §3.2 Tool tier) |
 | View allowlist | `tableau_views_registry` table prevents the agent from querying views containing PII or compensation data (defence in depth) |
 | Caching | Vercel Runtime Cache, 5-min TTL keyed on `(view_slug, filters_hash)`. See `skills/runtime-cache` |
 | Health check | `healthCheck()` from `ConnectorInterface` polled every 5 min by `cron/health` |

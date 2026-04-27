@@ -2,10 +2,16 @@
 
 ## Read these first
 
-1. **[`MISSION.md`](../../MISSION.md)** — what we're building, for whom, why.
-2. **[`docs/PROCESS.md`](../../docs/PROCESS.md)** — how to add tools, connectors,
-   workflows, eval cases, tenants.
-3. **[`.cursorrules`](../../.cursorrules)** — workspace-wide patterns + the
+1. **[`MISSION.md`](../../MISSION.md)** — strategic *why*. Two jobs, second
+   brain, copilot positioning, capability-KPI table, adoption gates.
+2. **[`ARCHITECTURE.md`](../../ARCHITECTURE.md)** — engineering *how*.
+   Three-tier harness, four loops, four agent surfaces, telemetry
+   contract, cite-or-shut-up enforcement chain, anti-patterns.
+3. **[`docs/PROCESS.md`](../../docs/PROCESS.md)** — step-by-step. How to
+   add tools, connectors, workflows, eval cases, tenants.
+4. **[`CONTRIBUTING.md`](../../CONTRIBUTING.md)** — code review standards,
+   what gets blocked at merge.
+5. **[`.cursorrules`](../../.cursorrules)** — workspace-wide patterns + the
    complete file map.
 
 The rest of this file is web-app-specific guidance only.

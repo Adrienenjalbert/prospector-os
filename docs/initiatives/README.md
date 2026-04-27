@@ -1,9 +1,16 @@
-# Initiatives — Indeed Flex commercial launch
+# Initiatives — Indeed Flex commercial pilot
 
-> **Status:** Active — single source of truth for the 18-week rollout (2 weeks audit + 16 weeks build)
+> ⚠️ **This folder is one customer's pilot, not the OS roadmap.**
+> For the multi-tenant **OS roadmap** (what ships next for the platform,
+> independent of any one customer), see [`../ROADMAP.md`](../ROADMAP.md).
+> For the strategic *why* of the OS itself, see [`../../MISSION.md`](../../MISSION.md).
+> For the engineering *how*, see [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md).
+>
+> **Status:** Active — single source of truth for the Indeed Flex
+> 18-week rollout (2 weeks audit + 16 weeks build)
 > **Owner:** Adrien Enjalbert (Head of Digital & Applied AI)
 > **Canonical plan:** the markdown in this folder. HTML roadmaps in `_archive/` are historical only
-> **First reads:** [`MISSION.md`](../../MISSION.md), [`docs/PROCESS.md`](../PROCESS.md), [`docs/adoption-research-report.md`](../adoption-research-report.md)
+> **First reads:** [`MISSION.md`](../../MISSION.md), [`ARCHITECTURE.md`](../../ARCHITECTURE.md), [`docs/PROCESS.md`](../PROCESS.md), [`docs/adoption-research-report.md`](../adoption-research-report.md)
 > **Trackers:** `_trackers/AI_OS_Launch_Tracker.xlsx`, `_trackers/AI_OS_Testing_QA_Matrix.xlsx`, `_trackers/AI_OS_Master_Launch_Strategy.docx`, `_trackers/AI_OS_SLT_Executive_Brief.docx`, `_trackers/AI_OS_Engineering_Sprint_Plan.docx`
 > **Last updated:** 25 April 2026
 
@@ -11,12 +18,21 @@
 
 ## TL;DR
 
-This folder is the **operational playbook** for shipping the six AI Operating
-System initiatives Indeed Flex commissioned, in the right order, with
-defensible ROI, and without compromising the architecture that makes the
-OS compound.
+This folder is the **operational playbook for the Indeed Flex commercial
+pilot** — the OS's first commercial deployment. It documents the six
+use cases Indeed Flex commissioned, in the right launch order, with
+defensible ROI per phase, and without compromising the multi-tenant
+architecture.
 
-The OS itself is built. These six initiatives are how it goes commercial:
+The Indeed Flex pilot is **one example** of how a customer commissions
+use cases on top of the platform — it is **not** the OS roadmap.
+Future customer pilots will live in sibling folders (e.g.
+`docs/deployments/<customer>/`) following the same 5-doc pattern.
+The platform-level roadmap — what ships next for *every* tenant — lives
+in [`../ROADMAP.md`](../ROADMAP.md).
+
+The OS itself is built. These six initiatives are how it goes
+commercial **for this specific customer**:
 
 > Six initiatives = **0 new agent runtimes**, **3 new role overlays** on
 > the existing `account-strategist` surface, ~12 new tools, and 1 new

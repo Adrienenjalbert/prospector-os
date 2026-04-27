@@ -211,8 +211,8 @@ At week 8 and week 12, we measure:
 - Self-reported research time per call (re-asked from baseline survey).
 
 The holdout cohort's brief workflows are auto-suppressed by
-`shouldSuppressPush` (per `MISSION.md` §6 contract). Verified in tests
-per [`02-test-plan.md`](02-test-plan.md) §5.
+`shouldSuppressPush` (per `MISSION.md` §13 — "no bypass of the
+holdout cohort"). Verified in tests per [`02-test-plan.md`](02-test-plan.md) §5.
 
 ---
 

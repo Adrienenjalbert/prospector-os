@@ -292,8 +292,8 @@ cannot clone:
    adding the next 10 capabilities is configuration. A monolithic
    competitor pays linearly per capability; we pay logarithmically.
 
-The three-tier harness ([`MISSION.md`](../../MISSION.md) §"three-tier
-harness doctrine") is the operating discipline that makes the OS shape
+The three-tier harness ([`ARCHITECTURE.md`](../../ARCHITECTURE.md) §3
+"The three-tier harness doctrine") is the operating discipline that makes the OS shape
 *safe* to extend. Without it, "configurable" becomes "unstable" within
 a year.
 

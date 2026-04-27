@@ -466,7 +466,8 @@ These run regardless of phase and surface on `/admin/adaptation`:
 | Per-rep AI cost (Sonnet + Haiku) | ≤ £15/rep/month | `agent_events.payload.tokens × model_price` |
 
 Any cross-cutting metric breach pauses **all live phases** until fixed
-(per [`MISSION.md`](../../MISSION.md) §6 contract terms).
+(per [`MISSION.md`](../../MISSION.md) §14 success criteria + §13
+"what we explicitly do not do").
 
 ---
 

@@ -80,5 +80,5 @@ appear.
 ## Sources
 
 - [`CURSOR_PRD.md`](../../../CURSOR_PRD.md) §5
-- [`MISSION.md`](../../../MISSION.md) §"The three-tier harness doctrine"
+- [`ARCHITECTURE.md`](../../../ARCHITECTURE.md) §3 "The three-tier harness doctrine"
   (the agent layer's harnessing doctrine, which constrains Loop 3 only).

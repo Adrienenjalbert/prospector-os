@@ -1,9 +1,29 @@
-# Prospector OS v3.0 — Master Plan
+# Prospector OS v3.0 — Master Plan (HISTORICAL)
 
+> ⚠️ **SUPERSEDED — historical reference only.**
+> This master plan is from **March 2026**, before the v3 truthfulness
+> closures and the doc split into [`MISSION.md`](../../MISSION.md) +
+> [`ARCHITECTURE.md`](../../ARCHITECTURE.md). It is preserved for
+> archaeology but **does not** reflect the current state of the OS.
+> For the current state, read in this order:
+>
+> 1. [`MISSION.md`](../../MISSION.md) — strategic *why* (two jobs,
+>    second-brain framing, copilot positioning, persona-KPI map,
+>    capability-KPI table).
+> 2. [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — engineering *how*
+>    (three-tier harness, four loops, four agent surfaces, telemetry
+>    contract, cite-or-shut-up enforcement).
+> 3. [`CURSOR_PRD.md`](../../CURSOR_PRD.md) — what's actually shipped
+>    (Phase 1 truthfulness gates, Phase 6 second brain, Phase 7
+>    triggers + relationship graph, current capability inventory).
+> 4. [`docs/ROADMAP.md`](../ROADMAP.md) — the multi-tenant OS roadmap
+>    (Bucket A truthfulness, Bucket B cost recovery, Bucket C smart-system
+>    upgrades).
+>
 > **Codename:** Prospector OS
 > **Version:** 3.0 — Multi-Tenant SaaS Build
-> **Last Updated:** March 2026
-> **Author:** Adrien Enjalbert — Head of Digital & Applied AI, Indeed Flex
+> **Last Updated:** March 2026 (no longer maintained)
+> **Author:** Adrien Enjalbert
 > **Mission:** Cut the noise. Surface the signal. Empower action.
 
 ---

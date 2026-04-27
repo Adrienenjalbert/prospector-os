@@ -426,7 +426,9 @@ Use `AccountOpportunities` pattern from prototype research:
 
 - Map centered on company HQ (if coordinates available), showing all office locations
 - Location cards: city, type (HQ/Branch/R&D), employee count
-- Territory overlap: which Indeed Flex operating cities match
+- Territory overlap: which of the tenant's operating cities (from
+  `business_profiles.target_geographies` or the per-tenant configured
+  geographies) match the company's office locations
 
 ### Tab: Signals
 

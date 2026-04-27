@@ -1,3 +1,23 @@
+// SUPERSEDED — v2 architecture only. Do not implement against this file.
+//
+// This was a Supabase Edge Function called from the Relevance AI agent in
+// the v2 architecture. The v3 codebase does NOT use Supabase Edge Functions
+// for the agent — it uses a Next.js API route at apps/web/src/app/api/agent/route.ts
+// with the unified runtime in apps/web/src/lib/agent/run-agent.ts (which is
+// shared by Slack and dashboard surfaces via assembleAgentRun).
+//
+// The v3 equivalents:
+//   • rep_profile lookup     → packages/core/src/types/platform.ts + Supabase queries
+//   • priority_accounts      → apps/web/src/lib/agent/context/slices/priority-accounts.ts
+//   • funnel_comparison      → packages/core/src/funnel/ + apps/web/src/lib/agent/context/slices/
+//   • stalled_deals          → apps/web/src/lib/agent/context/slices/stalled-deals.ts
+//   • recent_signals         → apps/web/src/lib/agent/context/slices/* (multiple slices)
+//
+// Kept in docs/archive/ as historical reference only. See:
+//   • docs/archive/SUPERSEDED.md for the full v2-vs-v3 mapping
+//   • ARCHITECTURE.md §3 for the current three-tier harness
+//   • apps/web/src/lib/agent/context/ for the current slice contract
+
 // Supabase Edge Function: rep-context
 // Called by Relevance AI agent at every interaction
 // Returns full assembled context for a specific rep in < 200ms

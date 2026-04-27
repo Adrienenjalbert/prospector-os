@@ -31,7 +31,7 @@
 | **Wiki page** | A compiled, interlinked markdown page in `wiki_pages` (per-tenant) — *not* the same as the developer wiki at repo `wiki/` |
 | **Atom / memory** | A single derived insight in `tenant_memories` (per-tenant). Atoms are compiled into wiki pages |
 | **Slice** | A bounded chunk of context the agent loads on demand (e.g. `icp-snapshot`, `bridge-opportunities`). Slices read wiki pages first, atoms as fallback |
-| **Three-tier harness** | Tier 1 (chat loop, lightly harnessed) / Tier 2 (tools, fully harnessed) / Tier 3 (workflows, durable). See `MISSION.md` §"three-tier harness doctrine" |
+| **Three-tier harness** | Tier 1 (chat loop, lightly harnessed) / Tier 2 (tools, fully harnessed) / Tier 3 (workflows, durable). See `ARCHITECTURE.md` §3 "The three-tier harness doctrine" |
 
 ---
 

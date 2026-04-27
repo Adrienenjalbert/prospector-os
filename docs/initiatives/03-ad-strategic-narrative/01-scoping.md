@@ -97,8 +97,8 @@ qualitative sign-off "I would not go back."
 | **NEW: 3 tools** | — | Files in `apps/web/src/lib/agent/tools/handlers/ad-narrative/` |
 | **NEW: `ad` role added to enum** | — | Migration 028 |
 
-**Surface preset impact:** None (per `MISSION.md` §6 — surface count
-fixed at four). The `account-strategist` surface gains a new role
+**Surface preset impact:** None (per `ARCHITECTURE.md` §2 — surface
+count fixed at four). The `account-strategist` surface gains a new role
 overlay (`ad`) that selects an executive-register playbook variant.
 
 **Connector impact:** None.
