@@ -7,12 +7,23 @@ import { currentDealHealthSlice } from './current-deal-health'
 import { currentCompanySnapshotSlice } from './current-company-snapshot'
 import { transcriptSummariesSlice } from './transcript-summaries'
 import { keyContactNotesSlice } from './key-contact-notes'
+import { relevantNotesRagSlice } from './relevant-notes-rag'
 import { repSuccessFingerprintSlice } from './rep-success-fingerprint'
 import { championMapSlice } from './champion-map'
 import { championAlumniSlice } from './champion-alumni-opportunities'
 import { conversationMemorySlice } from './conversation-memory'
 import { accountFamilySlice } from './account-family'
 import { crossSellOpportunitiesSlice } from './cross-sell-opportunities'
+import { icpSnapshotSlice } from './icp-snapshot'
+import { personaLibrarySlice } from './persona-library'
+import { winLossThemesSlice } from './win-loss-themes'
+import { competitorPlaysSlice } from './competitor-plays'
+import { glossarySlice } from './glossary'
+import { motionFingerprintSlice } from './motion-fingerprint'
+import { repPlaybookSlice } from './rep-playbook'
+import { reflectionInsightsSlice } from './reflection-insights'
+import { triggerNowSlice } from './trigger-now'
+import { bridgeOpportunitiesSlice } from './bridge-opportunities'
 
 /**
  * Single source of truth for every slice in the pack. Adding a new slice =
@@ -32,12 +43,23 @@ export const SLICES: Record<string, ContextSlice<unknown>> = {
   [currentCompanySnapshotSlice.slug]: currentCompanySnapshotSlice as ContextSlice<unknown>,
   [transcriptSummariesSlice.slug]: transcriptSummariesSlice as ContextSlice<unknown>,
   [keyContactNotesSlice.slug]: keyContactNotesSlice as ContextSlice<unknown>,
+  [relevantNotesRagSlice.slug]: relevantNotesRagSlice as ContextSlice<unknown>,
   [repSuccessFingerprintSlice.slug]: repSuccessFingerprintSlice as ContextSlice<unknown>,
   [championMapSlice.slug]: championMapSlice as ContextSlice<unknown>,
   [championAlumniSlice.slug]: championAlumniSlice as ContextSlice<unknown>,
   [conversationMemorySlice.slug]: conversationMemorySlice as ContextSlice<unknown>,
   [accountFamilySlice.slug]: accountFamilySlice as ContextSlice<unknown>,
   [crossSellOpportunitiesSlice.slug]: crossSellOpportunitiesSlice as ContextSlice<unknown>,
+  [icpSnapshotSlice.slug]: icpSnapshotSlice as ContextSlice<unknown>,
+  [personaLibrarySlice.slug]: personaLibrarySlice as ContextSlice<unknown>,
+  [winLossThemesSlice.slug]: winLossThemesSlice as ContextSlice<unknown>,
+  [competitorPlaysSlice.slug]: competitorPlaysSlice as ContextSlice<unknown>,
+  [glossarySlice.slug]: glossarySlice as ContextSlice<unknown>,
+  [motionFingerprintSlice.slug]: motionFingerprintSlice as ContextSlice<unknown>,
+  [repPlaybookSlice.slug]: repPlaybookSlice as ContextSlice<unknown>,
+  [reflectionInsightsSlice.slug]: reflectionInsightsSlice as ContextSlice<unknown>,
+  [triggerNowSlice.slug]: triggerNowSlice as ContextSlice<unknown>,
+  [bridgeOpportunitiesSlice.slug]: bridgeOpportunitiesSlice as ContextSlice<unknown>,
 }
 
 export const SLICE_SLUGS = Object.keys(SLICES) as readonly string[]
@@ -72,6 +94,15 @@ export const STRATEGY_BUNDLES: Record<
     'champion-alumni-opportunities',
     'conversation-memory',
     'cross-sell-opportunities',
+    'icp-snapshot',
+    'persona-library',
+    'win-loss-themes',
+    'competitor-plays',
+    'glossary',
+    'motion-fingerprint',
+    'rep-playbook',
+    'trigger-now',
+    'bridge-opportunities',
   ],
   account_centric: [
     'current-company-snapshot',
@@ -86,6 +117,15 @@ export const STRATEGY_BUNDLES: Record<
     'conversation-memory',
     'account-family',
     'cross-sell-opportunities',
+    'icp-snapshot',
+    'persona-library',
+    'win-loss-themes',
+    'competitor-plays',
+    'glossary',
+    'motion-fingerprint',
+    'rep-playbook',
+    'trigger-now',
+    'bridge-opportunities',
   ],
   portfolio_centric: [
     'priority-accounts',
@@ -97,12 +137,16 @@ export const STRATEGY_BUNDLES: Record<
     'rep-success-fingerprint',
     'champion-alumni-opportunities',
     'conversation-memory',
+    'rep-playbook',
+    'reflection-insights',
+    'trigger-now',
   ],
   team_centric: [
     'funnel-comparison',
     'stalled-deals',
     'recent-signals',
     'conversation-memory',
+    'reflection-insights',
   ],
 }
 
@@ -115,10 +159,21 @@ export {
   currentCompanySnapshotSlice,
   transcriptSummariesSlice,
   keyContactNotesSlice,
+  relevantNotesRagSlice,
   repSuccessFingerprintSlice,
   championMapSlice,
   championAlumniSlice,
   conversationMemorySlice,
   accountFamilySlice,
   crossSellOpportunitiesSlice,
+  icpSnapshotSlice,
+  personaLibrarySlice,
+  winLossThemesSlice,
+  competitorPlaysSlice,
+  glossarySlice,
+  motionFingerprintSlice,
+  repPlaybookSlice,
+  reflectionInsightsSlice,
+  triggerNowSlice,
+  bridgeOpportunitiesSlice,
 }

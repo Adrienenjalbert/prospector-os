@@ -144,8 +144,20 @@ export interface SliceLoadCtx {
   /** Page context as the route received it (for back-compat with rep-centric assembler). */
   pageContext: PageContext | undefined
 
-  /** Intent class from `classifyIntent` in the route. */
+  /** Primary intent class from `classifyIntent` in the route. */
   intentClass: IntentClass
+
+  /**
+   * Secondary intent classes detected in the same turn (e.g. a message
+   * that is primarily `draft_outreach` but also touches `meeting_prep`
+   * context). The selector awards +2 per secondary match (vs +4 for
+   * primary), enabling broader slice coverage on compound turns without
+   * over-weighting the secondary evidence.
+   *
+   * Set by `classifyIntent`'s optional multi-label path or by the caller
+   * when the message clearly spans two domains. Defaults to [].
+   */
+  secondaryIntents?: IntentClass[]
 
   /** CRM source of the tenant — used by URN deep-link helpers. */
   crmType: string | null
@@ -155,6 +167,15 @@ export interface SliceLoadCtx {
 
   /** Hard deadline (epoch ms) — loaders should bail before this. */
   deadlineMs: number
+
+  /**
+   * Most-recent user message text, when known. Used by RAG slices
+   * (C5.2) that embed the query for similarity retrieval. Optional so
+   * non-chat callers (workflows, evals) can still hydrate slices
+   * deterministically — the RAG slices skip retrieval and degrade to
+   * empty when this is absent.
+   */
+  userMessageText?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +199,12 @@ export interface SliceTriggers {
   signalTypes?: string[]
   /** When true, slice always loads regardless of other matchers (meta slices). */
   always?: boolean
+  /**
+   * When true, slice scores +3 when urgencyScore > 5 (close-date pressure
+   * or quarter-end proximity). Use for deadline-sensitive slices like
+   * quota-position or relationship-decay that matter most in crunch time.
+   */
+  whenUrgent?: boolean
 }
 
 /**
@@ -211,6 +238,21 @@ export interface SliceLoadResult<TRow> {
    * honestly. Examples: "no signals in 14 days", "no champion identified".
    */
   warnings?: string[]
+  /**
+   * Phase 6 (1.2) — atom and page IDs the slice INJECTED into the prompt
+   * for this turn. The packer's emitTelemetry fires one `memory_injected`
+   * event per atom and one `wiki_page_injected` event per page so the
+   * per-row Beta posterior on tenant_memories.prior_alpha/beta and
+   * wiki_pages.prior_alpha/beta can update on the agent route's
+   * onFinish (impressions += beta, citations += alpha).
+   *
+   * Slices fill these arrays themselves so each slice keeps the cleanest
+   * source of truth on what it injected. Empty / undefined => no event
+   * fires for that slice's rows (e.g. atomless slices like
+   * `recent-signals`).
+   */
+  injectedMemoryIds?: string[]
+  injectedPageIds?: string[]
 }
 
 /**
@@ -273,7 +315,21 @@ export interface ContextSelectorInput {
   signalTypes: string[]
   intentClass: IntentClass
 
-  /** Total token ceiling for the context section. Default 2000. */
+  /**
+   * Secondary intent classes detected in the same turn. The selector awards
+   * +2 per secondary match (vs +4 for primary). See SliceLoadCtx for full docs.
+   */
+  secondaryIntents?: IntentClass[]
+
+  /**
+   * Composite urgency 0-10: close-date proximity + quarter-end pressure.
+   * Computed by the packer from deal.expected_close_date + current date.
+   * 0 when no deal is active or date is not set. Slices declare
+   * `whenUrgent: true` in triggers to score +3 when this > 5.
+   */
+  urgencyScore: number
+
+  /** Total token ceiling for the context section. Default adaptive (see packer). */
   token_budget: number
 
   /**
@@ -342,6 +398,14 @@ export interface PackedSection {
   tokens: number
   /** Raw row count — useful for "0 rows means empty" logic in the agent. */
   row_count: number
+  /**
+   * Phase 6 (1.2) — propagated from SliceLoadResult so the packer +
+   * the route can emit memory_injected / wiki_page_injected events
+   * and so the agent route's onFinish can recover the atom/page id
+   * set when reconciling against URNs in the assistant text.
+   */
+  injectedMemoryIds?: string[]
+  injectedPageIds?: string[]
 }
 
 export interface PackedContext {

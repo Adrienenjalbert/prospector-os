@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { Tier2WritePanel } from "@/components/admin/tier2-write-panel";
+import { CrmWritebackPanel } from "@/components/admin/crm-writeback-panel";
 
 type TabId = "icp" | "scoring" | "funnel" | "signals";
 
@@ -283,6 +285,19 @@ export function AdminConfigClient() {
           Save
         </button>
       </div>
+
+      {/* Phase 3 T3.2 — per-tenant tier-2 enablement. Lives below
+          the ICP/scoring/funnel/signals tabs because it has its
+          own write path (config_type='crm_write') and its own
+          acknowledgement gate. */}
+      <Tier2WritePanel />
+
+      {/* D7.3 — CRM score write-back. Pushes nightly priority
+          tier/score/reason back to the source CRM so reps see them
+          in their list views. Independent of the Tier-2 write panel
+          above (which controls CHAT-driven writes); this is the
+          system-driven score sync. */}
+      <CrmWritebackPanel />
     </div>
   );
 }

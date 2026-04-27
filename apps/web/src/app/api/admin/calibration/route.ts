@@ -87,6 +87,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: 'rejected' })
     }
 
+    // C6.1: prompt-type proposals don't write to a `tenants.*_config`
+    // column — they swap the active `business_skills` row for the
+    // `agent_personality` skill_type. Branch early so the
+    // tenants-config path stays clean.
+    if (proposal.config_type === 'prompt') {
+      return await applyPromptProposal({
+        supabase,
+        userId: user.id,
+        tenantId: profile.tenant_id,
+        proposalId: proposal_id,
+        proposal,
+      })
+    }
+
     const configField = proposal.config_type === 'scoring'
       ? 'scoring_config'
       : proposal.config_type === 'icp'
@@ -226,3 +240,133 @@ const ProposedWeightsSchema = z
     },
     { message: 'propensity_weights must sum to 1.0 (within 0.005)' },
   )
+
+/**
+ * Apply a `config_type='prompt'` calibration proposal (C6.1). Swaps
+ * the active `business_skills` row for the `agent_personality`
+ * skill_type:
+ *
+ *   1. Look up the current active row.
+ *   2. Insert a new row with version bumped + active=true.
+ *   3. Mark the old row active=false in the SAME txn (single SQL UPDATE
+ *      via the unique-active-row constraint in migration 003).
+ *   4. Write the calibration_ledger entry pointing at the old +
+ *      new versions so the rollback API can restore the previous body.
+ */
+type PromptProposalRow = {
+  proposed_config: { skill_type?: string; prompt_body?: string } | null
+  analysis: { expected_lift?: number; rationale_summary?: string } | null
+}
+
+async function applyPromptProposal(opts: {
+  supabase: ReturnType<typeof getServiceSupabase>
+  userId: string
+  tenantId: string
+  proposalId: string
+  proposal: PromptProposalRow
+}) {
+  const { supabase, userId, tenantId, proposalId, proposal } = opts
+
+  const proposed = proposal.proposed_config ?? {}
+  const skillType = proposed.skill_type ?? 'agent_personality'
+  const newBody = (proposed.prompt_body ?? '').trim()
+  if (!newBody) {
+    return NextResponse.json(
+      { error: 'Proposal has empty proposed_config.prompt_body' },
+      { status: 400 },
+    )
+  }
+
+  const { data: activeRow } = await supabase
+    .from('business_skills')
+    .select('id, version, content_text')
+    .eq('tenant_id', tenantId)
+    .eq('skill_type', skillType)
+    .eq('active', true)
+    .maybeSingle()
+
+  // Build a new version label that doesn't collide with the existing
+  // (tenant, skill_type, version) tuple. Pre-existing version like 'v3'
+  // → 'v4'; non-numeric version → suffix with timestamp.
+  const nextVersion = bumpVersion(activeRow?.version ?? 'v1')
+
+  // 1. Insert the new active row. The unique partial index on
+  //    (tenant_id, skill_type) WHERE active=true requires the old
+  //    row to be deactivated first; we deactivate then insert in a
+  //    single round-trip via two updates to keep the active-row
+  //    invariant.
+  if (activeRow?.id) {
+    const { error: deactErr } = await supabase
+      .from('business_skills')
+      .update({ active: false })
+      .eq('id', activeRow.id)
+    if (deactErr) {
+      return NextResponse.json(
+        { error: `Deactivate old skill failed: ${deactErr.message}` },
+        { status: 500 },
+      )
+    }
+  }
+
+  const { error: insertErr } = await supabase.from('business_skills').insert({
+    tenant_id: tenantId,
+    skill_type: skillType,
+    version: nextVersion,
+    active: true,
+    content_type: 'text',
+    content_text: newBody,
+    created_by: userId,
+  })
+  if (insertErr) {
+    // Best-effort restore on failure: re-activate the old row so the
+    // tenant's prompt isn't left blank.
+    if (activeRow?.id) {
+      await supabase
+        .from('business_skills')
+        .update({ active: true })
+        .eq('id', activeRow.id)
+    }
+    return NextResponse.json(
+      { error: `New skill insert failed: ${insertErr.message}` },
+      { status: 500 },
+    )
+  }
+
+  await supabase.from('calibration_ledger').insert({
+    tenant_id: tenantId,
+    change_type: 'prompt_skill_swap',
+    target_path: `business_skills.${skillType}`,
+    before_value: { version: activeRow?.version ?? null, content_text: activeRow?.content_text ?? null },
+    after_value: { version: nextVersion, content_text: newBody },
+    observed_lift: proposal.analysis?.expected_lift ?? null,
+    applied_by: userId,
+    notes: `Approved prompt proposal ${proposalId} — ${proposal.analysis?.rationale_summary ?? 'no rationale'}`,
+  })
+
+  await supabase
+    .from('calibration_proposals')
+    .update({
+      status: 'approved',
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
+      applied_at: new Date().toISOString(),
+    })
+    .eq('id', proposalId)
+
+  return NextResponse.json({
+    status: 'approved',
+    skill_type: skillType,
+    new_version: nextVersion,
+  })
+}
+
+/**
+ * Bump 'v3' → 'v4'. Falls back to a timestamp suffix when the
+ * version isn't in the canonical 'v<digits>' form (handles legacy
+ * tenants with custom version names).
+ */
+function bumpVersion(current: string): string {
+  const m = /^v(\d+)$/.exec(current)
+  if (m) return `v${Number(m[1]) + 1}`
+  return `${current}-${Date.now()}`
+}

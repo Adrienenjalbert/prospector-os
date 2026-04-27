@@ -1,0 +1,57 @@
+phase,folder,initiative,brief_number,os_primitive,primitive_path,reuse_or_new,notes
+1,01-data-concierge,Data Concierge,6,Agent route,apps/web/src/app/api/agent/route.ts,reuse,Slack and dashboard share via assembleAgentRun
+1,01-data-concierge,Data Concierge,6,Slack adapter,packages/adapters/src/notifications/slack.ts,reuse,DM delivery for cited answers
+1,01-data-concierge,Data Concierge,6,Tool loader,apps/web/src/lib/agent/tool-loader.ts,reuse,Reads tool_registry per call (no deploy needed for new rows)
+1,01-data-concierge,Data Concierge,6,Citation pipeline,apps/web/src/lib/agent/citations.ts,extend,Add 4 new extractors (one per tool)
+1,01-data-concierge,Data Concierge,6,Cooldown + push budget,packages/adapters/src/notifications/push-budget.ts,reuse,Reactive only - no proactive push budget consumed
+1,01-data-concierge,Data Concierge,6,Telemetry,packages/core/src/telemetry,reuse,emitAgentEvent on every tool call
+1,01-data-concierge,Data Concierge,6,Tableau MCP connector,packages/adapters/src/tableau-mcp/,NEW,New adapter implementing ConnectorInterface
+1,01-data-concierge,Data Concierge,6,Redash MCP connector (fallback),packages/adapters/src/redash-mcp/,NEW,Optional fallback if Tableau MCP latency is unworkable
+1,01-data-concierge,Data Concierge,6,4 new tools,apps/web/src/lib/agent/tools/handlers/data-concierge/,NEW,query_tableau lookup_fulfilment lookup_billing lookup_acp_metric
+1,01-data-concierge,Data Concierge,6,Migration 025,packages/db/migrations/025_data_concierge.sql,NEW,tableau_credentials_encrypted + tableau_views_registry + acp_metric_registry
+1,01-data-concierge,Data Concierge,6,Migration 026,packages/db/migrations/026_data_concierge_tools.sql,NEW,4 tool_registry rows seeded
+1,01-data-concierge,Data Concierge,6,Cache layer,Vercel Runtime Cache,reuse,5-min TTL on Tableau MCP responses (per skills/runtime-cache)
+2,02-new-business-execution,New Business Execution,1,pipeline-coach surface,apps/web/src/lib/agent/agents/pipeline-coach.ts,reuse,Daily morning push surface
+2,02-new-business-execution,New Business Execution,1,account-strategist surface,apps/web/src/lib/agent/agents/account-strategist.ts,reuse,Account-deep dive on a specific deal
+2,02-new-business-execution,New Business Execution,1,pre-call-brief workflow,apps/web/src/lib/workflows/pre-call-brief.ts,extend,Tighten to inject discovery questions tagged by stakeholder pain
+2,02-new-business-execution,New Business Execution,1,transcript-signals workflow,apps/web/src/lib/workflows/transcript-signals.ts,reuse,Persists MEDDPICC gaps + objections post-mig 024
+2,02-new-business-execution,New Business Execution,1,extract_discovery_gaps_v2 tool,apps/web/src/lib/agent/tools/handlers/discovery-gaps.ts,NEW,Refines extract_meddpicc_gaps for first-call vs follow-up
+2,02-new-business-execution,New Business Execution,1,draft_pitch_deck_outline tool,apps/web/src/lib/agent/tools/handlers/pitch-deck-outline.ts,NEW,Returns slide-by-slide structure - outline only
+2,02-new-business-execution,New Business Execution,1,Migration 027,packages/db/migrations/027_new_business_tools.sql,NEW,2 tool_registry rows + holdout cohort columns on rep_profiles
+2,02-new-business-execution,New Business Execution,1,HubSpot meeting webhook,apps/web/src/app/api/webhooks/hubspot/route.ts,reuse,Triggers pre-call-brief T-15 enqueue
+2,02-new-business-execution,New Business Execution,1,Holdout cohort,apps/web/src/lib/workflows/holdout.ts,reuse,3 holdout AEs matched on tenure + territory
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,account-strategist surface (with role=ad),apps/web/src/lib/agent/agents/account-strategist.ts,extend,New ad role overlay via commonSalesPlaybook
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,Phase 7 wiki layer,apps/web/src/lib/workflows/compile-wiki-pages.ts,reuse,Provides entity_company_neighbourhood pages
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,Phase 7 bridge graph,apps/web/src/lib/workflows/compile-bridge-neighbourhoods.ts,reuse,Provides company-to-company bridges for stakeholder maps
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,Composite triggers,apps/web/src/lib/workflows/mine-composite-triggers.ts,reuse,Tier-1 account triggers feed exec brief
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,Coworker triangles,apps/web/src/lib/workflows/mine-coworker-triangles.ts,reuse,Stakeholder map influence ranks
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,compose_executive_brief tool,apps/web/src/lib/agent/tools/handlers/exec-brief.ts,NEW,1-page narrative; cites wiki + triggers + bridges
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,build_stakeholder_map tool,apps/web/src/lib/agent/tools/handlers/stakeholder-map.ts,NEW,Political map with influence ranks
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,pressure_test_narrative tool,apps/web/src/lib/agent/tools/handlers/pressure-test.ts,NEW,Agent plays CRO; returns max 3 challenge questions
+3,03-ad-strategic-narrative,AD Strategic Narrative,3,Migration 028,packages/db/migrations/028_ad_narrative_tools.sql,NEW,3 tool_registry rows + ad role enum value
+4,04-csm-retention-guardian,CSM Retention Guardian,4,account-strategist surface (with role=csm),apps/web/src/lib/agent/agents/account-strategist.ts,extend,New csm role overlay via commonSalesPlaybook
+4,04-csm-retention-guardian,CSM Retention Guardian,4,transcript-signals workflow,apps/web/src/lib/workflows/transcript-signals.ts,reuse,Now persists churn_risk price_objection champion_missing post-mig 024
+4,04-csm-retention-guardian,CSM Retention Guardian,4,portfolio-digest workflow,apps/web/src/lib/workflows/portfolio-digest.ts,reuse,Weekly Monday digest
+4,04-csm-retention-guardian,CSM Retention Guardian,4,churn-escalation workflow,apps/web/src/lib/workflows/churn-escalation.ts,reuse,Drafts escalation emails
+4,04-csm-retention-guardian,CSM Retention Guardian,4,mine-themes workflow,apps/web/src/lib/workflows/mine-themes.ts,reuse,Clusters transcripts by theme
+4,04-csm-retention-guardian,CSM Retention Guardian,4,synthesise_service_themes tool,apps/web/src/lib/agent/tools/handlers/service-themes.ts,NEW,Clusters transcripts by service issue / sentiment / expansion blocker
+4,04-csm-retention-guardian,CSM Retention Guardian,4,draft_account_improvement_plan tool,apps/web/src/lib/agent/tools/handlers/improvement-plan.ts,NEW,Theme to root cause to owner to next step
+4,04-csm-retention-guardian,CSM Retention Guardian,4,Migration 029,packages/db/migrations/029_csm_guardian_tools.sql,NEW,2 tool_registry rows + csm role visibility on existing tools
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,account-strategist surface (with role=growth_ae),apps/web/src/lib/agent/agents/account-strategist.ts,extend,New growth_ae role overlay
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,Scoring engine,packages/core/src/scoring/,reuse,Composite priority on expansion accounts
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,build_site_ramp_plan tool,apps/web/src/lib/agent/tools/handlers/site-ramp.ts,NEW,Weekly headcount ramp table
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,pressure_test_margin tool,apps/web/src/lib/agent/tools/handlers/margin-test.ts,NEW,Margin band + risk flags from deal value + agency reliance + cost-to-serve
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,draft_qbr_deck_outline tool,apps/web/src/lib/agent/tools/handlers/qbr-deck.ts,NEW,Expansion-flavoured deck outline
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,mine-site-readiness workflow,apps/web/src/lib/workflows/mine-site-readiness.ts,NEW,Nightly; flags expansions sold without operational readiness
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,ACP read-only connector,packages/adapters/src/acp-readonly/,OPTIONAL,Only if Tableau MCP doesn't cover capacity data
+5,05-growth-ae-site-roadmap,Growth AE Site Roadmap,2,Migration 030,packages/db/migrations/030_growth_ae_tools.sql,NEW,3 tool_registry rows + growth_ae role + site_readiness table
+6,06-leadership-synthesis,Leadership Synthesis,5,leadership-lens surface,apps/web/src/lib/agent/agents/leadership-lens.ts,reuse,Existing surface; no new preset
+6,06-leadership-synthesis,Leadership Synthesis,5,self-improve workflow,apps/web/src/lib/workflows/self-improve.ts,reuse,Provides cluster summaries + leaky bucket patterns
+6,06-leadership-synthesis,Leadership Synthesis,5,reflect-memories workflow,apps/web/src/lib/workflows/reflect-memories.ts,reuse,Provides reflective memories table
+6,06-leadership-synthesis,Leadership Synthesis,5,exemplar-miner workflow,apps/web/src/lib/workflows/exemplar-miner.ts,reuse,Provides mined exemplars for SOP diffs
+6,06-leadership-synthesis,Leadership Synthesis,5,mine-rep-playbook workflow,apps/web/src/lib/workflows/mine-rep-playbook.ts,reuse,Per-rep playbook patterns
+6,06-leadership-synthesis,Leadership Synthesis,5,calibration ledger,calibration_ledger table,reuse,Source for proposed SOP diffs
+6,06-leadership-synthesis,Leadership Synthesis,5,surface_org_patterns tool,apps/web/src/lib/agent/tools/handlers/org-patterns.ts,NEW,Queries reflective_memories + cluster summaries
+6,06-leadership-synthesis,Leadership Synthesis,5,draft_decision_memo tool,apps/web/src/lib/agent/tools/handlers/decision-memo.ts,NEW,Situation / options / recommendation / risks / decision needed
+6,06-leadership-synthesis,Leadership Synthesis,5,propose_sop_diff tool,apps/web/src/lib/agent/tools/handlers/sop-diff.ts,NEW,Consumes mined exemplars; proposes SOP/playbook update
+6,06-leadership-synthesis,Leadership Synthesis,5,Migration 031,packages/db/migrations/031_leadership_tools.sql,NEW,3 tool_registry rows

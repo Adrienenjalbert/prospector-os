@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Operating System for Revenue — Phase Roadmap</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --accent: #6366f1;
+    --accent2: #818cf8;
+    --green: #22c55e;
+    --yellow: #eab308;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --orange: #f97316;
+    --purple: #a855f7;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --dim: #64748b;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height:100vh; }
+  .header { padding: 32px 40px 24px; border-bottom: 1px solid var(--border); }
+  .header h1 { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .header p { color: var(--muted); font-size: 14px; }
+  .controls { display: flex; gap: 10px; padding: 16px 40px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .controls button { padding: 7px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; transition: all .2s; }
+  .controls button:hover, .controls button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .main { padding: 24px 40px; }
+
+  /* Summary cards */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .summary-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .summary-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+  .summary-card .value { font-size: 28px; font-weight: 700; }
+  .summary-card .sub { font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+  /* Timeline */
+  .timeline-container { margin-bottom: 32px; }
+  .timeline-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .timeline-header h2 { font-size: 18px; font-weight: 600; }
+  .phase-label { font-size: 11px; padding: 4px 10px; border-radius: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .phase-1 { background: rgba(99,102,241,.15); color: var(--accent2); }
+  .phase-2 { background: rgba(34,197,94,.15); color: var(--green); }
+  .phase-3 { background: rgba(249,115,22,.15); color: var(--orange); }
+  .phase-4 { background: rgba(168,85,247,.15); color: var(--purple); }
+
+  /* Gantt chart */
+  .gantt { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
+  .gantt-table { width: 100%; min-width: 900px; border-collapse: collapse; }
+  .gantt-table th { text-align: left; padding: 12px 16px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); }
+  .gantt-table td { padding: 10px 16px; font-size: 13px; border-bottom: 1px solid rgba(42,45,58,.5); vertical-align: middle; }
+  .gantt-table tr:last-child td { border-bottom: none; }
+  .gantt-table tr:hover { background: rgba(99,102,241,.04); }
+  .init-badge { display: inline-block; width: 28px; height: 28px; border-radius: 8px; text-align: center; line-height: 28px; font-weight: 700; font-size: 13px; margin-right: 8px; flex-shrink: 0; }
+  .init-6 { background: rgba(99,102,241,.2); color: var(--accent2); }
+  .init-1 { background: rgba(34,197,94,.2); color: var(--green); }
+  .init-3 { background: rgba(249,115,22,.2); color: var(--orange); }
+  .init-4 { background: rgba(234,179,8,.2); color: var(--yellow); }
+  .init-5 { background: rgba(168,85,247,.2); color: var(--purple); }
+  .init-2 { background: rgba(100,116,139,.2); color: var(--dim); }
+  .name-cell { display: flex; align-items: center; }
+  .owner-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(148,163,184,.1); color: var(--muted); }
+  .risk-low { color: var(--green); }
+  .risk-med { color: var(--yellow); }
+  .risk-high { color: var(--red); }
+  .bar-cell { position: relative; min-width: 300px; }
+  .bar-track { height: 8px; background: rgba(255,255,255,.04); border-radius: 4px; position: relative; }
+  .bar-fill { position: absolute; height: 100%; border-radius: 4px; top: 0; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .dot-ready { background: var(--green); }
+  .dot-partial { background: var(--yellow); }
+  .dot-blocked { background: var(--red); }
+  .dot-defer { background: var(--dim); }
+
+  /* Dependency graph */
+  .dep-section { margin-top: 32px; }
+  .dep-section h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+  .dep-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .dep-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .dep-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .dep-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; color: var(--muted); }
+  .dep-item .check { color: var(--green); }
+  .dep-item .block { color: var(--red); }
+  .dep-item .wait { color: var(--yellow); }
+
+  /* Connector status */
+  .conn-section { margin-top: 32px; }
+  .conn-section h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+  .conn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+  .conn-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; }
+  .conn-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .conn-low::before { background: var(--green); }
+  .conn-med::before { background: var(--yellow); }
+  .conn-high::before { background: var(--red); }
+  .conn-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .conn-meta { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .conn-meta strong { color: var(--text); font-weight: 500; }
+
+  /* Team RACI */
+  .raci-section { margin-top: 32px; }
+  .raci-section h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+  .raci-table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .raci-table th { padding: 12px 14px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); text-align: center; background: var(--card); }
+  .raci-table th:first-child { text-align: left; }
+  .raci-table td { padding: 10px 14px; font-size: 13px; text-align: center; border-bottom: 1px solid rgba(42,45,58,.5); }
+  .raci-table td:first-child { text-align: left; font-weight: 500; }
+  .raci-r { color: var(--accent2); font-weight: 700; }
+  .raci-a { color: var(--green); font-weight: 700; }
+  .raci-c { color: var(--yellow); }
+  .raci-i { color: var(--dim); }
+
+  .hidden { display: none; }
+
+  /* Tooltip */
+  .tooltip { position: relative; cursor: help; }
+  .tooltip:hover::after { content: attr(data-tip); position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); background: #1e293b; color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 12px; white-space: nowrap; z-index: 10; border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>AI Operating System for Revenue</h1>
+  <p>Interactive Phase Roadmap · Six initiatives, one foundation · Updated April 2026</p>
+</div>
+
+<div class="controls">
+  <button class="active" onclick="filterPhase('all')">All Phases</button>
+  <button onclick="filterPhase(1)">Phase 1 · Foundation</button>
+  <button onclick="filterPhase(2)">Phase 2 · Quick Wins</button>
+  <button onclick="filterPhase(3)">Phase 3 · Scale</button>
+  <button onclick="filterPhase(4)">Phase 4 · Full OS</button>
+  <span style="border-left:1px solid var(--border);margin:0 6px"></span>
+  <button onclick="showView('timeline')" class="active" id="btn-timeline">Timeline</button>
+  <button onclick="showView('deps')" id="btn-deps">Dependencies</button>
+  <button onclick="showView('connectors')" id="btn-connectors">Connectors</button>
+  <button onclick="showView('raci')" id="btn-raci">Team RACI</button>
+</div>
+
+<div class="main">
+
+  <!-- Summary Cards -->
+  <div class="summary">
+    <div class="summary-card">
+      <div class="label">Total Initiatives</div>
+      <div class="value">6</div>
+      <div class="sub">One OS, six surfaces</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Parallel Tracks</div>
+      <div class="value">2</div>
+      <div class="sub">Foundation + Quick Win</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Total Duration</div>
+      <div class="value">20 wk</div>
+      <div class="sub">Phased rollout</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Teams Involved</div>
+      <div class="value">5</div>
+      <div class="sub">AI · Data · RevOps · DS · Platform</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Data Connectors</div>
+      <div class="value">5</div>
+      <div class="sub">2 LOW · 2 MED · 1 HIGH</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Can Start Now</div>
+      <div class="value" style="color:var(--green)">2</div>
+      <div class="sub">Init 6 (HubSpot) + Init 1</div>
+    </div>
+  </div>
+
+  <!-- TIMELINE VIEW -->
+  <div id="view-timeline">
+    <div class="timeline-container">
+      <div class="timeline-header">
+        <h2>Initiative Timeline</h2>
+      </div>
+      <div class="gantt">
+        <table class="gantt-table">
+          <thead>
+            <tr>
+              <th style="width:30%">Initiative</th>
+              <th style="width:10%">Phase</th>
+              <th style="width:10%">Status</th>
+              <th style="width:12%">Owner</th>
+              <th style="width:38%">Weeks 1–20</th>
+            </tr>
+          </thead>
+          <tbody id="gantt-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Phase breakdown cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:24px" id="phase-cards">
+      <div class="dep-card" data-phase="1">
+        <h3><span class="phase-label phase-1">Phase 1</span> Foundation · Wk 1–6</h3>
+        <div class="dep-item"><span class="check">✓</span> Agent skill design + prompt templates</div>
+        <div class="dep-item"><span class="check">✓</span> Slack delivery surface (Block Kit)</div>
+        <div class="dep-item"><span class="check">✓</span> Manual simulation with real accounts</div>
+        <div class="dep-item"><span class="wait">◐</span> HubSpot/Salesforce MCP connector</div>
+        <div class="dep-item"><span class="wait">◐</span> Concierge v1 (HubSpot-only) in Slack</div>
+        <div class="dep-item"><span class="wait">◐</span> Platform: Slack app + API keys</div>
+      </div>
+      <div class="dep-card" data-phase="2">
+        <h3><span class="phase-label phase-2">Phase 2</span> Quick Wins · Wk 3–10</h3>
+        <div class="dep-item"><span class="check">✓</span> Init 1: Inbound trigger on new opp</div>
+        <div class="dep-item"><span class="check">✓</span> Account plan agent v1 live</div>
+        <div class="dep-item"><span class="wait">◐</span> Tableau MCP (Bill)</div>
+        <div class="dep-item"><span class="wait">◐</span> Transcript ingestion (Tom)</div>
+        <div class="dep-item"><span class="wait">◐</span> AD co-build and feedback loop</div>
+      </div>
+      <div class="dep-card" data-phase="3">
+        <h3><span class="phase-label phase-3">Phase 3</span> Scale · Wk 9–16</h3>
+        <div class="dep-item"><span class="wait">◐</span> Pre-call briefs in Slack</div>
+        <div class="dep-item"><span class="wait">◐</span> CSM theme digest (Init 4 lite)</div>
+        <div class="dep-item"><span class="wait">◐</span> Leadership objection digest</div>
+        <div class="dep-item"><span class="block">✕</span> Snowflake connector (no owner)</div>
+        <div class="dep-item"><span class="wait">◐</span> Concierge + Tableau + Snowflake</div>
+      </div>
+      <div class="dep-card" data-phase="4">
+        <h3><span class="phase-label phase-4">Phase 4</span> Full OS · Wk 17–20+</h3>
+        <div class="dep-item"><span class="block">✕</span> AD pressure-test chat (Init 3)</div>
+        <div class="dep-item"><span class="block">✕</span> Growth AE site expansion (Init 2)</div>
+        <div class="dep-item"><span class="block">✕</span> Churn prediction model</div>
+        <div class="dep-item"><span class="block">✕</span> Forecast confidence scoring</div>
+        <div class="dep-item"><span class="wait">◐</span> Full operating system live</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEPENDENCIES VIEW -->
+  <div id="view-deps" class="hidden">
+    <div class="dep-section">
+      <h2>Cross-Initiative Dependencies</h2>
+      <div class="dep-grid">
+        <div class="dep-card">
+          <h3><span class="init-badge init-6">6</span> Data Concierge (Foundation)</h3>
+          <div class="dep-item"><span class="check">✓</span> HubSpot/Salesforce — LOW risk</div>
+          <div class="dep-item"><span class="wait">◐</span> Tableau — MEDIUM (Bill)</div>
+          <div class="dep-item"><span class="block">✕</span> Snowflake — HIGH (no owner)</div>
+          <div class="dep-item"><span class="wait">◐</span> Transcripts — MEDIUM (Tom)</div>
+          <div class="dep-item"><span class="block">✕</span> Service Tickets — HIGH (unknown)</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px">Unlocks: Init 1, 3, 4, 5. Every other initiative reuses its connectors.</p>
+        </div>
+        <div class="dep-card">
+          <h3><span class="init-badge init-1">1</span> New Business Execution</h3>
+          <div class="dep-item"><span class="check">✓</span> HubSpot/Salesforce data</div>
+          <div class="dep-item"><span class="wait">◐</span> Transcripts (post-call analysis)</div>
+          <div class="dep-item" style="color:var(--text)">No Tableau/Snowflake dependency</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px">Can start immediately. Pre-call briefs use existing Salesforce data.</p>
+        </div>
+        <div class="dep-card">
+          <h3><span class="init-badge init-3">3</span> AD Strategic Narrative</h3>
+          <div class="dep-item"><span class="check">✓</span> HubSpot/Salesforce (account context)</div>
+          <div class="dep-item"><span class="wait">◐</span> Tableau (performance proof)</div>
+          <div class="dep-item"><span class="wait">◐</span> Transcripts (critic input)</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px">Company priority. Ships after Init 1, 4, 5 prove the pipeline.</p>
+        </div>
+        <div class="dep-card">
+          <h3><span class="init-badge init-4">4</span> CSM Retention Guardian</h3>
+          <div class="dep-item"><span class="check">✓</span> HubSpot/Salesforce</div>
+          <div class="dep-item"><span class="block">✕</span> Transcripts — BLOCKED</div>
+          <div class="dep-item"><span class="block">✕</span> Service tickets — unknown system</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px">Theme summarisation is high-value but blocked on transcripts. Churn scoring needs historical data + ML model.</p>
+        </div>
+        <div class="dep-card">
+          <h3><span class="init-badge init-5">5</span> Leadership Synthesis</h3>
+          <div class="dep-item"><span class="check">✓</span> HubSpot/Salesforce</div>
+          <div class="dep-item"><span class="wait">◐</span> Tableau (pattern data)</div>
+          <div class="dep-item"><span class="block">✕</span> Transcripts — BLOCKED</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px">Objection digest is easiest win once transcripts flow. Forecast confidence scores must NOT be built — too risky.</p>
+        </div>
+        <div class="dep-card">
+          <h3><span class="init-badge init-2">2</span> Growth AE (Deferred)</h3>
+          <div class="dep-item"><span class="block">✕</span> Snowflake (expansion economics)</div>
+          <div class="dep-item"><span class="block">✕</span> Ops data (agency %, headcount)</div>
+          <div class="dep-item"><span class="block">✕</span> No Ops counterpart named</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px">90% blocked on Ops data. Defer to FY26/27.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONNECTORS VIEW -->
+  <div id="view-connectors" class="hidden">
+    <div class="conn-section">
+      <h2>Data Connector Status</h2>
+      <div class="conn-grid">
+        <div class="conn-card conn-low">
+          <h3>HubSpot / Salesforce</h3>
+          <div class="conn-meta">
+            <strong>Risk:</strong> <span class="risk-low">LOW</span><br>
+            <strong>Timeline:</strong> Week 2–5<br>
+            <strong>Owner:</strong> Adrien / Olga<br>
+            <strong>Status:</strong> MCP exists. API documented. Already used in B2B programme.<br>
+            <strong>Unlocks:</strong> Init 6 (CRM queries), Init 1 (pre-call briefs), Init 3 (account context)
+          </div>
+        </div>
+        <div class="conn-card conn-med">
+          <h3>Tableau</h3>
+          <div class="conn-meta">
+            <strong>Risk:</strong> <span class="risk-med">MEDIUM</span><br>
+            <strong>Timeline:</strong> Week 3–7<br>
+            <strong>Owner:</strong> Bill<br>
+            <strong>Status:</strong> Bill is named owner. MCP guidance published. Version compatibility unknown.<br>
+            <strong>Unlocks:</strong> Init 6 (fulfillment data), Init 3 (performance proof), Init 5 (pattern data)
+          </div>
+        </div>
+        <div class="conn-card conn-med">
+          <h3>Transcripts</h3>
+          <div class="conn-meta">
+            <strong>Risk:</strong> <span class="risk-med">MEDIUM</span><br>
+            <strong>Timeline:</strong> Week 5–9<br>
+            <strong>Owner:</strong> Tom (to decide vendor)<br>
+            <strong>Status:</strong> Transcripts generated today. Vendor not chosen (Gong vs Fireflies). DPIA may be needed.<br>
+            <strong>Unlocks:</strong> Init 1 (post-call), Init 4 (theme synthesis), Init 5 (objection digest)
+          </div>
+        </div>
+        <div class="conn-card conn-high">
+          <h3>Snowflake</h3>
+          <div class="conn-meta">
+            <strong>Risk:</strong> <span class="risk-high">HIGH</span><br>
+            <strong>Timeline:</strong> Week 7–13<br>
+            <strong>Owner:</strong> TBC — <strong style="color:var(--red)">BLOCKER</strong><br>
+            <strong>Status:</strong> Data exists. No named owner. Schema undocumented. Security review required.<br>
+            <strong>Unlocks:</strong> Init 6 (deep analytics), Init 2 (expansion economics), Init 4 (service data)
+          </div>
+        </div>
+        <div class="conn-card conn-high">
+          <h3>Service Tickets</h3>
+          <div class="conn-meta">
+            <strong>Risk:</strong> <span class="risk-high">HIGH</span><br>
+            <strong>Timeline:</strong> Week 8–13<br>
+            <strong>Owner:</strong> TBC — <strong style="color:var(--red)">BLOCKER</strong><br>
+            <strong>Status:</strong> System unknown (Zendesk? Jira? HubSpot?). No data contract. No owner.<br>
+            <strong>Unlocks:</strong> Init 4 (service themes), Init 6 (proactive alerts)
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RACI VIEW -->
+  <div id="view-raci" class="hidden">
+    <div class="raci-section">
+      <h2>Team RACI Matrix</h2>
+      <div style="overflow-x:auto">
+        <table class="raci-table">
+          <thead>
+            <tr>
+              <th>Activity</th>
+              <th>AI Team<br><span style="font-weight:400;text-transform:none">Adrien + Olga</span></th>
+              <th>Data / Eng<br><span style="font-weight:400;text-transform:none">Bill + TBC</span></th>
+              <th>RevOps<br><span style="font-weight:400;text-transform:none">Strategy</span></th>
+              <th>Data Science<br><span style="font-weight:400;text-transform:none">Adrien M.</span></th>
+              <th>Platform/IT</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Agent skill design & prompts</td><td class="raci-r">R/A</td><td class="raci-i">I</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-i">I</td></tr>
+            <tr><td>Slack delivery surface</td><td class="raci-r">R/A</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-c">C</td></tr>
+            <tr><td>MCP connector builds</td><td class="raci-c">C</td><td class="raci-r">R/A</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-c">C</td></tr>
+            <tr><td>HubSpot/Salesforce integration</td><td class="raci-r">R</td><td class="raci-c">C</td><td class="raci-a">A</td><td class="raci-i">I</td><td class="raci-c">C</td></tr>
+            <tr><td>Tableau MCP server</td><td class="raci-c">C</td><td class="raci-r">R/A</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-c">C</td></tr>
+            <tr><td>Transcript ingestion pipeline</td><td class="raci-c">C</td><td class="raci-r">R/A</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-c">C</td></tr>
+            <tr><td>Snowflake schema & access</td><td class="raci-c">C</td><td class="raci-r">R/A</td><td class="raci-c">C</td><td class="raci-c">C</td><td class="raci-c">C</td></tr>
+            <tr><td>Metric definitions & KPIs</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-r">R/A</td><td class="raci-c">C</td><td class="raci-i">I</td></tr>
+            <tr><td>Output accuracy validation</td><td class="raci-r">R</td><td class="raci-i">I</td><td class="raci-a">A</td><td class="raci-c">C</td><td class="raci-i">I</td></tr>
+            <tr><td>Churn prediction model</td><td class="raci-c">C</td><td class="raci-c">C</td><td class="raci-c">C</td><td class="raci-r">R/A</td><td class="raci-i">I</td></tr>
+            <tr><td>Forecast confidence scoring</td><td class="raci-c">C</td><td class="raci-c">C</td><td class="raci-a">A</td><td class="raci-r">R</td><td class="raci-i">I</td></tr>
+            <tr><td>API keys & credentials</td><td class="raci-c">C</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-r">R/A</td></tr>
+            <tr><td>Slack app provisioning</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-r">R/A</td></tr>
+            <tr><td>Tool licensing & security</td><td class="raci-i">I</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-i">I</td><td class="raci-r">R/A</td></tr>
+            <tr><td>Pilot user feedback loops</td><td class="raci-r">R/A</td><td class="raci-i">I</td><td class="raci-c">C</td><td class="raci-i">I</td><td class="raci-i">I</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:12px;color:var(--dim);margin-top:12px"><strong>R</strong> = Responsible · <strong>A</strong> = Accountable · <strong>C</strong> = Consulted · <strong>I</strong> = Informed</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const initiatives = [
+  { id:6, name:'Revenue Data Concierge', phase:1, status:'partial', owner:'Adrien/Olga', start:1, end:14, color:'var(--accent2)', risk:'low', desc:'Foundation — HubSpot-only v1 can start now' },
+  { id:1, name:'New Business Execution', phase:2, status:'ready', owner:'Adrien/Olga', start:1, end:10, color:'var(--green)', risk:'low', desc:'Quick win — inbound trigger on Salesforce opp' },
+  { id:3, name:'AD Strategic Narrative', phase:3, status:'partial', owner:'AI Team + ADs', start:9, end:20, color:'var(--orange)', risk:'med', desc:'Company priority — ships after pipeline proven' },
+  { id:4, name:'CSM Retention Guardian', phase:3, status:'blocked', owner:'Sarah + AI', start:9, end:16, color:'var(--yellow)', risk:'med', desc:'Blocked on transcripts and service tickets' },
+  { id:5, name:'Leadership Synthesis', phase:3, status:'blocked', owner:'James + AI', start:9, end:16, color:'var(--purple)', risk:'med', desc:'Blocked on transcripts — objection digest is easiest win' },
+  { id:2, name:'Growth AE Site Expansion', phase:4, status:'defer', owner:'TBC', start:17, end:20, color:'var(--dim)', risk:'high', desc:'90% blocked on Ops data — defer to FY26/27' },
+];
+
+const totalWeeks = 20;
+
+function renderGantt(filter) {
+  const body = document.getElementById('gantt-body');
+  body.innerHTML = '';
+  const filtered = filter === 'all' ? initiatives : initiatives.filter(i => i.phase === filter);
+  filtered.forEach(init => {
+    const tr = document.createElement('tr');
+    tr.dataset.phase = init.phase;
+    const statusDot = init.status === 'ready' ? 'dot-ready' : init.status === 'partial' ? 'dot-partial' : init.status === 'blocked' ? 'dot-blocked' : 'dot-defer';
+    const statusLabel = init.status === 'ready' ? 'Ready' : init.status === 'partial' ? 'Partial' : init.status === 'blocked' ? 'Blocked' : 'Deferred';
+    const phaseClass = 'phase-' + init.phase;
+    const left = ((init.start - 1) / totalWeeks * 100).toFixed(1);
+    const width = ((init.end - init.start + 1) / totalWeeks * 100).toFixed(1);
+    tr.innerHTML = `
+      <td><div class="name-cell"><span class="init-badge init-${init.id}">${init.id}</span><div><div style="font-weight:600">${init.name}</div><div style="font-size:11px;color:var(--muted)">${init.desc}</div></div></div></td>
+      <td><span class="phase-label ${phaseClass}">P${init.phase}</span></td>
+      <td><span class="status-dot ${statusDot}"></span>${statusLabel}</td>
+      <td><span class="owner-tag">${init.owner}</span></td>
+      <td class="bar-cell">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-bottom:4px">
+          ${Array.from({length:20}, (_,i) => `<span>${i%4===0?(i+1):''}</span>`).join('')}
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" style="left:${left}%;width:${width}%;background:${init.color};opacity:.7"></div>
+        </div>
+        <div style="font-size:10px;color:var(--dim);margin-top:2px">Wk ${init.start}–${init.end}</div>
+      </td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function filterPhase(phase) {
+  document.querySelectorAll('.controls button').forEach(b => {
+    if(b.textContent.includes('Phase') || b.textContent.includes('All')) b.classList.remove('active');
+  });
+  event.target.classList.add('active');
+  renderGantt(phase);
+  // Also filter phase cards
+  document.querySelectorAll('#phase-cards .dep-card').forEach(card => {
+    if(phase === 'all') card.style.display = '';
+    else card.style.display = card.dataset.phase == phase ? '' : 'none';
+  });
+}
+
+function showView(view) {
+  ['timeline','deps','connectors','raci'].forEach(v => {
+    document.getElementById('view-'+v).classList.toggle('hidden', v !== view);
+    document.getElementById('btn-'+v)?.classList.toggle('active', v === view);
+  });
+}
+
+// Initial render
+renderGantt('all');
+</script>
+</body>
+</html>

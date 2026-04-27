@@ -116,7 +116,42 @@ export async function runAttribution(
           byUrn.set(e.subject_urn, list)
         }
 
+        // Pre-load holdout cohort assignments for every user that
+        // appears in either side of the join. One round-trip rather
+        // than a per-outcome lookup. Result is a Set of user_ids in
+        // the control cohort — anyone missing is treatment by default.
+        //
+        // This is the WRITE-TIME enforcement of the holdout rule the
+        // /admin/roi page used to *claim* but never actually executed
+        // (see strategic review §6.2). Treatment-vs-control lift is
+        // now defensible — the control rows are still inserted (so we
+        // can compute the counterfactual) but flagged so the ROI sum
+        // can exclude them cleanly.
+        const userIds = Array.from(
+          new Set([
+            ...outcomes.map((o) => o.user_id).filter((id): id is string => !!id),
+            ...(agentEvents ?? [])
+              .map((e) => e.user_id)
+              .filter((id): id is string => !!id),
+          ]),
+        )
+
+        const controlUsers = new Set<string>()
+        if (userIds.length > 0) {
+          const { data: assignments } = await ctx.supabase
+            .from('holdout_assignments')
+            .select('user_id, cohort')
+            .eq('tenant_id', ctx.tenantId)
+            .in('user_id', userIds)
+          for (const a of assignments ?? []) {
+            if (a.cohort === 'control' && a.user_id) {
+              controlUsers.add(a.user_id as string)
+            }
+          }
+        }
+
         let inserted = 0
+        let controlFlagged = 0
         for (const outcome of outcomes) {
           const candidates = (byUrn.get(outcome.subject_urn) ?? []).filter(
             (e) => e.user_id && e.user_id === outcome.user_id,
@@ -126,6 +161,12 @@ export async function runAttribution(
           const best = chooseBestAttribution(candidates, outcomeTime, rules)
           if (!best) continue
 
+          // The cohort is bound to the user, so either the outcome's
+          // user_id or the chosen agent event's user_id resolves it
+          // (they're equal by construction — see filter above).
+          const isControl = !!outcome.user_id && controlUsers.has(outcome.user_id)
+          if (isControl) controlFlagged += 1
+
           const { error } = await ctx.supabase.from('attributions').insert({
             tenant_id: ctx.tenantId,
             agent_event_id: best.agent_event_id,
@@ -133,11 +174,12 @@ export async function runAttribution(
             attribution_rule: best.rule,
             confidence: best.confidence,
             lag_seconds: best.lag_seconds,
+            is_control_cohort: isControl,
           })
           if (!error) inserted += 1
         }
 
-        return { matched: inserted }
+        return { matched: inserted, control_flagged: controlFlagged }
       },
     },
   ]

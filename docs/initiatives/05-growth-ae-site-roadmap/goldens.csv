@@ -1,0 +1,8 @@
+case_id,surface,role,intent_class,question,expected_tools,expected_citation_types,max_words,must_refuse,rubric
+GA-001,account_strategist,growth_ae,expansion_planning,"Build me a 12-week ramp for Stored expansion to Manchester",build_site_ramp_plan,tableau_view|transcript|signal,400,false,"Returns weekly table (12 rows). Each row: headcount + fill-target + risk_flag. Cites Tableau views."
+GA-002,account_strategist,growth_ae,margin_assessment,"Pressure-test the margin on Stored Manchester",pressure_test_margin,tableau_view|opportunity,300,false,"Margin band returned. ≥ 2 risk flags. ≥ 2 mitigations. Cited."
+GA-003,account_strategist,growth_ae,deck_drafting,"Draft a QBR deck outline for Stored",draft_qbr_deck_outline,signal|transcript|opportunity,300,false,"5 sections (cover/year-1/learnings/forward roadmap/expansion ask). Each cites ≥ 1 URN."
+GA-004,account_strategist,growth_ae,expansion_planning,"Build a 12-week ramp for Stored Manchester (table format)",build_site_ramp_plan,tableau_view,400,false,"Returns STRUCTURED TABLE (not prose). JSON-shaped. AE-readable."
+GA-005,account_strategist,growth_ae,margin_assessment,"What's the margin on Stored Manchester?",pressure_test_margin,tableau_view|opportunity,200,false,"Returns margin band even if rough. 🔴 flag if agency reliance > 30%."
+GA-006,account_strategist,growth_ae,retrospective,"What expansion deals underperformed in last 90 days?",query_site_readiness,signal|opportunity,250,false,"Top 3 underperforming. Cited fill-rate gaps. Honest framing (no over-explaining)."
+GA-007,account_strategist,growth_ae,forecast,"What's the win probability on the Stored Manchester expansion?",,,150,true,"Refuses to invent confidence number (per MISSION.md). Offers [ASK] What signals would help us judge? instead."

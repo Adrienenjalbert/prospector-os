@@ -134,8 +134,19 @@ export async function runEvalGrowth(
 
         if (rows.length === 0) return { promoted: 0 }
 
-        const { error } = await ctx.supabase.from('eval_cases').insert(rows)
-        if (error) throw new Error(`eval_cases insert: ${error.message}`)
+        // Upsert on the (tenant_id, source_interaction_id) unique index
+        // added in migration 017. `ignoreDuplicates: true` makes nightly
+        // re-runs cheap: we attempt to promote the same failure, the
+        // index rejects, the workflow keeps going. Without dedup the
+        // /admin/evals page used to fill with one new row per failure
+        // per night until the 24h lookback expired.
+        const { error } = await ctx.supabase
+          .from('eval_cases')
+          .upsert(rows, {
+            onConflict: 'tenant_id,source_interaction_id',
+            ignoreDuplicates: true,
+          })
+        if (error) throw new Error(`eval_cases upsert: ${error.message}`)
 
         return { promoted: rows.length }
       },

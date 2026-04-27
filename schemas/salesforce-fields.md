@@ -101,7 +101,10 @@ Create a Salesforce workflow rule or flow:
 
 ### External ID
 
-Set `Name` as an External ID to allow upsert operations from Make.com (avoids duplicates on weekly refresh).
+Set `Name` as an External ID to allow upsert operations from any
+ETL/sync source (avoids duplicates on weekly refresh). The v3 OS
+upserts via the HubSpot/Salesforce adapters in
+[`packages/adapters/src/crm/`](../packages/adapters/src/crm/).
 
 ---
 

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { emitAgentEvents, parseUrn, type AgentEventInput } from '@prospector/core'
+import { emitAgentEvents, parseUrn, type AgentEventInput, type UrnObjectType } from '@prospector/core'
 import type {
   ActiveObjectType,
   AgentRole,
@@ -15,6 +15,7 @@ import type {
 import { SLICES } from './slices'
 import { selectSlices, buildSelectorInput, stageBucketFromString } from './selector'
 import { estimateTokens } from './slices/_helpers'
+import { loadRetrievalCtr, ctrAdjustment } from './retrieval-ctr'
 import {
   loadSlicePriors,
   priorKey,
@@ -62,6 +63,11 @@ export interface PackContextOptions {
 
   // Intent (already computed by the route)
   intentClass: IntentClass
+  /**
+   * Optional secondary intent classes for compound queries. See
+   * `ContextSelectorInput.secondaryIntents` for semantics.
+   */
+  secondaryIntents?: IntentClass[]
 
   // Optional hints for the selector
   dealStage?: string | null
@@ -77,6 +83,13 @@ export interface PackContextOptions {
   // Token / latency budgets
   tokenBudget?: number
   latencyBudgetMs?: number
+
+  /**
+   * Most-recent user message, when known. Threaded into SliceLoadCtx
+   * so RAG slices (C5.2) can embed the query for similarity
+   * retrieval. Optional.
+   */
+  userMessageText?: string | null
 
   supabase: SupabaseClient
 }
@@ -128,58 +141,128 @@ async function withSliceTimeout<T>(
  * URN, the join to `opportunities` returns null when the deal belongs to
  * a different tenant, so the slice load gracefully degrades.
  */
-async function resolveActive(opts: PackContextOptions): Promise<{
+interface ResolvedActive {
   activeObject: ActiveObjectType
   activeCompanyId: string | null
   activeDealId: string | null
-}> {
+  /** Deal value in native currency units, null when no deal or not set. */
+  dealValue: number | null
+  /** Days until expected_close_date; negative = overdue; null = no deal/date. */
+  daysToClose: number | null
+}
+
+async function resolveActive(opts: PackContextOptions): Promise<ResolvedActive> {
   const parsed = opts.activeUrn ? parseUrn(opts.activeUrn) : null
-  if (parsed) {
-    if (parsed.type === 'company') {
-      return { activeObject: 'company', activeCompanyId: parsed.id, activeDealId: null }
-    }
-    if (parsed.type === 'deal' || parsed.type === 'opportunity') {
-      // Follow the deal -> company FK so transcript / contact / champion
-      // slices have something to filter on. Only one extra single-row
-      // query; failure (deal not found, deleted, wrong tenant) returns
-      // null and the slice's own no-context warning kicks in.
-      const { data } = await opts.supabase
-        .from('opportunities')
-        .select('company_id')
-        .eq('id', parsed.id)
-        .eq('tenant_id', opts.tenantId)
-        .maybeSingle()
-      return {
-        activeObject: 'deal',
-        activeCompanyId: (data?.company_id as string | null) ?? null,
-        activeDealId: parsed.id,
-      }
-    }
-    if (parsed.type === 'contact') {
-      return { activeObject: 'contact', activeCompanyId: null, activeDealId: null }
-    }
-    if (parsed.type === 'signal') {
-      return { activeObject: 'signal', activeCompanyId: null, activeDealId: null }
-    }
-  }
-  if (opts.pageContext?.dealId) {
-    // Same FK follow-through for the page-context-only path (no URN).
+
+  /** Follow deal FK, also fetching value + close date for budget + urgency. */
+  async function resolveDeal(dealId: string): Promise<ResolvedActive> {
     const { data } = await opts.supabase
       .from('opportunities')
-      .select('company_id')
-      .eq('id', opts.pageContext.dealId)
+      .select('company_id, amount, expected_close_date')
+      .eq('id', dealId)
       .eq('tenant_id', opts.tenantId)
       .maybeSingle()
+    const daysToClose = data?.expected_close_date
+      ? Math.round(
+          (new Date(data.expected_close_date as string).getTime() - Date.now()) /
+            (1000 * 60 * 60 * 24),
+        )
+      : null
     return {
       activeObject: 'deal',
       activeCompanyId: (data?.company_id as string | null) ?? null,
-      activeDealId: opts.pageContext.dealId,
+      activeDealId: dealId,
+      dealValue: typeof data?.amount === 'number' ? data.amount : null,
+      daysToClose,
     }
   }
-  if (opts.pageContext?.accountId) {
-    return { activeObject: 'company', activeCompanyId: opts.pageContext.accountId, activeDealId: null }
+
+  if (parsed) {
+    if (parsed.type === 'company') {
+      return { activeObject: 'company', activeCompanyId: parsed.id, activeDealId: null, dealValue: null, daysToClose: null }
+    }
+    if (parsed.type === 'deal' || parsed.type === 'opportunity') {
+      return resolveDeal(parsed.id)
+    }
+    if (parsed.type === 'contact') {
+      return { activeObject: 'contact', activeCompanyId: null, activeDealId: null, dealValue: null, daysToClose: null }
+    }
+    if (parsed.type === 'signal') {
+      return { activeObject: 'signal', activeCompanyId: null, activeDealId: null, dealValue: null, daysToClose: null }
+    }
   }
-  return { activeObject: 'none', activeCompanyId: null, activeDealId: null }
+  if (opts.pageContext?.dealId) {
+    return resolveDeal(opts.pageContext.dealId)
+  }
+  if (opts.pageContext?.accountId) {
+    return { activeObject: 'company', activeCompanyId: opts.pageContext.accountId, activeDealId: null, dealValue: null, daysToClose: null }
+  }
+  return { activeObject: 'none', activeCompanyId: null, activeDealId: null, dealValue: null, daysToClose: null }
+}
+
+/**
+ * Compute an adaptive token budget based on deal value.
+ *
+ * The 2000-token default is designed for a generic rep dashboard — it
+ * fits within the ~480-token (brief comm_style) prompt slot limit.
+ * But a €1 M enterprise deal warrants much richer context: transcript
+ * bodies, competitive intel, champion alumni, relationship decay, etc.
+ * Budgeting proportionally means the agent gets enough data to form
+ * an opinion without wasting context window on noise for SMB queries.
+ *
+ * Brackets are conservative — the packer enforces a hard post-format
+ * trim so going over the selector's declared budgets just drops the
+ * lowest-priority slices.
+ */
+export function budgetFromDealValue(
+  value: number | null,
+  explicitOverride?: number | null,
+): number {
+  if (explicitOverride != null) return explicitOverride
+  if (!value || value <= 0) return 3000        // no deal / unknown → balanced default
+  if (value >= 500_000) return 7000            // strategic: full pack
+  if (value >= 100_000) return 5000            // large / enterprise
+  if (value >= 25_000) return 3500             // mid-market
+  return 2500                                  // SMB
+}
+
+/**
+ * Composite urgency score 0-10. Two additive signals:
+ *
+ *   1. Close-date proximity — the closer the deal's expected_close_date,
+ *      the higher the score. Overdue deals score max.
+ *   2. Quarter-end proximity — last three weeks of any fiscal quarter
+ *      add +1/+2/+3 to create a quarter-end crunch effect.
+ *
+ * Score > 5 activates `whenUrgent` slice triggers in the selector.
+ */
+export function computeUrgency(
+  daysToClose: number | null,
+  now: Date = new Date(),
+): number {
+  let score = 0
+
+  // Close-date pressure
+  if (daysToClose !== null) {
+    if (daysToClose <= 0) score += 5           // overdue
+    else if (daysToClose <= 7) score += 5
+    else if (daysToClose <= 14) score += 4
+    else if (daysToClose <= 30) score += 3
+    else if (daysToClose <= 60) score += 2
+    else if (daysToClose <= 90) score += 1
+  }
+
+  // Quarter-end pressure (month 2, 5, 8, 11 = March, June, Sep, Dec)
+  const month = now.getMonth()
+  if (month % 3 === 2) {
+    const lastDayOfMonth = new Date(now.getFullYear(), month + 1, 0).getDate()
+    const daysLeftInMonth = lastDayOfMonth - now.getDate()
+    if (daysLeftInMonth <= 7) score += 3
+    else if (daysLeftInMonth <= 14) score += 2
+    else if (daysLeftInMonth <= 21) score += 1
+  }
+
+  return Math.min(score, 10)
 }
 
 /**
@@ -248,34 +331,53 @@ function orderSections(
  */
 export async function packContext(opts: PackContextOptions): Promise<PackedContext> {
   const startedAt = Date.now()
-  const tokenBudget = opts.tokenBudget ?? 2000
   const latencyBudgetMs = opts.latencyBudgetMs ?? 5000
   const deadlineMs = startedAt + latencyBudgetMs
 
   const active = await resolveActive(opts)
 
-  // Load per-tenant slice priors in parallel with selector setup. Cheap
-  // (<5ms typical) and tolerated to fail — bandit adjustment falls back
-  // to 0 when the table is empty or the migration isn't applied.
-  let priorsTable: SlicePriorsTable | null = null
-  try {
-    priorsTable = await loadSlicePriors(
+  // Adaptive budget: scales with deal value so strategic deals get richer
+  // context without wasting tokens on SMB queries.
+  const tokenBudget = budgetFromDealValue(active.dealValue, opts.tokenBudget ?? null)
+
+  // Urgency: composite close-date + quarter-end score fed to slice selector.
+  const urgencyScore = computeUrgency(active.daysToClose)
+
+  // Load per-tenant slice priors AND citation-CTR table in parallel
+  // with selector setup. Both are cheap (<5ms typical) and tolerated
+  // to fail — bandit + CTR adjustments fall back to 0 when their
+  // tables are empty.
+  const [priorsTable, ctrTable] = await Promise.all([
+    loadSlicePriors(
       opts.supabase,
       opts.tenantId,
       opts.intentClass,
       opts.role,
-    )
-  } catch (err) {
-    console.warn('[packer] slice priors load failed, heuristic only:', err)
-  }
+    ).catch((err) => {
+      console.warn('[packer] slice priors load failed, heuristic only:', err)
+      return null as SlicePriorsTable | null
+    }),
+    loadRetrievalCtr(opts.supabase, opts.tenantId),
+  ])
 
-  const banditAdjustments = new Map<string, number>()
+  // Combine bandit (Thompson sampling) and CTR (citation-click) into
+  // a single per-slug adjustment passed to the selector. C5.3:
+  // citation clicks finally feed back into ranking — the
+  // `retrieval_priors` write-only-tombstone is now a real signal.
+  const sliceAdjustments = new Map<string, number>()
   if (priorsTable && priorsTable.size > 0) {
     for (const [, prior] of priorsTable) {
-      const adj = thompsonAdjustment(prior)
-      if (adj !== 0) {
-        banditAdjustments.set(prior.slice_slug, adj)
+      const banditAdj = thompsonAdjustment(prior)
+      if (banditAdj !== 0) {
+        sliceAdjustments.set(prior.slice_slug, banditAdj)
       }
+    }
+  }
+  for (const slug of Object.keys(SLICES)) {
+    const ctrAdj = ctrAdjustment(ctrTable, slug)
+    if (ctrAdj !== 0) {
+      const cur = sliceAdjustments.get(slug) ?? 0
+      sliceAdjustments.set(slug, cur + ctrAdj)
     }
   }
 
@@ -284,13 +386,20 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
     activeObject: active.activeObject,
     activeUrn: opts.activeUrn,
     intentClass: opts.intentClass,
+    secondaryIntents: opts.secondaryIntents,
     dealStage: opts.dealStage,
     isStalled: opts.isStalled,
     signalTypes: opts.signalTypes,
+    urgencyScore,
     tokenBudget,
     tenantOverrides: opts.tenantOverrides,
     banditPriors: {
-      adjustment: (slug: string) => banditAdjustments.get(slug) ?? 0,
+      // Combined Thompson-bandit + retrieval-CTR adjustment (C5.3).
+      // The selector treats both as a single nudge — caller doesn't
+      // need to know which signal contributed. The bandit's per-slice
+      // sample-count visibility on /admin/adaptation still surfaces
+      // the bandit half cleanly.
+      adjustment: (slug: string) => sliceAdjustments.get(slug) ?? 0,
     },
   })
 
@@ -311,6 +420,10 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
     crmType: opts.crmType,
     supabase: opts.supabase,
     deadlineMs,
+    // C5.2 — RAG slices use this for similarity retrieval. Optional;
+    // workflows / evals may pack without a user message and the RAG
+    // slices degrade gracefully to empty.
+    userMessageText: opts.userMessageText ?? null,
   }
 
   // Hydrate selected slices in parallel with per-slice timeouts.
@@ -351,6 +464,12 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
       provenance: r.result.provenance,
       tokens,
       row_count: r.result.rows.length,
+      // Phase 6 (1.2) — propagate injected ids so the route's onFinish
+      // can reconcile against URNs in the assistant text and so the
+      // packer's emitTelemetry below can fire memory_injected /
+      // wiki_page_injected events without each slice re-doing the work.
+      injectedMemoryIds: r.result.injectedMemoryIds,
+      injectedPageIds: r.result.injectedPageIds,
     })
     allCitations.push(...r.result.citations)
     if (r.result.warnings) {
@@ -417,7 +536,11 @@ export async function packContext(opts: PackContextOptions): Promise<PackedConte
   }
 
   // Telemetry — fire-and-forget per slice. Errors swallowed by emitAgentEvent.
-  void emitTelemetry(opts, selection.scored, packedBySlug, failed)
+  void emitTelemetry(opts, selection.scored, packedBySlug, failed, {
+    urgencyScore,
+    dealValue: active.dealValue,
+    tokenBudget,
+  })
 
   return {
     preamble: '', // packer doesn't render the preamble; preamble.ts owns it.
@@ -436,6 +559,7 @@ async function emitTelemetry(
   scored: ScoredSlice[],
   packed: Map<string, PackedSection>,
   failed: { slug: string; reason: string }[],
+  packMeta?: { urgencyScore: number; dealValue: number | null; tokenBudget: number },
 ): Promise<void> {
   // Pre-this-change this fired N sequential `emitAgentEvent` inserts
   // (one round-trip per slice per turn). 12 slices × ~30ms = ~360ms of
@@ -466,8 +590,52 @@ async function emitTelemetry(
         source: section.provenance.source,
         score: scoredBySlug.get(slug)?.score ?? null,
         score_reasons: scoredBySlug.get(slug)?.reasons ?? [],
+        urgency_score: packMeta?.urgencyScore ?? 0,
+        deal_value: packMeta?.dealValue ?? null,
+        token_budget: packMeta?.tokenBudget ?? null,
       },
     })
+
+    // Phase 6 (1.2) — emit one memory_injected per atom id this slice
+    // brought into the prompt, and one wiki_page_injected per page id.
+    // These feed the per-row Beta posterior on tenant_memories and
+    // wiki_pages (the route's onFinish updates them once per turn).
+    // Without this event the bandit has no impression count and the
+    // posterior never moves off the uniform Beta(1,1) prior.
+    for (const memoryId of section.injectedMemoryIds ?? []) {
+      events.push({
+        tenant_id: opts.tenantId,
+        interaction_id: opts.interactionId ?? null,
+        user_id: opts.userId,
+        role: opts.role,
+        event_type: 'memory_injected',
+        // The contract from validate-events.ts requires { memory_id, kind }.
+        // We don't know the kind here without re-querying — pass the
+        // slice slug as a proxy; the consolidate workflow can still
+        // join back to tenant_memories.kind by id.
+        payload: {
+          memory_id: memoryId,
+          kind: 'unknown', // resolved post-hoc via tenant_memories join
+          slice_slug: slug,
+          intent_class: opts.intentClass,
+        },
+      })
+    }
+    for (const pageId of section.injectedPageIds ?? []) {
+      events.push({
+        tenant_id: opts.tenantId,
+        interaction_id: opts.interactionId ?? null,
+        user_id: opts.userId,
+        role: opts.role,
+        event_type: 'wiki_page_injected',
+        payload: {
+          page_id: pageId,
+          kind: 'unknown', // resolved post-hoc via wiki_pages join
+          slice_slug: slug,
+          intent_class: opts.intentClass,
+        },
+      })
+    }
   }
 
   for (const f of failed) {
@@ -583,6 +751,69 @@ export function consumedSlicesFromResponse(
     if (overlap.length > 0) consumed.push({ slug, urns_referenced: overlap })
   }
   return consumed
+}
+
+/**
+ * Phase 6 (1.2) — extract the set of `urn:rev:{tenant}:memory:{id}` and
+ * `urn:rev:{tenant}:wiki_page:{id}` ids that the assistant text actually
+ * cited. Used by the route's onFinish to:
+ *   1. Emit `memory_cited` / `wiki_page_cited` events per id, and
+ *   2. Update the per-row Beta posterior on tenant_memories /
+ *      wiki_pages (prior_alpha += 1 per cited id, prior_beta += 1 per
+ *      injected id).
+ *
+ * Returns the SET of unique ids per type. Same id repeated in the
+ * response counts once — what the bandit cares about is "did the
+ * memory/page get USED at all in this turn", not citation density.
+ */
+export interface CitedMemoryIds {
+  memoryIds: string[]
+  wikiPageIds: string[]
+}
+
+export function citedMemoryIdsFromResponse(
+  assistantText: string,
+  tenantId: string,
+): CitedMemoryIds {
+  const memoryIds = new Set<string>()
+  const wikiPageIds = new Set<string>()
+  for (const u of extractUrnsFromText(assistantText)) {
+    const parsed = parseUrn(u)
+    if (!parsed) continue
+    // Tenant scoping — never count an URN from a different tenant.
+    // Cross-tenant URNs in chat output would already be a data leak,
+    // but cheap to defend in depth here.
+    if (parsed.tenantId !== tenantId) continue
+    const type: UrnObjectType = parsed.type
+    if (type === 'memory') memoryIds.add(parsed.id)
+    else if (type === 'wiki_page') wikiPageIds.add(parsed.id)
+  }
+  return {
+    memoryIds: Array.from(memoryIds),
+    wikiPageIds: Array.from(wikiPageIds),
+  }
+}
+
+/**
+ * Pull the union of injected ids across every section in a PackedContext.
+ * Used by the agent route's onFinish to drive the impression side of
+ * the Beta update (prior_beta += 1 per id) and to emit per-id
+ * memory_cited events that include the kind from the slice section.
+ */
+export function injectedMemoryIdsFromPacked(packed: PackedContext): {
+  memoryIds: string[]
+  wikiPageIds: string[]
+} {
+  const memoryIds = new Set<string>()
+  const wikiPageIds = new Set<string>()
+  for (const section of packed.sections) {
+    for (const id of section.injectedMemoryIds ?? []) memoryIds.add(id)
+    for (const id of section.injectedPageIds ?? []) wikiPageIds.add(id)
+  }
+  return {
+    memoryIds: Array.from(memoryIds),
+    wikiPageIds: Array.from(wikiPageIds),
+  }
 }
 
 /**

@@ -356,6 +356,42 @@ export async function runFullOnboardingPipeline(): Promise<{
     },
   })
 
+  // C1: trigger the first-run digest now that sync + score are done.
+  // The workflow is enqueued (not awaited) so the wizard returns
+  // immediately and the rep doesn't wait on Slack delivery —
+  // the cron drain (or in-process runner if available) will fire
+  // it within seconds. SLA is measured by the
+  // `first_run_completed` event the workflow emits at the end.
+  //
+  // Resolved rep: the user starting the onboarding wizard. Greenfield
+  // tenants without rep_profiles won't enqueue.
+  const { data: userProfile } = await admin
+    .from('user_profiles')
+    .select('rep_profile_id')
+    .eq('id', userId)
+    .maybeSingle()
+
+  const repProfileId = userProfile?.rep_profile_id as string | null | undefined
+  if (repProfileId) {
+    try {
+      const { enqueueFirstRun, runFirstRun } = await import('@/lib/workflows')
+      const run = await enqueueFirstRun(admin, tenantId, {
+        rep_id: repProfileId,
+        source: 'onboarding_wizard',
+      })
+      // Best-effort in-process run so the rep sees the Slack DM
+      // before the wizard's "next" CTA fires. Any failure (Slack
+      // down, rate limit) is recoverable: the cron drain re-runs
+      // pending workflow_runs rows on the next /api/cron/workflows
+      // tick. We swallow errors here so the wizard never blocks.
+      void runFirstRun(admin, run.id).catch((err) => {
+        console.warn('[onboarding] first_run kickoff failed (cron will retry):', err)
+      })
+    } catch (err) {
+      console.warn('[onboarding] could not enqueue first_run:', err)
+    }
+  }
+
   return {
     synced: syncRes.count ?? 0,
     enriched: enrichRes.count ?? 0,
@@ -426,6 +462,29 @@ export async function saveOnboardingPreferences(input: SavePreferencesInput) {
       event_type: 'onboarding_completed',
       payload: { final_role: parsed.role ?? null },
     })
+
+    // Phase 6 (Section 2.6) — bootstrap the per-tenant CLAUDE.md schema
+    // with the default template so /admin/wiki/schema shows v1 from day
+    // one (rather than an empty form). The insert is idempotent: if the
+    // tenant already has a row (e.g. they re-ran onboarding), the
+    // ON CONFLICT DO NOTHING preserves the customised version.
+    try {
+      const { DEFAULT_TENANT_WIKI_SCHEMA } = await import('@/lib/wiki/schema-template')
+      await admin
+        .from('tenant_wiki_schema')
+        .upsert(
+          {
+            tenant_id: profile.tenant_id as string,
+            body_md: DEFAULT_TENANT_WIKI_SCHEMA,
+            version: 1,
+            updated_by: user.id,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'tenant_id', ignoreDuplicates: true },
+        )
+    } catch (err) {
+      console.warn('[onboarding] tenant_wiki_schema bootstrap failed:', err)
+    }
   }
 }
 

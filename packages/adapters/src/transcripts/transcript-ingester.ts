@@ -34,13 +34,42 @@ const EMBEDDING_DIMENSIONS = 1536
 const MAX_EMBED_TOKENS = 8000
 const APPROX_CHARS_PER_TOKEN = 4
 
+/**
+ * Optional callbacks the consumer (apps/web) can pass so the LLM
+ * traffic flows through the AI Gateway via `getModel()` rather than
+ * raw `fetch` (B3.4).
+ *
+ * `summariseFn` is the LLM-driven structured summary (Sonnet by
+ * default). When omitted, the ingester falls back to direct Anthropic
+ * `fetch` (legacy behaviour) — preserves backwards compat for any
+ * caller that hasn't migrated.
+ *
+ * `embedFn` is the embedding model call. Omit to use the built-in
+ * OpenAI `text-embedding-3-small` direct fetch.
+ *
+ * Both functions are pure adapters over your preferred AI client. The
+ * adapter package itself stays free of `@prospector/web` imports.
+ */
+export interface TranscriptIngesterOptions {
+  summariseFn?: (rawText: string) => Promise<SummarizeResult>
+  embedFn?: (text: string) => Promise<number[]>
+}
+
 export class TranscriptIngester {
   private supabase: SupabaseClient
   private tenantId: string
+  private summariseFn?: (rawText: string) => Promise<SummarizeResult>
+  private embedFn?: (text: string) => Promise<number[]>
 
-  constructor(supabase: SupabaseClient, tenantId: string) {
+  constructor(
+    supabase: SupabaseClient,
+    tenantId: string,
+    options: TranscriptIngesterOptions = {},
+  ) {
     this.supabase = supabase
     this.tenantId = tenantId
+    this.summariseFn = options.summariseFn
+    this.embedFn = options.embedFn
   }
 
   async ingest(payload: TranscriptWebhookPayload): Promise<string> {
@@ -94,6 +123,12 @@ export class TranscriptIngester {
   }
 
   async computeEmbedding(text: string): Promise<number[]> {
+    // B3.4: prefer the consumer-provided callback (typically routed
+    // via the AI Gateway) when available. Falls back to direct OpenAI
+    // fetch for legacy callers that never set the option.
+    if (this.embedFn) {
+      return this.embedFn(text)
+    }
     const apiKey = process.env.OPENAI_API_KEY
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY is not set')
@@ -124,6 +159,12 @@ export class TranscriptIngester {
   }
 
   async summarize(rawText: string): Promise<SummarizeResult> {
+    // B3.4: prefer the consumer-provided callback so calls flow
+    // through the AI Gateway. The fallback below stays for callers
+    // (or legacy tests) that haven't migrated.
+    if (this.summariseFn) {
+      return this.summariseFn(rawText)
+    }
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY is not set')

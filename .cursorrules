@@ -1,113 +1,169 @@
 # Cursor Rules — Revenue AI OS
 
-## Read this first
+## Read these first (in order)
 
-Before any non-trivial change, read [`MISSION.md`](MISSION.md). It is the
-single source of truth for what we are building, for whom, and why. This
-rules file is the *how* for Cursor sessions; the mission is the *why*.
+1. **[`MISSION.md`](MISSION.md)** — the strategic *why*. Two jobs, second
+   brain, copilot positioning, persona-KPI map, capability-KPI table,
+   adoption gates, cost discipline, hard-coded context. **Source of
+   truth.** Read before any non-trivial change.
+2. **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — the engineering *how*.
+   Three-tier harness doctrine, four loops, four agent surfaces,
+   second-brain compile/lint/reflect mechanics, telemetry contract,
+   cost-discipline mechanics, cite-or-shut-up enforcement, anti-patterns.
+   Read before touching `apps/web/src/lib/agent/`,
+   `apps/web/src/lib/workflows/`, or `packages/`.
+3. **[`docs/PROCESS.md`](docs/PROCESS.md)** — the engineering process.
+   Add a tool, connector, workflow, eval, tenant. On-call playbook.
+4. **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — code review standards,
+   what gets blocked at merge, the discipline.
 
-For concrete process (how to add a tool, connector, workflow, eval, tenant),
-read [`docs/PROCESS.md`](docs/PROCESS.md).
+This file is the Cursor-session quick-reference. It does not replace
+the four docs above.
 
-## Mission summary
+---
 
-We build a **Sales Operating System** that turns a company's CRM, calls,
-and context into one self-improving research engine — so reps spend their
-day selling, not searching, and leaders see ROI in weeks, not quarters.
+## Mission summary (the 30-second version)
 
-Two jobs the system has to do well:
+We build a **Sales Operating System** that becomes a revenue team's
+**second brain** — fusing every internal signal (CRM, calls, billing,
+ops, transcripts) with continuously-refreshed external research
+(web, enrichment, market signals) into one Slack-native **strategic
+copilot** that knows each rep's deals, territory, and selling style.
 
-1. **Build pipeline** — find, prioritise, and engage net-new accounts.
+**Two jobs the system has to do well:**
+
+1. **Build pipeline** — find, prioritise, engage net-new accounts.
 2. **Manage existing customers** — portfolio health, churn signals,
    weekly digests.
 
-Everything we ship advances one of those two jobs. If a feature doesn't,
-cut it.
+Everything we ship advances one of those two jobs. If a feature
+doesn't, cut it.
 
-## Three layers that compound
+**Strategic copilot, not replacement.** Drafts, suggestions, surfaces
+— never auto-sends, auto-acts, or auto-decides for the rep. Every
+adaptation is human-approved via `/admin/calibration`.
 
-1. **Context layer.** Canonical Postgres ontology + `urn:rev:` addressing.
-2. **Agent layer.** One universal agent presented through four **surfaces**
- (pipeline-coach, account-strategist, leadership-lens, onboarding-coach).
- Surfaces are presets — same runtime, model, telemetry, harness — that
- select a different prompt + tool subset based on `(role, active object)`.
- Tool registry per tenant. Every step emits an event.
-3. **Learning layer.** Event-sourced telemetry. Nightly workflows mine
-   exemplars, propose prompt diffs, calibrate scoring weights, cluster
-   failures, write attributions. The OS gets measurably better per tenant
-   every week.
+**The data sets itself up.** ICP from won deals, scoring weights from
+outcome events, exemplars from thumbs-up, tool priors from usage.
+First cited answer in ≤ 5 minutes. No 12-week configuration marathon.
+
+**Adoption is the product.** A perfect agent nobody opens is worth
+zero. The Pull-to-Push Ratio (rep-initiated ÷ system-pushed) is the
+single diagnostic gate. Influenced ARR (holdout-filtered) is the
+single CFO-grade headline.
+
+---
+
+## The three layers (engineering shorthand)
+
+Full doctrine in [`ARCHITECTURE.md`](ARCHITECTURE.md). Quick reference:
+
+1. **Context layer.** Canonical Postgres ontology + `urn:rev:`
+   addressing + per-tenant second brain (`tenant_memories` atoms,
+   `wiki_pages`, `memory_edges`).
+2. **Agent layer.** One universal agent. Four surfaces (`pipeline-coach`,
+   `account-strategist`, `leadership-lens`, `onboarding-coach`) — fixed.
+   Surfaces are presets — same runtime, model, telemetry, harness.
+   Tool registry per tenant. Every step emits an event. Role overlays
+   (`ad`, `csm`, `growth_ae`) extend `account-strategist` without
+   adding a new surface.
+3. **Learning layer.** Event-sourced telemetry. Nightly miners +
+   compile/lint/reflect workflows + calibration ledger. Every
+   adaptation human-approved.
+
+## The three-tier harness (engineering shorthand)
+
+| Tier | Where | Harness rule |
+|---|---|---|
+| 1 — Agent chat | `apps/web/src/app/api/agent/route.ts` | Tools typed in, `## Next Steps` + citations out. Loop itself is flexible. |
+| 2 — Tools | `apps/web/src/lib/agent/tools/` | Zod input, `{ data, citations }` output, retry classified, cooldown honoured, telemetry emitted |
+| 3 — Workflows | `apps/web/src/lib/workflows/` | Idempotency key, tenant scope, `shouldSuppressPush` on proactive push, validated at load (`npm run validate:workflows`) |
+
+When in doubt: novel-question-answer → Tier 2 tool. Schedule/event
+work → Tier 3 workflow. Never add code to Tier 1 that could belong in
+Tier 2 or 3.
+
+---
 
 ## Stack
 
-- **Next.js 16** (App Router) on Vercel
+- **Next.js 16** (App Router) on Vercel — React 19, Turbopack, Node
+  24 LTS, Fluid Compute
 - **Supabase** (Postgres + pgvector + RLS)
 - **Vercel AI SDK** with Anthropic via the AI Gateway when configured
-- **Workflow runner** (`apps/web/src/lib/workflows/runner.ts`) — durable
-  step execution against `workflow_runs`. Pattern-compatible with Vercel
-  Workflow DevKit so we can swap later.
+  (prefer plain `"provider/model"` strings; do not hardcode
+  `@ai-sdk/anthropic`)
+- **Custom durable workflow runner** (`apps/web/src/lib/workflows/runner.ts`)
+  — pattern-compatible with Vercel Workflow DevKit
 - **shadcn/ui + Tailwind 4**
 - **Vitest** for unit tests; agent eval suite gated in CI
 
+---
+
 ## Operating principles (NON-NEGOTIABLE)
 
-1. **Signal over noise.** The single biggest adoption killer is too much
- information. Every change ships with a ruthless "what is the ONE thing
- the rep needs to see?" test. The dispatcher caps proactive Slack pushes
- per rep per day by `alert_frequency`: high=3, medium=2 (default), low=1.
- Other limits: ≤ 3 items per list section; ≤ 150 words per short-form
- agent response; ≤ 3 Next-Step buttons per reply. If in doubt, cut.
+Full set in [`MISSION.md`](MISSION.md) §12. The seven that decide
+every code review:
+
+1. **Signal over noise.** Daily push budget per rep capped by
+   `alert_frequency`: high=3, medium=2 (default), low=1. Top-N
+   defaults to 3. Short-form ≤ 150 words. ≤ 3 Next-Step buttons.
+   Bundle similar events. **In doubt, cut.**
 2. **Truthful before new.** Every shipped feature keeps its promise.
-3. **Ontology-first.** New capability = new tool or new ontology object,
-   never a new bespoke page.
-4. **One agent, many tools.** Tools are typed, registry-driven, role-scoped.
-5. **Durable for anything > one request.** Workflows own sync, brief
-   generation, digests, ingestion, learning.
-6. **Cite or shut up.** Every claim links to its source object.
-7. **Evals are non-optional.** Every agent change runs goldens in CI. The
-   eval set grows from real failures.
-8. **Every interaction is training data.** Tool calls, citations, thumbs,
-   citation clicks, action invocations — event-sourced.
-9. **Self-improving by default, never by opaque magic.** Every adaptation
-   is a calibration row a human inspects, A/B tests, approves or rejects.
-10. **ROI is a first-class product, not a slide.** `/admin/roi` is live.
-11. **Per-tenant adaptation.** Each tenant gets their own exemplars,
-    weights, priors — derived from their own data.
+   Fix the broken first; ship the new second.
+3. **Cite or shut up.** Every claim links to its source URN. Every
+   tool returns `{ data, citations }`. No invented numbers.
+4. **Per-tenant adaptation.** Each tenant gets their own exemplars,
+   weights, priors, second brain — derived from their own data.
+5. **Self-improving by default, never opaque.** Every adaptation
+   lands as a `calibration_ledger` row a human inspects, A/B tests,
+   approves, rejects, or rolls back.
+6. **ROI is a first-class product.** `/admin/roi` shows time saved +
+   influenced ARR (holdout-filtered) + adoption + quality trends —
+   sourced live from the event log.
+7. **Evals are non-optional.** Every PR runs the eval suite; merge
+   blocked on regression. Eval set grows from production failures.
 
-## UX principles (adoption is the product)
+## Adoption gates (UX rules, mechanically enforced)
 
-A perfect agent that nobody opens is worth zero. These rules are gates,
-not preferences.
+Full set in [`MISSION.md`](MISSION.md) §9. Hard limits:
 
-1. **Reduce noise.** Reps already drown in CRM and Slack. Our job is to
- *subtract* from their day. Proactive Slack pushes capped by
- `alert_frequency` (high=3, medium=2 default, low=1), enforced at the
- dispatcher. Top-N views default to 3 rows. Short-form
-   responses cap at 150 words. Similar events bundle into one digest. When
-   in doubt, cut. A feature that pushes more info must show it raises
-   thumbs-up % or it doesn't ship.
-2. **One-click onboarding.** First-time user gets to a cited answer inside
-   5 minutes. No CRM connection required for the first run.
-3. **Slack first, dashboard second.** Briefs and alerts arrive in Slack.
-   The dashboard supports deeper exploration.
-4. **Every agent response ends with multi-choice next actions.** 2–3
-   click-to-prompt buttons. Never 4+. No dead-end answers. The behaviour
-   rules in `_shared.ts` enforce this.
-5. **Citations are inline.** Pills under every response. Clicking opens
-   the source and feeds the retrieval ranker.
-6. **Suggested action chips on every page.** Empty states are opportunity
-   states.
-7. **Visible self-improvement.** `/admin/adaptation` is customer-facing.
-8. **No demo data in production analytics.** Empty states beat fake numbers.
-9. **Latency budget:** ≤ 30s median, ≤ 60s P95.
-10. **Honest error states.** "I don't have data on that" beats hallucination.
-11. **Every surface is a thin client over the same agent + ontology.**
+- Proactive Slack pushes capped via `checkPushBudget` (high=3,
+  medium=2 default, low=1).
+- Top-N defaults to 3. Short-form responses cap at 150 words. ≤ 3
+  Next-Step buttons.
+- Similar events bundle into the next digest, not a new ping.
+- First cited answer for a fresh tenant ≤ 5–10 min. No CRM
+  connection required for the first run.
+- Slack first, dashboard second. Both surfaces hit the **same**
+  agent runtime via `assembleAgentRun` — CI parity test gates this.
+- Citation pills inline under every response. Clicking feeds the
+  retrieval ranker.
+- `/admin/adaptation` is customer-facing. Visible self-improvement.
+- Latency budget: median ≤ 30s, P95 ≤ 60s.
+- "I don't have data on that" beats hallucination.
+- No demo data in production analytics.
+
+---
 
 ## File structure
 
 ```
 prospector-os/
-├── MISSION.md                              # Read this first
-├── docs/PROCESS.md                         # Engineering process
+├── MISSION.md                              # The strategic why (read first)
+├── ARCHITECTURE.md                         # The engineering how (read before building)
+├── CONTRIBUTING.md                         # Code review standards + discipline
+├── README.md                               # Developer front door
+├── docs/
+│   ├── PROCESS.md                          # The engineering process
+│   ├── ROADMAP.md                          # The multi-tenant OS roadmap
+│   ├── prd/                                # Subsystem PRDs
+│   ├── initiatives/                        # Live commercial pilots (currently: Indeed Flex)
+│   ├── decisions/                          # ADRs (top-level)
+│   ├── adoption-research-report.md
+│   ├── strategic-review-2026-04.md         # Forensic gap audit
+│   └── archive/                            # Superseded — historical only
+├── wiki/                                   # Karpathy-style developer second brain
 ├── apps/web/                               # Next.js application
 │   ├── AGENTS.md                           # Cursor rules for the web app
 │   └── src/
@@ -116,35 +172,36 @@ prospector-os/
 │       │   ├── (dashboard)/                # Authenticated app shell
 │       │   │   ├── inbox/                  # Priority queue + welcome
 │       │   │   ├── objects/                # Ontology browser (companies, deals, signals, transcripts, contacts)
-│       │   │   ├── pipeline/               # Legacy: AE-shaped pipeline view
-│       │   │   ├── accounts/               # Legacy: account list
 │       │   │   ├── analytics/              # Forecast, my-funnel, team
 │       │   │   ├── settings/
-│       │   │   ├── admin/                  # config, calibration, ontology, roi, adaptation, replay, pilot, evals
+│       │   │   ├── admin/                  # config, calibration, ontology, roi, adaptation, replay, pilot, evals, wiki
 │       │   │   └── onboarding/             # Tenant + baseline survey
 │       │   └── api/
-│       │       ├── agent/                  # AI agent endpoint
+│       │       ├── agent/                  # AI agent endpoint (the one entry)
+│       │       ├── slack/events/           # Slack inbound — same runtime via assembleAgentRun
 │       │       ├── webhooks/               # CRM + transcript webhooks (HMAC-verified)
-│       │       └── cron/                   # sync, score, signals, enrich, workflows, learning
+│       │       └── cron/                   # sync, score, signals, enrich, workflows, learning, embeddings
 │       ├── evals/                          # Golden eval set + LLM judge
 │       ├── lib/
 │       │   ├── agent/
 │       │   │   ├── tools/                  # createAgentTools, handlers bridge, dispatcher
-│       │   │   ├── agents/                 # Pipeline coach, account strategist, leadership lens, onboarding
+│       │   │   ├── agents/                 # 4 surface presets + _shared.ts
+│       │   │   ├── context/                # Slices, packer, bandit, types
 │       │   │   ├── tool-loader.ts          # Registry-driven loader
 │       │   │   ├── tool-bandit.ts          # Thompson sampling priors
-│       │   │   ├── context-builder.ts      # rep-centric assembler
-│       │   │   ├── context-strategies.ts   # 5 strategies
+│       │   │   ├── run-agent.ts            # Unified runtime (Slack + dashboard)
 │       │   │   └── model-registry.ts       # AI Gateway provider/model strings
 │       │   ├── workflows/                  # All durable workflows (one file each)
+│       │   ├── memory/                     # Atom writer + bandit + edge extractor
+│       │   ├── wiki/                       # Schema template + lifecycle helpers
 │       │   └── supabase/                   # Server + browser clients
 │       └── components/
 │           ├── agent/                      # Chat sidebar, citation pills, suggested actions
 │           └── ontology/                   # Action panel
 ├── packages/
 │   ├── core/                               # Business logic (zero UI deps)
-│   │   ├── scoring/                        # 7 scorers + composite + tier matcher + calibration analyzer
-│   │   ├── funnel/                         # Benchmark, stall, impact, forecast
+│   │   ├── scoring/                        # 7+ scorers + composite + tier matcher + calibration analyser
+│   │   ├── funnel/                         # Benchmark, stall, impact, forecast (bootstrap CI)
 │   │   ├── prioritisation/                 # Queues, actions, briefings
 │   │   ├── notifications/                  # Triggers, cooldowns, feedback
 │   │   ├── citations/                      # Source tracking engine
@@ -153,16 +210,26 @@ prospector-os/
 │   ├── adapters/
 │   │   ├── crm/                            # HubSpot + Salesforce
 │   │   ├── enrichment/                     # Apollo
-│   │   ├── connectors/                     # Universal connector interface + transcript
-│   │   ├── notifications/                  # Slack dispatcher + cooldown store + web push
-│   │   └── transcripts/                    # Gong + Fireflies ingester
+│   │   ├── connectors/                     # Universal connector interface
+│   │   ├── intent/                         # Bombora + Tavily news (external research)
+│   │   ├── job-change/                     # Apollo + LinkedIn SN (external research)
+│   │   ├── tech-stack/                     # BuiltWith (external research)
+│   │   ├── notifications/                  # Slack dispatcher + cooldown store + push budget + web push
+│   │   ├── transcripts/                    # Gong + Fireflies ingester
+│   │   └── embeddings/                     # OpenAI text-embedding-3-small wrapper
 │   └── db/
-│       ├── migrations/                     # 001 platform, 002 events + foundation
+│       ├── migrations/                     # Numbered SQL migrations (001 … NNN)
 │       └── schema/                         # Baseline schema.sql
-└── scripts/                                # seed-tools, setup
+├── config/                                 # ICP, funnel, signal, scoring JSON defaults (templates)
+├── scripts/                                # seed-tools, validate-workflows, validate-tools, validate-events, setup
+└── vercel.json                             # Cron schedules
 ```
 
+---
+
 ## Patterns to follow (and the file that owns each)
+
+Full process in [`docs/PROCESS.md`](docs/PROCESS.md). Quick map:
 
 ### Adding a tool
 - Handler: `apps/web/src/lib/agent/tools/handlers/<slug>.ts` (or extend the
@@ -194,30 +261,72 @@ from `@prospector/core/telemetry`. The agent route emits at every step.
 Webhooks emit `outcome_events`. Action panel emits `action_invoked`.
 Without these the learning loop has nothing to learn from.
 
+---
+
+## Strategic context every feature MUST read
+
+Full list in [`MISSION.md`](MISSION.md) §11. The construction
+checklist:
+
+1. Tenant `business_profiles` (target industries, value props, sales
+   methodology, agent name).
+2. Tenant ICP (`tenant_memories.kind = 'icp_pattern'`, win exemplars).
+3. Rep profile (role, `comm_style`, `alert_frequency`, `focus_stage`,
+   KPIs, holdout flag).
+4. Active object context (current company / deal / contact / transcript URN).
+5. `checkPushBudget` + `shouldSuppressPush` on every proactive notification.
+6. `SupabaseCooldownStore` on every push.
+7. Citations on every tool result.
+8. `emitAgentEvent` on every step.
+9. `tool_registry` row (never hardcode tool definitions).
+10. ≥ 1 eval golden case before merging a new tool.
+
+Skipping any of these is the most common reason a new capability fails
+its eval gates.
+
+---
+
 ## Common mistakes (do NOT)
 
+Full anti-pattern list in [`ARCHITECTURE.md`](ARCHITECTURE.md) §11.
+The ones that come up most:
+
+- DO NOT add a new agent runtime — surface count is fixed at four.
+  New capability = new tool, new role overlay, new context strategy,
+  or a new surface preset (prompt + tool subset).
 - DO NOT hardcode business context — always read from `business_profiles`.
-- DO NOT hardcode tool definitions — always load from `tool_registry` via
-  the tool-loader. The static factory is fallback only.
-- DO NOT clone agents per rep — one template with dynamic context per role.
-- DO NOT skip `tenant_id` scoping in Supabase queries.
-- DO NOT compute funnel benchmarks in real-time — they're weekly batch.
-- DO NOT send alerts without cooldown — `SlackDispatcher` accepts a
-  `CooldownStore`, use `SupabaseCooldownStore` in production.
-- DO NOT skip citations — every tool result must produce citations via the
-  extractor in `agent/citations.ts`.
+- DO NOT hardcode tool definitions — always load from `tool_registry`
+  via the tool-loader.
+- DO NOT skip `tenant_id` scoping in Supabase queries (RLS catches it,
+  defence in depth + planner needs the index).
+- DO NOT bypass `getModel()` with `createAnthropic` or raw `fetch` —
+  the AI Gateway loses observability + failover.
+- DO NOT bypass `checkPushBudget` or `shouldSuppressPush` on a
+  proactive notification — push-budget cap and holdout are non-negotiable.
+- DO NOT skip cooldowns — `SlackDispatcher` accepts a `CooldownStore`,
+  use `SupabaseCooldownStore` in production.
+- DO NOT skip citations — every tool result must produce citations
+  via the extractor in `agent/citations.ts`. CI gate enforces.
 - DO NOT skip the feedback loop — thumbs up/down + action invocations
   must persist; without them, the bandit + prompt optimizer have no signal.
+- DO NOT use `JSON.parse(text.match(/\{...\}/))` to parse LLM output —
+  use `generateObject` with a Zod schema.
+- DO NOT compute funnel benchmarks in real-time — they're weekly batch.
 - DO NOT ship demo data in analytics — empty states beat fake numbers.
-- DO NOT ship a new "agent type" — surfaces are presets of the one universal
- agent. New capability = new tool, new context strategy, or a new surface
- preset (which is just a prompt + tool subset). Never a new runtime.
-- DO NOT bypass the holdout cohort — `shouldSuppressPush` from
-  `lib/workflows/holdout.ts` runs on every proactive push.
-- DO NOT assume Indeed Flex context — the system is multi-tenant by design.
+- DO NOT clone agents per rep — one template with dynamic context per role.
+- DO NOT assume any specific tenant's vertical (e.g. Indeed Flex,
+  staffing) in any prompt or workflow — the system is multi-tenant by
+  design.
+
+---
 
 ## When in doubt
 
-Read [`MISSION.md`](MISSION.md). If the change you're considering doesn't
-advance one of the two jobs (build pipeline / manage existing customers),
-or violates a UX principle, push back.
+Re-read [`MISSION.md`](MISSION.md). If the change you're considering
+doesn't advance one of the two jobs (build pipeline / manage existing
+customers), or violates an adoption gate, push back.
+
+If the change is mechanical (touching the agent runtime, the workflow
+runner, or any tool), re-read [`ARCHITECTURE.md`](ARCHITECTURE.md)
+§3 (the harness doctrine) and §6 (cite-or-shut-up enforcement) before
+writing the first line.

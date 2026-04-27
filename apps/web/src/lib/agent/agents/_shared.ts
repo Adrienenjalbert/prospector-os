@@ -154,6 +154,55 @@ export function formatBusinessContext(profile: BusinessProfile | null): string {
 }
 
 /**
+ * Render mined per-tenant exemplars (A1.1) as a tightly-bounded
+ * few-shot block for the dynamic suffix.
+ *
+ * The exemplar miner persists `business_profiles.exemplars` keyed by
+ * `${role}:${intent_class}`. We only surface the entries matching the
+ * current turn's `(role, intent_class)` so the prompt stays bounded
+ * — the full exemplar map can grow large per tenant.
+ *
+ * Lives in the dynamic suffix (per-turn) rather than the cacheable
+ * prefix because the chosen `(role, intent_class)` slice changes per
+ * turn. Bounded to top-2 exemplars × ~600 chars each ≈ 300 tokens
+ * worst case, well within the dynamic-suffix budget.
+ *
+ * Returns empty string when no matching exemplars exist (or none are
+ * mined yet) so callers can splice unconditionally.
+ */
+export function formatExemplars(
+  profile: BusinessProfile | null,
+  role: string,
+  intentClass: string,
+  limit = 2,
+): string {
+  if (!profile?.exemplars) return ''
+  const key = `${role}:${intentClass}`
+  const fallbackKey = `rep:${intentClass}` // generic role fallback
+  const exemplars =
+    profile.exemplars[key] ??
+    (key !== fallbackKey ? profile.exemplars[fallbackKey] : null) ??
+    []
+  if (exemplars.length === 0) return ''
+
+  const top = exemplars.slice(0, limit).map((e, i) => {
+    const q = (e.q ?? '').slice(0, 200).trim()
+    const a = (e.a ?? '').slice(0, 600).trim()
+    if (!q || !a) return null
+    return `### Exemplar ${i + 1}\n**Rep asked:** ${q}\n**You answered well with:** ${a}`
+  }).filter((x): x is string => x !== null)
+
+  if (top.length === 0) return ''
+
+  return `## Recent winning patterns for ${role.toUpperCase()} on ${intentClass.replaceAll('_', ' ')}
+These are responses this tenant's reps gave a thumbs-up to in the last
+14 days. Match the SHAPE (length, citation density, decisiveness),
+not the literal content — facts vary turn-to-turn.
+
+${top.join('\n\n')}`
+}
+
+/**
  * Sales playbook preamble. Spliced into every specialised-agent prompt
  * so the agent has 2-3 framework slugs picked for its current
  * `(role, active object, deal stage, signals)` context, plus the
@@ -206,7 +255,7 @@ export function formatRepPreferences(profile: RepProfile | null): string {
       parts.push('- **Tone:** Casual. Conversational, contractions OK, drop the title formalities. Talk to the rep like a peer.')
       break
     case 'brief':
-      parts.push('- **Tone:** Brief. Bullets > prose. Cut every word that does not add information. ≤ 80 words for short-form replies (overrides the 150-word default).')
+      parts.push('- **Tone:** Brief. Bullets > prose. Cut every word that does not add information. ≤ 80 words for all responses (governs the default length in Behaviour Rules).')
       break
   }
 
@@ -272,31 +321,45 @@ ${body}`
 // ---------------------------------------------------------------------------
 
 /**
- * The system prompt is structurally `static prefix → dynamic middle →
- * behaviour rules end`. Anthropic prompt caching needs a contiguous
- * cacheable prefix, so we surface the split via this typed result.
+ * The system prompt is structurally a three-layer sandwich:
  *
- * Cacheable when the same `(tenant, role, agentType)` repeats:
- *   - OS mission
- *   - tenant company header + business context
- *   - role section
+ *   1. `staticPrefix`     — tenant- and role-stable (header, business
+ *                            context, role description). CACHED.
+ *   2. `dynamicSuffix`    — per-turn data (slices, rep prefs, intent-
+ *                            dependent playbook). NOT CACHED.
+ *   3. `cacheableSuffix`  — tenant- and role-stable behaviour rules.
+ *                            CACHED via a SECOND breakpoint, kept at
+ *                            the end of the prompt for the
+ *                            "lost-in-the-middle" attention bonus on
+ *                            citation discipline.
  *
- * NOT cacheable (per-turn):
- *   - hydrated context slices
- *   - intent-dependent sales playbook
- *   - behaviour rules (kept at the END of the prompt for high-attention
- *     citation discipline — empirical lost-in-the-middle insight)
+ * Why the trailing block needs its own slot:
  *
- * Cache hit happens within ~5 minutes of the first turn (Anthropic
+ * `commonBehaviourRules()` is ~1.2k tokens of static text that used to
+ * ship inside `dynamicSuffix` and was therefore re-billed every turn.
+ * Anthropic supports up to 4 cache breakpoints; we use TWO here (prefix
+ * + trailing rules) so the rules slot is cached too, while the dynamic
+ * data between them stays free to vary.
+ *
+ * Cache hits happen within ~5 minutes of the first turn (Anthropic
  * ephemeral TTL), which is exactly the typical chat session length.
- * Expected savings: ~50% of input tokens after turn 1, ~90% latency
- * reduction on the cached portion.
+ * Expected savings on warm sessions:
+ *   - turn 1:  pay for prefix + dynamic + rules   (cold)
+ *   - turn 2+: pay for dynamic only               (~10-15% extra cut
+ *              on top of the existing prefix-cache savings)
  */
 export interface SystemPromptParts {
   /** Cacheable across turns within the same (tenant, role, agentType). */
   staticPrefix: string
   /** Per-turn — never cached. */
   dynamicSuffix: string
+  /**
+   * Trailing static block that is also cacheable. Keep this contiguous
+   * (no per-turn data inside) so a second `cacheControl: ephemeral`
+   * breakpoint can be applied. Builders that don't need the second
+   * breakpoint can leave this empty.
+   */
+  cacheableSuffix?: string
 }
 
 /**
@@ -304,7 +367,9 @@ export interface SystemPromptParts {
  * don't care about caching (workflows, CLI tools, eval harness).
  */
 export function joinPromptParts(parts: SystemPromptParts): string {
-  return [parts.staticPrefix, parts.dynamicSuffix].filter(Boolean).join('\n\n')
+  return [parts.staticPrefix, parts.dynamicSuffix, parts.cacheableSuffix ?? '']
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 /**
@@ -317,7 +382,7 @@ export function commonBehaviourRules(): string {
 
 ### Signal over noise (THIS IS THE PRIMARY RULE)
 Reps drown in notifications. Your job is to SUBTRACT from their day.
-- Default response length: **≤ 150 words.** Only go longer if the user explicitly asks to "explain" or "deep dive."
+- Default response length: **≤ 150 words** (Rep Preferences above governs when a comm_style is set — Brief = ≤ 80 w, no style = this default). Only go longer if the user explicitly asks to "explain" or "deep dive."
 - Default list length: **≤ 3 items.** Top 3 stalled deals, top 3 signals, top 3 accounts. If the user wants more, they'll ask.
 - NO preamble ("Sure!", "I'd be happy to help", "Great question!"). Start with the answer.
 - NO postamble ("Let me know if you have questions", "Hope that helps"). The UI already offers Next Steps.
@@ -348,7 +413,7 @@ The next turn's \`conversation-memory\` slice surfaces the last 5 notes automati
 DO NOT record long narrative summaries — those go in the message history, not in notes. Notes are concrete, structured, ≤ 1 sentence each.
 
 ### Multi-choice next actions (MANDATORY — the UI parses this)
-End EVERY response with this exact section, even for short answers:
+End EVERY response with this exact section. **Exception:** for a pure one-sentence factual lookup (e.g. "what is Acme's ARR?"), you may omit this section if no actionable next step exists — do not pad with noise.
 
 \`\`\`
 ## Next Steps

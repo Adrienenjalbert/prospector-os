@@ -1,5 +1,6 @@
-import { generateText } from 'ai'
+import { generateObject } from 'ai'
 import { getModel } from '@/lib/agent/model-registry'
+import { JudgeVerdictSchema } from '@prospector/core'
 import type { EvalCase } from './goldens'
 
 export interface JudgeInput {
@@ -46,6 +47,11 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
     }
   }
 
+  // B4.1: structured-output judge. Replaces fragile
+  // `generateText + JSON.parse(text.replace(/^```json/, ''))` with a
+  // typed Zod schema. Eliminates the silent-parse-failure mode that
+  // used to score random results when the model wrapped output in
+  // markdown fences (or omitted a trailing brace).
   const prompt = `You are a strict eval judge for a sales agent's answers.
 
 Rubric: ${input.eval.rubric}
@@ -60,30 +66,21 @@ ${input.agent_response}
 Tools called: ${input.tools_called.join(', ') || 'none'}
 Citation types: ${input.citation_types.join(', ') || 'none'}
 
-Respond with STRICT JSON only, no markdown fences:
-{
-  "passed": boolean,
-  "score": number between 0 and 1,
-  "reasoning": "one sentence"
-}
-
 Fail the case if the agent invented any data, or if the response dodged the question.`
 
   try {
-    const { text } = await generateText({
+    const { object } = await generateObject({
       model: getModel('anthropic/claude-haiku-4'),
+      schema: JudgeVerdictSchema,
       prompt,
       maxTokens: 300,
       temperature: 0,
     })
 
-    const clean = text.replace(/^```json\s*|\s*```$/g, '').trim()
-    const parsed = JSON.parse(clean) as { passed?: boolean; score?: number; reasoning?: string }
-
     return {
-      passed: Boolean(parsed.passed),
-      score: typeof parsed.score === 'number' ? parsed.score : parsed.passed ? 1 : 0,
-      reasoning: parsed.reasoning ?? 'no reasoning',
+      passed: object.passed,
+      score: object.score,
+      reasoning: object.reasoning,
     }
   } catch (err) {
     return {

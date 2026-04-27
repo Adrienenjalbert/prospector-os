@@ -13,6 +13,18 @@ import {
   createCrmTaskHandler,
 } from './handlers/crm-write'
 import { recordConversationNoteHandler } from './handlers/record-conversation-note'
+import { webSearchHandler } from './handlers/web-search'
+import {
+  findSimilarAccountsHandler,
+  extractMeddpiccGapsHandler,
+  summariseAccountHealthHandler,
+} from './handlers/account-intelligence'
+import {
+  findWarmIntrosHandler,
+  findActiveBuyersHandler,
+  summariseTriggerHandler,
+  composeTriggerExplanationHandler,
+} from './handlers/trigger-tools'
 
 /**
  * Bridge between the tool_registry (DB) and the existing tool factories.
@@ -160,4 +172,25 @@ export function registerBuiltinToolHandlers(): void {
   // ai_conversations row. The handler resolves the conversation by
   // (user, tenant, thread_type) so it works without a route change.
   registerToolHandler(recordConversationNoteHandler)
+  // D7.1 — grounded web-search. Replaces the hallucinated
+  // runDeepResearch path with a real provider (Tavily by default).
+  // Available to every surface; tenants opt in by adding the row to
+  // tool_registry + setting WEB_SEARCH_PROVIDER / TAVILY_API_KEY.
+  registerToolHandler(webSearchHandler)
+  // C2 — account-intelligence bundle. Three tier-2-compliant tools
+  // that close the obvious "I'm on this account, what do I need to
+  // know?" gaps in the agent's tool surface. Each one is gated to
+  // selling roles + admin via the tool_registry rows; this just
+  // makes the handler available.
+  registerToolHandler(findSimilarAccountsHandler)
+  registerToolHandler(extractMeddpiccGapsHandler)
+  registerToolHandler(summariseAccountHealthHandler)
+  // Phase 7 (Section 5) — composite trigger + bridge tool bundle.
+  // 4 standalone handlers; tool_registry rows are seeded by
+  // scripts/seed-tools.ts so per-tenant gating + role allow-lists
+  // apply via the existing loader path.
+  registerToolHandler(findWarmIntrosHandler)
+  registerToolHandler(findActiveBuyersHandler)
+  registerToolHandler(summariseTriggerHandler)
+  registerToolHandler(composeTriggerExplanationHandler)
 }

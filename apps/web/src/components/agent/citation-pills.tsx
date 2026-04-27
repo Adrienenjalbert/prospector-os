@@ -1,10 +1,24 @@
 'use client'
 
 import { useEffect, useState, useTransition } from 'react'
-import { ExternalLink, FileText, Building2, User, Target, MessageSquare, BarChart3 } from 'lucide-react'
+import {
+  ExternalLink,
+  FileText,
+  Building2,
+  User,
+  Target,
+  MessageSquare,
+  BarChart3,
+  Brain,
+  BookOpen,
+  Zap,
+} from 'lucide-react'
 
 import { getCitationsForInteraction, type CitationRecord } from '@/app/actions/citations'
-import { recordCitationClick } from '@/app/actions/implicit-feedback'
+import {
+  recordCitationClick,
+  recordCitationImpressions,
+} from '@/app/actions/implicit-feedback'
 import { cn } from '@/lib/utils'
 
 interface CitationPillsProps {
@@ -19,6 +33,12 @@ const ICON: Record<string, React.ElementType> = {
   signal: BarChart3,
   transcript: MessageSquare,
   funnel_benchmark: BarChart3,
+  // Phase 5: typed memory atoms.
+  memory: Brain,
+  // Phase 6 (Two-Level Second Brain): compiled wiki pages.
+  wiki_page: BookOpen,
+  // Phase 7 (Composite Triggers): typed buying-trigger events.
+  trigger: Zap,
 }
 
 function label(source: string): string {
@@ -69,6 +89,40 @@ export function CitationPills({ interactionId, isStreaming }: CitationPillsProps
     seen.add(key)
     return true
   })
+
+  return (
+    <CitationPillsInner
+      interactionId={interactionId}
+      citations={unique}
+      startTransition={startTransition}
+    />
+  )
+}
+
+/**
+ * Inner component that fires the per-render impression telemetry
+ * (C5.3). Split out so the impression-fire effect runs only when the
+ * deduped pill list lands — not on every parent re-render.
+ */
+function CitationPillsInner({
+  interactionId,
+  citations: unique,
+  startTransition,
+}: {
+  interactionId: string
+  citations: CitationRecord[]
+  startTransition: (cb: () => void) => void
+}) {
+  useEffect(() => {
+    if (unique.length === 0) return
+    void recordCitationImpressions(
+      unique.map((c) => ({ source_type: c.source_type, source_id: c.source_id })),
+    )
+    // Intentionally no dependency on `unique` reference — we want to
+    // fire once per interaction-id mount, not on every re-render that
+    // produces a new array reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interactionId])
 
   return (
     <div className="mt-2 flex flex-wrap gap-1.5 pl-11">

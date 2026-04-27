@@ -26,6 +26,7 @@ function makeInput(
     isStalled: false,
     signalTypes: [],
     intentClass: 'diagnosis',
+    urgencyScore: 0,
     token_budget: 5000,
     ...overrides,
   }

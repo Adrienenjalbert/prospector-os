@@ -8,6 +8,7 @@ import {
   formatAgentHeader,
   formatBusinessContext,
   formatRepPreferences,
+  formatExemplars,
   commonBehaviourRules,
   commonSalesPlaybook,
   formatPackedSections,
@@ -302,6 +303,7 @@ export async function buildAccountStrategistPromptParts(
   tenantId: string,
   ctx: AgentContext | null = null,
   packed: PackedContext | null = null,
+  opts: { intentClass?: string; role?: string } = {},
 ): Promise<SystemPromptParts> {
   const profile = await loadBusinessProfile(tenantId)
 
@@ -329,16 +331,30 @@ You research individual accounts and draft outreach that connects the prospect's
   const repPrefs = formatRepPreferences(ctx?.rep_profile ?? null)
   if (repPrefs) dynamicParts.push(repPrefs)
   dynamicParts.push(commonSalesPlaybook(ctx, { role: 'ae' }))
-  dynamicParts.push(commonBehaviourRules())
 
-  return { staticPrefix, dynamicSuffix: dynamicParts.join('\n\n') }
+  // Few-shot exemplars from prior thumbs-up turns (A1.1). Empty unless
+  // the tenant has accumulated mined exemplars matching (role,
+  // intent_class).
+  const exemplars = formatExemplars(profile, opts.role ?? 'ae', opts.intentClass ?? 'general_query')
+  if (exemplars) dynamicParts.push(exemplars)
+
+  // `commonBehaviourRules()` lives in `cacheableSuffix` (B3.1): it is
+  // tenant- and role-stable text the agent route caches via a SECOND
+  // `cacheControl` breakpoint. Eliminates ~1.2k tokens of re-billed
+  // prompt on every warm turn.
+  return {
+    staticPrefix,
+    dynamicSuffix: dynamicParts.join('\n\n'),
+    cacheableSuffix: commonBehaviourRules(),
+  }
 }
 
 export async function buildAccountStrategistPrompt(
   tenantId: string,
   ctx: AgentContext | null = null,
   packed: PackedContext | null = null,
+  opts: { intentClass?: string; role?: string } = {},
 ): Promise<string> {
-  const parts = await buildAccountStrategistPromptParts(tenantId, ctx, packed)
+  const parts = await buildAccountStrategistPromptParts(tenantId, ctx, packed, opts)
   return joinPromptParts(parts)
 }

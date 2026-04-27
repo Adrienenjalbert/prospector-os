@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { emitOutcomeEvent, urn, type OutcomeEventInput } from '@prospector/core'
+import { enqueueDeriveIcpOnWin } from '@/lib/workflows'
 import {
   verifyHubSpotSignature,
   resolveTenantByPortal,
@@ -359,6 +360,19 @@ export async function POST(request: Request) {
         )
         for (const e of outcomeEvents) {
           await emitOutcomeEvent(supabase, e)
+        }
+        // Smart Memory Layer Phase 1 — re-derive ICP on a fresh win
+        // arriving via webhook (sub-60s vs the 6h sync). Idempotent
+        // per-day so repeated webhook deliveries collapse.
+        if (outcomeEvents.some((e) => e.event_type === 'deal_closed_won')) {
+          try {
+            await enqueueDeriveIcpOnWin(supabase, tenantId)
+          } catch (err) {
+            console.warn(
+              `[webhooks/hubspot-properties] derive_icp enqueue failed tenant=${tenantId}:`,
+              err,
+            )
+          }
         }
       }
 

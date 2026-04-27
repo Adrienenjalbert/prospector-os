@@ -1,8 +1,13 @@
 # Engineering process
 
 > This is the playbook for building, scaling, and maintaining the OS.
-> Read [`MISSION.md`](../MISSION.md) first — that's the *why*.
-> This file is the *how*.
+> Read [`MISSION.md`](../MISSION.md) first — that's the strategic *why*.
+> Read [`ARCHITECTURE.md`](../ARCHITECTURE.md) next — that's the
+> engineering *how* (three-tier harness, four loops, four agent surfaces,
+> telemetry contract, cost-discipline mechanics, cite-or-shut-up
+> enforcement).
+> This file is the *step-by-step* — how to add a tool, connector,
+> workflow, eval, tenant; the on-call playbook; the anti-patterns.
 
 The OS is designed to be modified by adding rows, not by rewriting code.
 That's the recipe for moving fast without breaking trust.
@@ -11,8 +16,9 @@ That's the recipe for moving fast without breaking trust.
 
 ## The three-tier harness — which layer owns what
 
-The OS applies structure selectively. See [`MISSION.md`](../MISSION.md) for
-the doctrine; this table is the operational reference.
+The OS applies structure selectively. See
+[`ARCHITECTURE.md`](../ARCHITECTURE.md) §3 for the full doctrine; this
+table is the operational reference.
 
 | Tier | Where it lives | What must be true | Where to look |
 |------|----------------|-------------------|---------------|

@@ -45,10 +45,19 @@ export async function runExemplarMiner(
         if (!ctx.tenantId) throw new Error('Missing tenant')
         const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
 
-        const [thumbsUps, actionsInvoked] = await Promise.all([
+        // Pull all `feedback_given` events in the window, then filter
+        // for explicit positives. The previous implementation skipped
+        // the filter entirely and treated thumbs-DOWN rows as positives
+        // — silently learning the WRONG signal. The reader-side
+        // payload key is `value` (`{ value: 'positive' | 'negative' }`),
+        // matching what `recordAgentFeedback` writes in
+        // `apps/web/src/app/actions/implicit-feedback.ts`.
+        // We accept the legacy `payload.feedback` shape for historical
+        // events written by older callers.
+        const [feedbackEvents, actionsInvoked] = await Promise.all([
           ctx.supabase
             .from('agent_events')
-            .select('interaction_id')
+            .select('interaction_id, payload')
             .eq('tenant_id', ctx.tenantId)
             .eq('event_type', 'feedback_given')
             .gte('occurred_at', since),
@@ -61,19 +70,36 @@ export async function runExemplarMiner(
         ])
 
         const positiveIds = new Set<string>()
-        for (const row of thumbsUps.data ?? []) {
-          if (row.interaction_id) positiveIds.add(row.interaction_id)
+        for (const row of feedbackEvents.data ?? []) {
+          if (!row.interaction_id) continue
+          const payload = row.payload as { value?: string; feedback?: string } | null
+          const verdict = payload?.value ?? payload?.feedback
+          if (verdict === 'positive' || verdict === 'thumbs_up') {
+            positiveIds.add(row.interaction_id)
+          }
         }
+        // `action_invoked` is an implicit-positive signal: the rep did
+        // something with the response. Strong but lower confidence than
+        // explicit thumbs-up; we still let it contribute since silent
+        // engagement is often the only feedback we get.
         for (const row of actionsInvoked.data ?? []) {
           if (row.interaction_id) positiveIds.add(row.interaction_id)
         }
 
         if (positiveIds.size === 0) return { interactions: [] }
 
+        // Defence in depth: cross-check against the per-interaction
+        // outcome row. If `agent_interaction_outcomes.feedback` is
+        // explicitly NEGATIVE, drop the interaction even when an
+        // event-stream signal said positive — the outcome row is the
+        // canonical truth (some interactions get a thumbs-up then a
+        // thumbs-down correction; the outcome row reflects the latest
+        // user verdict).
         const { data: interactions } = await ctx.supabase
           .from('agent_interaction_outcomes')
-          .select('id, query_type, query_summary, response_summary')
+          .select('id, query_type, query_summary, response_summary, feedback')
           .in('id', Array.from(positiveIds))
+          .or('feedback.is.null,feedback.neq.negative')
 
         // Join to the interaction_started event to recover role + intent_class.
         const { data: starts } = await ctx.supabase

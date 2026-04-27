@@ -25,6 +25,22 @@ export type UrnObjectType =
   | 'interaction'
   | 'eval_case'
   | 'improvement_report'
+  // Smart Memory Layer (migration 021). Tenant-scoped typed memories
+  // mined from CRM + transcripts + outcomes. Carried as the
+  // `subject_urn` on memory_* events and as inline cite tokens in
+  // agent prompts so the citation pill UI deep-links to /admin/memory.
+  | 'memory'
+  // Wiki Layer (migration 022, Phase 6 — Two-Level Second Brain).
+  // Compiled, interlinked wiki pages derived nightly from atoms.
+  // Pages are what slices read first; this URN deep-links to
+  // /admin/wiki/[id]. The id portion is the wiki_pages.id UUID.
+  | 'wiki_page'
+  // Composite Trigger Layer (migration 024, Phase 7).
+  // Typed N-ary "act now" events composed of (signal × bridge ×
+  // enrichment × time window). Carried as `subject_urn` on
+  // trigger_* events; deep-links to /admin/triggers/[id]. The id
+  // portion is the triggers.id UUID.
+  | 'trigger'
 
 export interface ParsedUrn {
   tenantId: string
@@ -92,4 +108,7 @@ export const urn = {
   meeting: (tenantId: string, id: string) => toUrn(tenantId, 'meeting', id),
   note: (tenantId: string, id: string) => toUrn(tenantId, 'note', id),
   interaction: (tenantId: string, id: string) => toUrn(tenantId, 'interaction', id),
+  memory: (tenantId: string, id: string) => toUrn(tenantId, 'memory', id),
+  wikiPage: (tenantId: string, id: string) => toUrn(tenantId, 'wiki_page', id),
+  trigger: (tenantId: string, id: string) => toUrn(tenantId, 'trigger', id),
 }

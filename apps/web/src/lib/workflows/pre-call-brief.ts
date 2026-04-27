@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { SlackDispatcher, SupabaseCooldownStore } from '@prospector/adapters'
 import type { PreCallBriefParams } from '@prospector/adapters'
 import { emitAgentEvent, urn } from '@prospector/core'
+import { loadMemoriesByScope } from '@/lib/memory/writer'
 
 import {
   startWorkflow,
@@ -254,6 +255,68 @@ export async function runPreCallBrief(
             text: s.title ?? s.description ?? s.signal_type,
             source: s.signal_type ?? 'signal',
           })
+        }
+
+        // Smart Memory Layer Phase 2 — enrich the brief with one
+        // persona archetype + one win-theme from this tenant's
+        // closed-deal mining. Industry-scoped first, tenant-wide
+        // fallback. Failures degrade gracefully (no memories yet on
+        // a Day-0 tenant just means the brief looks like the v1).
+        let companyIndustry: string | null = null
+        try {
+          const { data: comp } = await ctx.supabase
+            .from('companies')
+            .select('industry')
+            .eq('id', company.company_id)
+            .eq('tenant_id', company.tenant_id)
+            .maybeSingle()
+          companyIndustry =
+            typeof comp?.industry === 'string' && comp.industry.length > 0
+              ? comp.industry
+              : null
+        } catch {
+          // ignore — memory enrichment is best-effort
+        }
+
+        try {
+          const personaMemory = (
+            await loadMemoriesByScope(ctx.supabase, {
+              tenant_id: company.tenant_id,
+              kind: 'persona',
+              persona_role: 'champion',
+              industry: companyIndustry ?? undefined,
+              limit: 1,
+            })
+          )[0]
+          if (personaMemory) {
+            painPoints.unshift({
+              text: `Champion archetype to look for: ${personaMemory.title}`,
+              source: 'memory:persona',
+            })
+            discoveryQuestions.push(
+              `Who in your team usually owns ${(personaMemory.evidence.samples?.[0] ?? 'these decisions').toLowerCase()}?`,
+            )
+          }
+
+          const winTheme = (
+            await loadMemoriesByScope(ctx.supabase, {
+              tenant_id: company.tenant_id,
+              kind: 'win_theme',
+              industry: companyIndustry ?? undefined,
+              limit: 1,
+            })
+          )[0]
+          if (winTheme) {
+            painPoints.unshift({
+              text: `Recurring win-theme${companyIndustry ? ` in ${companyIndustry}` : ''}: ${winTheme.title}`,
+              source: 'memory:win_theme',
+            })
+          }
+        } catch (err) {
+          console.warn(
+            `[pre-call-brief] memory enrichment failed tenant=${company.tenant_id}:`,
+            err,
+          )
         }
 
         if (painPoints.length > 0) {

@@ -38,8 +38,13 @@ export {
   renderPackedSections,
   extractUrnsFromText,
   consumedSlicesFromResponse,
+  // Phase 6 (1.2) — memory and wiki_page id extraction for the bandit
+  // posterior update on the agent route's onFinish.
+  citedMemoryIdsFromResponse,
+  injectedMemoryIdsFromPacked,
   type PackContextOptions,
   type ConsumedSlice,
+  type CitedMemoryIds,
 } from './packer'
 
 export {

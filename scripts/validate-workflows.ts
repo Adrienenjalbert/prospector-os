@@ -69,6 +69,8 @@ const RLS_EXEMPT_TABLES = new Set<string>([
   'user_profiles', // global auth table; has its own RLS policy
   'cron_runs',     // ops-only, service-role writes
   'eval_runs',     // cross-tenant by design for prompt-version comparisons
+  'model_pricing', // platform-wide constants (P0.1); read-only reference data shared across tenants
+  'framework_chunks', // platform-wide sales-framework chunks (C5.1); identical across tenants
 ])
 
 // Workflows that never dispatch proactive pushes and therefore don't need

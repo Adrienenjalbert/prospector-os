@@ -8,6 +8,10 @@ export * from './types/enrichment'
 export * from './types/notifications'
 export * from './types/agent'
 export * from './types/platform'
+export * from './types/structured-outputs'
+export * from './types/memory'
+export * from './types/wiki'
+export * from './types/triggers'
 
 // Scoring Engine
 export { computeICPScore } from './scoring/icp-scorer'
@@ -40,8 +44,13 @@ export { detectStalls } from './funnel/stall-detector'
 export type { StallDetectionResult } from './funnel/stall-detector'
 export { computeImpactScores } from './funnel/impact-scorer'
 export type { StageStatus, ImpactScoreResult } from './funnel/impact-scorer'
-export { computeForecast } from './funnel/forecast'
-export type { ForecastInput, ForecastResult } from './funnel/forecast'
+export { computeForecast, computeBootstrapForecast } from './funnel/forecast'
+export type {
+  ForecastInput,
+  ForecastResult,
+  BootstrapForecastInput,
+  BootstrapForecastResult,
+} from './funnel/forecast'
 
 // Prioritisation Engine
 export { buildQueue } from './prioritisation/queue-builder'
@@ -57,6 +66,19 @@ export type { RelationshipEventInput } from './relationships/event-detector'
 // Citation Engine
 export { CitationCollector, extractCitationsFromToolResult, formatCitationFooter } from './citations'
 export type { PendingCitation, CitationConfig } from './citations'
+
+// Admin audit log — Phase 3 T2.1. Append-only record of every admin
+// write to a tenant config or proposal. T3.2 (this branch) and
+// T2.1 (PR #6) both ship this export. Same content; merge is
+// trivially mechanical.
+export {
+  recordAdminAction,
+  AUDIT_MAX_JSONB_BYTES,
+} from './audit'
+export type {
+  AdminActionSlug,
+  AdminAuditInput,
+} from './audit'
 
 // Business skills (Phase 7 — modular business_profiles replacement)
 export {
