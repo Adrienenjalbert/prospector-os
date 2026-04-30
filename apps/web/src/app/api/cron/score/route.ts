@@ -3,7 +3,18 @@ import { verifyCron, unauthorizedResponse, getServiceSupabase, recordCronRun } f
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 import { HubSpotAdapter, SalesforceAdapter } from '@prospector/adapters'
 import type { ScorePayload } from '@prospector/adapters'
-import { emitAgentEvent, type CRMActivity } from '@prospector/core'
+import { emitAgentEvent, urn, type CRMActivity } from '@prospector/core'
+import { enqueueChurnEscalation } from '@/lib/workflows/churn-escalation'
+
+/**
+ * Threshold at which a company crossing into MONITOR with elevated
+ * churn risk auto-enqueues a `churn_escalation` workflow for the
+ * account owner. MISSION §7 — "churn detected 14+ days earlier than
+ * holdout" depends on this enqueue actually firing. The threshold is
+ * deliberately conservative (≥70) to avoid escalation floods on the
+ * first scoring run after the change.
+ */
+const CHURN_ESCALATION_THRESHOLD = 70
 
 const ACTIVITIES_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const ACTIVITIES_LOOKBACK_DAYS = 30
@@ -259,6 +270,11 @@ export async function GET(req: Request) {
 
         const activities = perCompanyActivities.get(company.id) ?? []
 
+        // Capture the pre-update tier so we can detect a threshold
+        // crossing INTO MONITOR after the new score lands. Cf. the
+        // churn escalation enqueue below.
+        const prevPriorityTier = company.priority_tier as string | null
+
         const result = computeCompositeScore(
           {
             company,
@@ -318,6 +334,47 @@ export async function GET(req: Request) {
         if (updateErr) {
           console.warn(`[cron/score] company update failed (${company.id}):`, updateErr.message)
           continue
+        }
+
+        // Sprint 1, Task 3 — auto-enqueue churn_escalation when an
+        // account crosses INTO MONITOR with elevated churn risk.
+        // MISSION §7 promises "churn detected 14+ days earlier than
+        // holdout" — that depends on the escalation workflow actually
+        // firing without a CSM clicking a button. Enqueue is delta-
+        // based (prev tier ≠ new tier) so a tenant where a hundred
+        // accounts already sit in MONITOR doesn't get a hundred
+        // escalation pushes on the first run after deploy.
+        //
+        // Idempotency: enqueueChurnEscalation already keys on
+        // `escalation:{company_urn}:{YYYY-MM-DD}` so retries within a
+        // day are no-ops at the workflow_runs layer.
+        const newPriorityTier = result.priority_tier
+        const churnRiskScore = (company.churn_risk_score as number | null) ?? 0
+        const crossedIntoMonitor =
+          newPriorityTier === 'MONITOR' &&
+          prevPriorityTier !== 'MONITOR' &&
+          churnRiskScore >= CHURN_ESCALATION_THRESHOLD
+
+        if (crossedIntoMonitor && company.owner_crm_id) {
+          try {
+            const { data: ownerRep } = await supabase
+              .from('rep_profiles')
+              .select('id')
+              .eq('tenant_id', tenant.id)
+              .eq('crm_id', company.owner_crm_id)
+              .maybeSingle()
+            if (ownerRep?.id) {
+              await enqueueChurnEscalation(supabase, tenant.id, {
+                company_urn: urn.company(tenant.id, company.id),
+                owner_id: ownerRep.id,
+              })
+            }
+          } catch (escErr) {
+            const message = escErr instanceof Error ? escErr.message : String(escErr)
+            console.warn(
+              `[cron/score] churn escalation enqueue failed for ${company.id}: ${message}`,
+            )
+          }
         }
 
         // D7.3 — CRM score write-back. Pushes the freshly-computed

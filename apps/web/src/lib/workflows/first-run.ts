@@ -431,8 +431,15 @@ export async function runFirstRun(
         // We deliberately call the lower-level `sendBlocks` (not
         // `sendPreCallBrief`) because this is a different message
         // shape — bundled top-3 rather than a single account brief.
-        // The cooldown + push-budget guards still apply via the
-        // dispatcher's per-channel `recordPush` accounting.
+        //
+        // pushBudget: bypass — first_run is a one-shot welcome digest
+        // triggered immediately after onboarding completes. Bypassing
+        // the daily push cap for the very first message is correct;
+        // the user has just opted in and we want them to see the
+        // welcome rather than have it suppressed because their daily
+        // cap was already consumed by something else (which can't
+        // happen on day 1 anyway, but the validator now flags
+        // `sendBlocks` calls without explicit budget wiring).
         const dmChannel = await dispatcher.openDMChannel(rep.slack_user_id)
         const result = await dispatcher.sendBlocks({
           channel: dmChannel,

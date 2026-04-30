@@ -504,6 +504,37 @@ itself from `/admin/roi` and `/admin/adaptation`.
 If any of these stops moving in the right direction, that's a prompt
 to ship a fix — not to ship a slide.
 
+### 14.1 Mission–Reality Gap roadmap (status)
+
+A six-sprint solo-engineer roadmap closed the highest-priority
+overclaims a Q2-2026 forensic audit surfaced. The numbers above are
+still the aspirational target; this sub-section reports what's
+mechanically true today vs what remains in flight.
+
+| Claim in this doc | Status | Where it lives |
+|---|---|---|
+| §7 AE row: "Slack daily push" | **Shipped** (Sprint 2) | [`apps/web/src/lib/workflows/daily-push.ts`](apps/web/src/lib/workflows/daily-push.ts), `/api/cron/daily-push` (hourly fan-out, per-rep TZ + briefing time) |
+| §7 CSM row: "churn alerts" auto-enqueued | **Shipped** (Sprint 1) | [`apps/web/src/app/api/cron/score/route.ts`](apps/web/src/app/api/cron/score/route.ts) — delta-based threshold detection enqueues `churn_escalation` |
+| §7 Sales-Leader row: forecast / coverage / attainment | **Shipped** (Sprint 4) | `team_metrics` table + [`team-aggregation.ts`](apps/web/src/lib/workflows/team-aggregation.ts) + [`/analytics/team`](apps/web/src/app/(dashboard)/analytics/team/page.tsx) |
+| §9.1 Daily push budget enforced by validator | **Shipped** (Sprint 1) | [`scripts/validate-workflows.ts`](scripts/validate-workflows.ts) `push_budget_wired` check |
+| §9.4 "Both surfaces hit the same runtime via `assembleAgentRun`" | **Shipped** (Sprint 3) | Dashboard route delegates; Slack agent-bridge funnels both events + slash commands; parity test extended to assert delegation contract on all three routes |
+| §9.8 "No demo data in production analytics" | **Shipped** (Sprint 1) | Inbox + Pipeline pages gate demo fallback to `isDemoTenantSlug` only; real tenants get an honest empty state |
+| §10 Slack slash commands as a power-user surface | **Shipped** (Sprint 3) | `/api/slack/commands` — `/brief`, `/find`, `/snooze` |
+| §11 "DO NOT assume any specific tenant's vertical" | **Shipped** (Sprint 1) | `cron/signals` deep-research prompt now reads `business_profiles.target_industries` + `value_propositions` |
+| §12.7 "Every PR runs the eval suite; merge blocked on regression" | **Shipped** (Sprint 6) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs validators + lint + type-check + tests on every PR; smoke evals on PR (with secrets), full suite on main |
+| §14 Pull-to-Push Ratio surfaced live | **Shipped** (Sprint 6) | `/admin/roi` Pull-to-Push panel + 14-day daily ratio sparkline |
+| §14 Cited-answer rate ≥ 95% target visible | **Shipped** (Sprint 6) | `/admin/adaptation` 30-day cited-answer rate panel with 95% threshold line + below-target badge |
+| §6 Native action panel that *acts* (not just opens chat) | **Shipped** (Sprint 5) | `draft_outreach` + `diagnose_deal` go through `nativeDraftOutreach` / `nativeDiagnoseDeal` server actions; `<ActionResultCard />` renders structured output inline; "Push to CRM" wires HubSpot engagement write-back |
+| Email/calendar integration (native draft + send) | **Not yet** | Tier-2 deferred per the roadmap §3 deferral list. Outreach drafts copy-to-clipboard + push-to-CRM as a note today; native send is a future sprint. |
+| Sequence/cadence integration (Outreach/Salesloft) | **Not yet** | Tier-2 deferred. |
+| Mobile / PWA | **Not yet** | Tier-2 deferred — Slack remains the mobile-viable surface. |
+
+The §14 success-table targets above are not retrospective scores —
+they're the bar a successful 16-week pilot has to clear. The
+mechanical scaffolding to *measure* every one of them now exists in
+the product. Whether they're hit is up to the next pilot's data, not
+this doc.
+
 ---
 
 ## 15. Where to look

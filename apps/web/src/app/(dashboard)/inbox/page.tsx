@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { urn } from '@prospector/core'
 import { QueueHeader, type PipelineStage } from '@/components/priority/queue-header'
@@ -131,15 +132,19 @@ const DEMO_ITEMS: PriorityItem[] = [
   },
 ]
 
-async function fetchRealData(): Promise<{
+interface RealInboxData {
   items: PriorityItem[]
   repName: string
+  isDemoTenant: boolean
+  hasCrmConnection: boolean
   completedTodayCount?: number
   showWeeklyPulse?: boolean
   topAccountForPulse?: PriorityItem | null
   pipelineStages?: PipelineStage[]
   totalPipelineValue?: number
-} | null> {
+}
+
+async function fetchRealData(): Promise<RealInboxData | null> {
   try {
     const { createSupabaseServer } = await import('@/lib/supabase/server')
     const supabase = await createSupabaseServer()
@@ -153,24 +158,32 @@ async function fetchRealData(): Promise<{
       .single()
     if (!profile?.tenant_id) return null
 
+    const { data: tenant } = await supabase
+      .from('tenants')
+      .select('slug')
+      .eq('id', profile.tenant_id)
+      .maybeSingle()
+    const isDemoTenant = isDemoTenantSlug(tenant?.slug)
+
     const { count: companyCount, error: companyCountErr } = await supabase
       .from('companies')
       .select('*', { count: 'exact', head: true })
       .eq('tenant_id', profile.tenant_id)
 
-    if (!companyCountErr && (companyCount ?? 0) === 0) {
-      const { data: tenant, error: tenantErr } = await supabase
-        .from('tenants')
-        .select('slug')
-        .eq('id', profile.tenant_id)
-        .maybeSingle()
+    const hasCrmConnection = !companyCountErr && (companyCount ?? 0) > 0
 
-      if (!tenantErr && tenant && !isDemoTenantSlug(tenant.slug)) {
-        redirect('/onboarding')
-      }
+    if (!hasCrmConnection && !isDemoTenant) {
+      redirect('/onboarding')
     }
 
-    if (!profile?.rep_profile_id) return null
+    if (!profile?.rep_profile_id) {
+      return {
+        items: [],
+        repName: profile.full_name ?? 'there',
+        isDemoTenant,
+        hasCrmConnection,
+      }
+    }
 
     const { data: repProfile } = await supabase
       .from('rep_profiles')
@@ -178,7 +191,14 @@ async function fetchRealData(): Promise<{
       .eq('id', profile.rep_profile_id)
       .single()
     const repCrmId = repProfile?.crm_id
-    if (!repCrmId) return null
+    if (!repCrmId) {
+      return {
+        items: [],
+        repName: profile.full_name ?? 'there',
+        isDemoTenant,
+        hasCrmConnection,
+      }
+    }
 
     const [companiesRes, signalsRes, stalledRes, contactsRes, allOppsRes] =
       await Promise.all([
@@ -257,7 +277,14 @@ async function fetchRealData(): Promise<{
       }))
       .sort((a, b) => b._priority - a._priority)
       .slice(0, 10)
-    if (companies.length === 0) return null
+    if (companies.length === 0) {
+      return {
+        items: [],
+        repName: profile.full_name ?? 'there',
+        isDemoTenant,
+        hasCrmConnection,
+      }
+    }
 
     const signals = signalsRes.data ?? []
     const stalls = stalledRes.data ?? []
@@ -424,6 +451,8 @@ async function fetchRealData(): Promise<{
     return {
       items,
       repName: profile.full_name,
+      isDemoTenant,
+      hasCrmConnection,
       completedTodayCount: typeof completedTodayCount === 'number' ? completedTodayCount : 0,
       showWeeklyPulse: showWeeklyPulse && !pulseAlreadySubmitted,
       topAccountForPulse,
@@ -435,14 +464,83 @@ async function fetchRealData(): Promise<{
   }
 }
 
+/**
+ * MISSION §9.8 — "No demo data in production analytics. Empty states beat
+ * fake numbers." Demo data is only allowed for tenants explicitly flagged
+ * as demo (slug in NEXT_PUBLIC_DEMO_TENANT_SLUGS or `demo`/`sandbox`).
+ * Real tenants with no priorities see an honest empty state pointing
+ * them at the next step (onboarding or the ontology browser).
+ */
+function EmptyInbox({
+  repName,
+  hasCrmConnection,
+}: {
+  repName: string
+  hasCrmConnection: boolean
+}) {
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
+        No priorities for you yet, {repName}
+      </h1>
+      <p className="mt-2 text-sm text-zinc-400">
+        {hasCrmConnection
+          ? "Once your CRM has accounts assigned to you, ranked priorities will appear here. The nightly scoring run picks them up."
+          : "Connect your CRM to start surfacing the accounts and deals that need your attention today."}
+      </p>
+      <div className="mt-6 flex flex-wrap gap-3">
+        {hasCrmConnection ? (
+          <Link
+            href="/objects/companies"
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-100 hover:bg-zinc-800"
+          >
+            Browse companies
+          </Link>
+        ) : (
+          <Link
+            href="/onboarding"
+            className="rounded-md border border-sky-700 bg-sky-900/40 px-4 py-2 text-sm text-sky-100 hover:bg-sky-900/60"
+          >
+            Connect your CRM
+          </Link>
+        )}
+        <Link
+          href="/admin/roi"
+          className="rounded-md border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900"
+        >
+          See adoption + ROI
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 export default async function InboxPage() {
   const realData = await fetchRealData()
-  const useDemoData = !realData || realData.items.length === 0
-  const displayItems = useDemoData ? DEMO_ITEMS : realData!.items
-  const repName = realData?.repName ?? 'there'
-  const completedTodayCount = realData?.completedTodayCount ?? 0
-  const showWeeklyPulse = realData?.showWeeklyPulse ?? false
-  const topAccountForPulse = realData?.topAccountForPulse ?? null
+
+  if (!realData) {
+    return <EmptyInbox repName="there" hasCrmConnection={false} />
+  }
+
+  // MISSION §9.8 — demo data only for explicitly flagged demo tenants.
+  // Real tenants get an honest empty state, not fabricated priorities.
+  const isDemoTenantWithoutData = realData.isDemoTenant && realData.items.length === 0
+  const useDemoData = isDemoTenantWithoutData
+
+  if (!useDemoData && realData.items.length === 0) {
+    return (
+      <EmptyInbox
+        repName={realData.repName}
+        hasCrmConnection={realData.hasCrmConnection}
+      />
+    )
+  }
+
+  const displayItems = useDemoData ? DEMO_ITEMS : realData.items
+  const repName = realData.repName
+  const completedTodayCount = realData.completedTodayCount ?? 0
+  const showWeeklyPulse = realData.showWeeklyPulse ?? false
+  const topAccountForPulse = realData.topAccountForPulse ?? null
 
   const demoPipelineStages: PipelineStage[] = [
     { name: 'Lead', count: 12, value: 280_000, stallCount: 0 },
@@ -451,8 +549,8 @@ export default async function InboxPage() {
     { name: 'Negotiation', count: 2, value: 90_000, stallCount: 0 },
   ]
 
-  const livePipelineStages = realData?.pipelineStages
-  const liveTotalPipeline = realData?.totalPipelineValue
+  const livePipelineStages = realData.pipelineStages
+  const liveTotalPipeline = realData.totalPipelineValue
   const showPipelineStages = useDemoData ? demoPipelineStages : (livePipelineStages ?? undefined)
   const showPipelineTotal = useDemoData ? demoPipelineStages.reduce((s, st) => s + st.value, 0) : (liveTotalPipeline ?? undefined)
 
@@ -542,7 +640,8 @@ export default async function InboxPage() {
       {useDemoData && (
         <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-3">
           <p className="text-sm text-amber-300/80">
-            Showing demo data. Connect your CRM to see your real priorities.
+            Demo tenant — illustrative data only. Real priorities appear once
+            production scoring runs against connected CRM data.
           </p>
         </div>
       )}

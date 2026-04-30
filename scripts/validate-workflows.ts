@@ -20,6 +20,12 @@
  *                         [MISSION "do not bypass holdout"]
  *   cooldown_usage        Every Slack dispatch uses SupabaseCooldownStore.
  *                         [cursorrules common-mistake]
+ *   push_budget_wired     Every workflow constructing SlackDispatcher must
+ *                         either pass a Supabase client to the constructor
+ *                         (so the dispatcher can call checkPushBudget) AND
+ *                         pass a pushBudget options block to its dispatch
+ *                         calls, OR explicitly bypass with a documented
+ *                         comment. [MISSION §9.1 "do not bypass push budget"]
  *   cost_discipline       Every generateText/streamText sets maxTokens and
  *                         stopWhen. [PROCESS cost discipline]
  *   rls_on_tables         Every CREATE TABLE in migrations has a matching
@@ -223,6 +229,93 @@ function checkCooldownUsage(sf: SourceFile) {
         ctor.getStartLineNumber(),
       )
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Check 4b: push_budget_wired — any workflow that constructs SlackDispatcher
+// must wire the daily push budget. The dispatcher's `checkPushBudget` only
+// fires when (a) the constructor receives a supabase client AND (b) each
+// `dispatcher.sendX(...)` call passes a third positional `pushBudget` arg.
+// MISSION §9.1: "Daily proactive push budget per rep capped by
+// alert_frequency". Pre-this-check several workflows quietly bypassed
+// the cap because the validator only checked holdout + cooldown.
+//
+// Bypass: a workflow that genuinely needs to skip the budget (e.g. an
+// urgent one-shot escalation) can mark its dispatch with the explicit
+// comment `// pushBudget: bypass` on the line above the send call —
+// the regex below allows that.
+// ---------------------------------------------------------------------------
+
+function checkPushBudgetWired(sf: SourceFile) {
+  const relpath = relFile(sf.getFilePath())
+  const text = sf.getFullText()
+  if (!/\bSlackDispatcher\b/.test(text)) return
+
+  const constructs = sf
+    .getDescendantsOfKind(SyntaxKind.NewExpression)
+    .filter((n) => n.getExpression().getText() === 'SlackDispatcher')
+
+  // Constructor arity: SlackDispatcher(token, cooldownStore?, supabase?).
+  // For push budget enforcement to fire at all the constructor needs the
+  // 3rd arg (or a cooldownStore that itself carries .supabase). We treat
+  // the 3rd-arg form as the canonical wiring; flag the 1- or 2-arg form
+  // unless the file marks it deliberately.
+  // Use a fairly generous window for the bypass comment so it can sit
+  // inside the function-body block without being missed (multi-line
+  // comments + blank lines easily eat 200 chars). The comment is intended
+  // to be co-located with the call, not file-scope, so 800 chars is more
+  // than enough breathing room without being so large it leaks across
+  // sibling functions.
+  const BYPASS_WINDOW = 800
+  for (const ctor of constructs) {
+    const args = ctor.getArguments()
+    if (args.length < 3) {
+      const surroundingText = sf
+        .getFullText()
+        .slice(Math.max(0, ctor.getStart() - BYPASS_WINDOW), ctor.getEnd())
+      const hasBypassComment = /pushBudget:\s*bypass/.test(surroundingText)
+      if (!hasBypassComment) {
+        fail(
+          'push_budget_wired',
+          relpath,
+          'new SlackDispatcher(...) must receive a Supabase client (3rd arg) so the daily push budget gate fires — or annotate with `// pushBudget: bypass` for explicit opt-out',
+          ctor.getStartLineNumber(),
+        )
+      }
+    }
+  }
+
+  // Send calls: dispatcher.sendX(params, cooldown, pushBudget).
+  // The third positional arg is what flips on the budget check at the
+  // dispatcher layer. Look for any `.send<Capital>(...)` invocation and
+  // require either ≥3 args, an explicit pushBudget property in an opts
+  // object, or a `// pushBudget: bypass` comment.
+  const sendCalls = sf.getDescendantsOfKind(SyntaxKind.CallExpression).filter((c) => {
+    const expr = c.getExpression()
+    if (!expr.isKind(SyntaxKind.PropertyAccessExpression)) return false
+    const name = expr.getName?.() ?? ''
+    return name.startsWith('send') && /^send[A-Z]/.test(name)
+  })
+
+  for (const call of sendCalls) {
+    const args = call.getArguments()
+    const allArgsText = args.map((a) => a.getText()).join(' ')
+    const hasPushBudgetArg = args.length >= 3 || /\brepUserId\b/.test(allArgsText)
+    if (hasPushBudgetArg) continue
+
+    const surroundingText = sf
+      .getFullText()
+      .slice(Math.max(0, call.getStart() - BYPASS_WINDOW), call.getEnd())
+    const hasBypassComment = /pushBudget:\s*bypass/.test(surroundingText)
+    if (hasBypassComment) continue
+
+    fail(
+      'push_budget_wired',
+      relpath,
+      `${call.getExpression().getText()}(...) must pass a third positional pushBudget options arg (or annotate with \`// pushBudget: bypass\`) — MISSION §9.1`,
+      call.getStartLineNumber(),
+    )
   }
 }
 
@@ -508,6 +601,7 @@ for (const sf of sources) {
   checkStartWorkflowCalls(sf)
   checkHoldoutImport(sf)
   checkCooldownUsage(sf)
+  checkPushBudgetWired(sf)
   checkCostDiscipline(sf)
   checkEnqueueRunExports(sf)
   checkDagDependencies(sf)

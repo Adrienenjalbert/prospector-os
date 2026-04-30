@@ -1,12 +1,10 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { verifySlackRequest } from '@/lib/slack/verify'
+import { callAgentForText } from '@/lib/slack/agent-bridge'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-const SLACK_VERSION = 'v0'
-const MAX_TIMESTAMP_SKEW_SEC = 60 * 5
 
 function getServiceSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -15,28 +13,6 @@ function getServiceSupabase() {
     throw new Error('Missing Supabase URL or service role key')
   }
   return createClient(url, key, { auth: { persistSession: false } })
-}
-
-function verifySlackRequest(signingSecret: string, rawBody: string, requestTimestamp: string, slackSignature: string): boolean {
-  const tsNum = Number(requestTimestamp)
-  if (!Number.isFinite(tsNum)) return false
-  const nowSec = Math.floor(Date.now() / 1000)
-  if (Math.abs(nowSec - tsNum) > MAX_TIMESTAMP_SKEW_SEC) {
-    return false
-  }
-
-  const base = `${SLACK_VERSION}:${requestTimestamp}:${rawBody}`
-  const hmac = createHmac('sha256', signingSecret).update(base, 'utf8').digest('hex')
-  const expected = `${SLACK_VERSION}=${hmac}`
-
-  try {
-    const a = Buffer.from(slackSignature, 'utf8')
-    const b = Buffer.from(expected, 'utf8')
-    if (a.length !== b.length) return false
-    return timingSafeEqual(a, b)
-  } catch {
-    return false
-  }
 }
 
 type SlackBlockAction = {
@@ -287,103 +263,11 @@ async function postToResponseUrl(
   })
 }
 
-async function callAgentForText(
-  tenantId: string,
-  repId: string,
-  messageText: string,
-): Promise<string> {
-  // Track D — Slack and dashboard share the same per-turn assembly
-  // via `assembleAgentRun`. The only thing this route does
-  // differently from the dashboard is:
-  //   - generateText (final) instead of streamText (incremental)
-  //   - no compaction (Slack DMs are single-turn)
-  //   - no rep-level rate-limit (the Slack adapter cooldown owns
-  //     this for proactive pushes; reactive DMs are user-driven so
-  //     a separate budget cap is not needed at this layer)
-  //
-  // Everything else — tool loading, context pack, citations,
-  // intent-aware model selection, cache breakpoints — comes
-  // straight from the shared helper so the rep gets the SAME
-  // answer in Slack as in the dashboard for the same question.
-  const { createClient } = await import('@supabase/supabase-js')
-  const { generateText } = await import('ai')
-  const { getModel } = await import('@/lib/agent/model-registry')
-  const { assembleAgentRun } = await import('@/lib/agent/run-agent')
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
-  )
-
-  // Tenant context: we need the AI budget snapshot + model routing
-  // overrides so `chooseModel` can do its 90%-budget Haiku downgrade.
-  // Pre-this-change Slack hardcoded Haiku so a tenant on Sonnet
-  // budget got Sonnet on the dashboard but Haiku in Slack — the
-  // exact behaviour-drift the parity contract bans.
-  const { data: tenantRow } = await supabase
-    .from('tenants')
-    .select('crm_type, ai_token_budget_monthly, ai_tokens_used_current, business_config')
-    .eq('id', tenantId)
-    .maybeSingle()
-
-  const tokensUsed = (tenantRow?.ai_tokens_used_current as number | null) ?? 0
-  const budget = (tenantRow?.ai_token_budget_monthly as number | null) ?? 1_000_000
-  const modelRouting =
-    ((tenantRow?.business_config as Record<string, unknown> | null)?.model_routing as
-      | Record<string, string>
-      | null) ?? null
-
-  // Lightweight intent classification (mirror of the agent route's
-  // regex set in apps/web/src/app/api/agent/route.ts:classifyIntent).
-  // Kept inline rather than imported to avoid a circular dep across
-  // the route boundary.
-  const t = messageText.toLowerCase()
-  const intentClass: import('@/lib/agent/context').IntentClass = /(draft|write|email|outreach)/.test(t)
-    ? 'draft_outreach'
-    : /(stall|risk|stuck)/.test(t)
-      ? 'risk_analysis'
-      : /(brief|prep|meeting)/.test(t)
-        ? 'meeting_prep'
-        : /(why|cause|diagnose)/.test(t)
-          ? 'diagnosis'
-          : 'general_query'
-
-  const interactionId = crypto.randomUUID()
-
-  const assembled = await assembleAgentRun({
-    supabase,
-    tenantId,
-    repId,
-    userId: repId, // Slack uses rep crm id for telemetry scoping
-    role: 'ae',
-    agentTypeOverride: 'pipeline-coach',
-    activeUrn: null,
-    pageContext: undefined,
-    userMessageText: messageText,
-    intentClass,
-    messages: [{ role: 'user', content: messageText }],
-    interactionId,
-    crmType: (tenantRow?.crm_type as string | null) ?? null,
-    tokensUsedThisMonth: tokensUsed,
-    monthlyBudget: budget,
-    tenantModelRouting: modelRouting,
-    // Slack DMs default to brief — the rep is on their phone, the
-    // signal-over-noise rule says ≤150 words.
-    repCommStyle: 'brief',
-  })
-
-  const result = await generateText({
-    model: getModel(assembled.modelId),
-    messages: assembled.messages,
-    tools: assembled.tools,
-    maxSteps: 8, // dashboard parity (was 4)
-    temperature: 0.3,
-    maxTokens: assembled.responseTokenCap,
-  })
-
-  return result.text || 'Sorry, I could not generate a response.'
-}
+// Sprint 3: callAgentForText was extracted to
+// apps/web/src/lib/slack/agent-bridge.ts so the new /api/slack/commands
+// route can re-use the same agent invocation without copying it. Both
+// routes import from the shared module — the parity test asserts both
+// routes go through `assembleAgentRun`.
 
 async function callAgentAndReply(
   ctx: { tenant_id: string; rep_crm_id: string },

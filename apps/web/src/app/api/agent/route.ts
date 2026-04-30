@@ -1,31 +1,17 @@
-import { streamText, convertToCoreMessages, type CoreMessage } from 'ai'
+import { streamText } from 'ai'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
-import {
-  assembleContextForStrategy,
-  assembleContextPack,
-  pickContextStrategy,
-} from '@/lib/agent/context-strategies'
 import {
   consumedSlicesFromResponse,
   citedMemoryIdsFromResponse,
   injectedMemoryIdsFromPacked,
   type IntentClass,
-  type PackedContext,
 } from '@/lib/agent/context'
 import {
   updateMemoryPosteriors,
   updateWikiPagePosteriors,
 } from '@/lib/memory/bandit'
-import type { AgentContext } from '@prospector/core'
-import {
-  AGENT_TYPES,
-  buildSystemPromptForAgent,
-  buildSystemPromptParts,
-  dispatchAgent,
-  loadToolsForDispatch,
-  type AgentRole,
-} from '@/lib/agent/tools'
+import { AGENT_TYPES, type AgentRole } from '@/lib/agent/tools'
 import {
   CitationCollector,
   emitAgentEvent,
@@ -34,14 +20,11 @@ import {
   type AgentEventInput,
 } from '@prospector/core'
 import { recordCitationsFromToolResult } from '@/lib/agent/citations'
-import { chooseModel, getModel } from '@/lib/agent/model-registry'
+import { getModel } from '@/lib/agent/model-registry'
 import { getHaikuThumbsUpRate } from '@/lib/agent/intent-quality'
-import {
-  loadProfilesForPrompt,
-  synthesizePackerSuccessContext,
-} from '@/lib/agent/profile-loader'
 import { compactConversation, COMPACTION_CONSTANTS } from '@/lib/agent/compaction'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { assembleAgentRun } from '@/lib/agent/run-agent'
 
 // `ROLLING_MESSAGE_LIMIT` is the persistence cap on
 // `ai_conversations.messages`. It must be at least the compaction tail
@@ -241,58 +224,19 @@ export async function POST(req: Request) {
       )
     }
 
-    // D7.2 — intent-aware routing. The route already has the intent
-    // classified above; pass it through alongside the per-tenant
-    // model_routing override so the chooseModel policy can downgrade
-    // cheap intents to Haiku safely.
-    //
-    // Quality gate (PR1): load the tenant's historical Haiku
-    // thumbs-up rate for this intent so chooseModel can refuse the
-    // downgrade when production data shows Haiku regresses quality
-    // for THIS tenant on THIS intent. The loader returns undefined
-    // when sample_count < 10 (or on any error), which chooseModel
-    // treats as "no gate signal — apply default policy".
+    // D7.2 — intent-aware routing snapshot. We pre-load the historical
+    // Haiku thumbs-up rate so we can pass it to assembleAgentRun
+    // (avoids a redundant DB roundtrip there) AND surface it in the
+    // interaction_started event payload below.
     const tenantBizConfig = (tenantRow.business_config as Record<string, unknown> | null) ?? {}
     const tenantModelRouting = (tenantBizConfig.model_routing ?? null) as
       | Record<string, string>
       | null
     const haikuThumbsUpRate = await getHaikuThumbsUpRate(supabase, tenantId, intentClass)
-    const modelId = chooseModel({
-      tokensUsedThisMonth: tokensUsed,
-      monthlyBudget: budget,
-      intentClass,
-      tenantOverride: tenantModelRouting ?? undefined,
-      historicalHaikuThumbsUpRate: haikuThumbsUpRate,
-    })
 
     const interactionId = crypto.randomUUID()
     const citations = new CitationCollector(tenantId, interactionId)
     const citationCtx = { collector: citations, crmType: tenantRow.crm_type ?? null }
-
-    // Emit interaction_started so the event log has one authoritative start marker.
-    // This is the anchor every later event in the learning loop keys off.
-    await emitAgentEvent(supabase, {
-      tenant_id: tenantId,
-      interaction_id: interactionId,
-      user_id: user.id,
-      role: userRole,
-      event_type: 'interaction_started',
-      subject_urn: subjectUrn,
-      payload: {
-        agent_type: agentType,
-        intent_class: intentClass,
-        model: modelId,
-        message_count: messages.length,
-        last_user_message: truncate(lastUserMessage, 300),
-        page: context.pageContext?.page ?? null,
-      },
-    })
-
-    const dispatch = dispatchAgent({
-      role: userRole,
-      activeUrn: subjectUrn,
-      explicitAgentType: agentType,
-    })
 
     // Resolve the active conversation row up-front so per-conversation
     // tools (record_conversation_note) and the conversation-memory slice
@@ -313,133 +257,15 @@ export async function POST(req: Request) {
       .maybeSingle()
     const activeConversationId = existingConversation?.id ?? null
 
-    const tools = await loadToolsForDispatch({
-      supabase,
-      tenantId,
-      repId,
-      userId: user.id,
-      role: dispatch.role as AgentRole,
-      agentType: dispatch.agentType,
-      activeUrn: dispatch.activeUrn,
-      interactionId,
-      intentClass,
-      conversationId: activeConversationId,
-    })
-
-    const contextSelection = pickContextStrategy({
-      role: userRole,
-      activeUrn: subjectUrn,
-    })
-
-    // PR3: Run the packer FIRST. The legacy `assembleContextForStrategy`
-    // is now the packer-failure fallback, not an unconditional parallel
-    // fetch.
-    //
-    // Trade-off: when the packer runs first, we don't yet have the
-    // `intentHints` that used to come from the legacy AgentContext —
-    // so the slice selector falls back to defaults
-    // (stage='other', isStalled=false, signalTypes=[]). This matches
-    // the existing Slack behaviour (run-agent.ts already calls the
-    // packer without hints). Net effect: minor relevance loss for
-    // `whenStalled`-triggered + signal-substring-scored slices on
-    // rep_centric/portfolio strategies. For deep strategies the
-    // legacy assembler already skipped the queries that fed those
-    // hints (B4.2), so no change.
-    //
-    // The saving: packer-success path replaces 7-9 legacy queries
-    // with a single rep_profile load (the only legacy field the
-    // prompt builders still consume). The packer is the source of
-    // truth for slice rendering via `formatPackedSections(packed)`.
-    const isOnboardingDispatch = dispatch.agentType === 'onboarding-coach'
-
-    const packed: PackedContext | null = isOnboardingDispatch
-      ? null
-      : await assembleContextPack({
-          supabase,
-          tenantId,
-          repId,
-          userId: user.id,
-          role: dispatch.role,
-          selection: contextSelection,
-          intentClass: intentClass,
-          pageContext: context.pageContext,
-          interactionId,
-          crmType: tenantRow.crm_type ?? null,
-          // C5.2: forward the user message so RAG slices can do
-          // similarity retrieval keyed on the actual question.
-          userMessageText: lastUserMessage,
-        }).catch((err) => {
-          // Context Pack failures must NEVER break a turn — log and
-          // proceed with the legacy AgentContext only.
-          console.warn('[agent] context-pack failed:', err)
-          return null
-        })
-
-    // Resolve `agentContext` based on whether the packer succeeded.
-    // Success path: just the rep_profile (one query). Failure path:
-    // full legacy assembler (preserves pre-PR3 graceful degradation).
-    let agentContext: AgentContext | null
-    if (isOnboardingDispatch) {
-      agentContext = null
-    } else if (packed) {
-      const profiles = await loadProfilesForPrompt(supabase, tenantId, repId)
-      agentContext = synthesizePackerSuccessContext(profiles)
-      if (!agentContext) {
-        // Misconfigured tenant (no rep_profile row matching crm_id)
-        // — drop into the legacy assembler so the prompt at least
-        // gets the rest of its data. Avoids a silent regression
-        // where the rep header reads "the rep" forever.
-        console.warn(
-          '[agent] profile-loader returned null rep_profile — falling back to legacy assembler',
-        )
-        agentContext = await assembleContextForStrategy({
-          supabase,
-          tenantId,
-          repId,
-          selection: contextSelection,
-          pageContext: context.pageContext,
-        })
-      }
-    } else {
-      // Packer failed — full legacy assembler is the graceful
-      // degradation path. Preserves pre-PR3 behaviour exactly.
-      agentContext = await assembleContextForStrategy({
-        supabase,
-        tenantId,
-        repId,
-        selection: contextSelection,
-        pageContext: context.pageContext,
-      })
-    }
-
-
-    // Forward slice citations into the collector so the same UI pills
-    // surface them. Cite-or-shut-up holds for context evidence too.
-    if (packed) {
-      for (const c of packed.citations) {
-        citations.addCitation(c)
-      }
-    }
-
-    // Build the system prompt as parts so both the static prefix AND
-    // the trailing behaviour-rules block can be marked for Anthropic
-    // prompt caching (B3.1 — two breakpoints). `intentClass` + `role`
-    // drive per-turn exemplar selection (A1.1) — the dynamic suffix
-    // splices the matching mined few-shots when present.
-    const promptParts = await buildSystemPromptParts(
-      dispatch.agentType,
-      tenantId,
-      agentContext,
-      packed,
-      { intentClass, role: dispatch.role },
-    )
-
     // Compact the message history (Phase 3.9). Threads ≤ 12 messages
-    // pass through unchanged; longer threads get the older half summarised
-    // by Haiku into a single leading `system` message and the last 8
-    // verbatim. Persisted on ai_conversations.summary_text so the cache
-    // hits on subsequent turns. Falls back to a rolling slice if the
-    // Haiku call fails — the turn never breaks because compaction failed.
+    // pass through unchanged; longer threads get the older half
+    // summarised by Haiku into a single leading `system` message and
+    // the last 8 verbatim. Persisted on `ai_conversations.summary_text`
+    // so the cache hits on subsequent turns. Falls back to a rolling
+    // slice if the Haiku call fails — the turn never breaks because
+    // compaction failed. Compaction is route-owned (not in
+    // assembleAgentRun) because it needs the conversation row id and
+    // is a per-turn write to ai_conversations.summary_text.
     const compacted = await compactConversation({
       messages: messages.map((m) => ({
         role: m.role as 'user' | 'assistant' | 'system',
@@ -449,87 +275,74 @@ export async function POST(req: Request) {
       conversationId: activeConversationId,
     })
 
-    // Anthropic supports up to 4 cache breakpoints; we use TWO here
-    // (B3.1) so both the tenant/role-stable PREFIX and the
-    // tenant/role-stable trailing BEHAVIOUR RULES get cached, while
-    // per-turn dynamic data flows uncached between them. Layout:
-    //
-    //   system: staticPrefix      ← cached (breakpoint 1)
-    //   system: dynamicSuffix     ← per-turn, never cached
-    //   system: cacheableSuffix   ← cached (breakpoint 2) — usually
-    //                                commonBehaviourRules() at ~1.2k
-    //                                tokens. Kept at the end of the
-    //                                prompt for the lost-in-the-middle
-    //                                attention bonus on citation
-    //                                discipline.
-    //
-    // Onboarding-coach has no dynamic suffix and no cacheable suffix
-    // today, but we still cache its single static prefix (B3.2) — every
-    // onboarding-coach turn after the first re-uses the same large
-    // prompt, so caching it is pure win.
-    const baseUserMessages = convertToCoreMessages(compacted.messages)
+    // Sprint 3 — Slack/dashboard parity. Both routes now go through
+    // assembleAgentRun for tool loading, context assembly, prompt
+    // building, model selection, and the two-breakpoint cache layout.
+    // The dashboard route remains responsible for auth, rate limiting,
+    // ai_token_budget enforcement, conversation persistence, and
+    // streaming response — none of which are part of "what the model
+    // sees". MISSION §9.4 promises both surfaces hit the same runtime;
+    // this delegation is the mechanical implementation.
+    const assembled = await assembleAgentRun({
+      supabase,
+      tenantId,
+      repId,
+      userId: user.id,
+      role: userRole as AgentRole,
+      agentTypeOverride: agentType,
+      activeUrn: subjectUrn,
+      pageContext: context.pageContext,
+      userMessageText: lastUserMessage,
+      intentClass,
+      messages: compacted.messages.map((m) => ({
+        role: m.role as 'user' | 'assistant' | 'system',
+        content: m.content,
+      })),
+      interactionId,
+      conversationId: activeConversationId,
+      crmType: tenantRow.crm_type ?? null,
+      tokensUsedThisMonth: tokensUsed,
+      monthlyBudget: budget,
+      tenantModelRouting,
+      // Forward the rate so assembleAgentRun skips its own loader
+      // (idempotency-of-DB-load — the test pins this contract).
+      historicalHaikuThumbsUpRate: haikuThumbsUpRate,
+    })
 
-    const cacheableSuffix = promptParts.cacheableSuffix ?? ''
-    const hasDynamic = promptParts.dynamicSuffix.length > 0
-    const hasCacheableSuffix = cacheableSuffix.length > 0
+    const { modelId, dispatch, tools, messages: messagesForStream, responseTokenCap, agentContext, packedContext: packed } = assembled
 
-    const messagesForStream: CoreMessage[] = []
+    // Forward slice citations into the route's collector so the UI
+    // pills + onFinish persistence see them. Cite-or-shut-up holds for
+    // context evidence too — the assembleAgentRun packer collected
+    // them; the route flushes them.
+    if (packed) {
+      for (const c of packed.citations) {
+        citations.addCitation(c)
+      }
+    }
 
-    // Always cache the static prefix when we have any further parts to
-    // stitch in. This is the B3.2 fix: previously the onboarding-coach
-    // (no dynamic, no suffix) fell into the `useCaching=false` branch
-    // and lost the cache entirely. Now even the prefix-only case caches.
-    messagesForStream.push({
-      role: 'system' as const,
-      content: promptParts.staticPrefix,
-      providerOptions: {
-        anthropic: { cacheControl: { type: 'ephemeral' } },
+    // Emit interaction_started AFTER assembleAgentRun so the payload
+    // can record the resolved model id (otherwise the event's `model`
+    // field would be a guess). This is the anchor every later event
+    // in the learning loop keys off.
+    await emitAgentEvent(supabase, {
+      tenant_id: tenantId,
+      interaction_id: interactionId,
+      user_id: user.id,
+      role: userRole,
+      event_type: 'interaction_started',
+      subject_urn: subjectUrn,
+      payload: {
+        agent_type: agentType,
+        intent_class: intentClass,
+        model: modelId,
+        message_count: messages.length,
+        last_user_message: truncate(lastUserMessage, 300),
+        page: context.pageContext?.page ?? null,
       },
     })
 
-    if (hasDynamic) {
-      messagesForStream.push({
-        role: 'system' as const,
-        content: promptParts.dynamicSuffix,
-      })
-    }
-
-    if (hasCacheableSuffix) {
-      messagesForStream.push({
-        role: 'system' as const,
-        content: cacheableSuffix,
-        providerOptions: {
-          anthropic: { cacheControl: { type: 'ephemeral' } },
-        },
-      })
-    }
-
-    messagesForStream.push(...baseUserMessages)
-
     const toolCallsMade: string[] = []
-
-    // Server-side enforcement of MISSION's "≤ 150 words short-form" rule
-    // via `maxTokens`. The behaviour-rules block already tells the model
-    // to stay short, but a model with 3000 token budget can drift into
-    // 600-word answers when the prompt rule loses to verbose tool
-    // responses. By scaling the output cap to the rep's `comm_style` we
-    // make the cap structural rather than aspirational:
-    //   - brief  → ~80 words / ~120 tokens × 4 buffer = 480
-    //   - casual → ~150 words / ~225 tokens × 4 buffer = 900
-    //   - formal → ~200 words / ~300 tokens × 4 buffer = 1200
-    //   - default (no rep_profile) → 3000 (legacy behaviour, no regression)
-    // Tool calls + reasoning land in `usage.totalTokens`; this cap only
-    // bounds the final response text. A draft-letter tool returning a
-    // 500-word email body still works because it lives in the tool result.
-    const repCommStyle = agentContext?.rep_profile?.comm_style ?? null
-    const responseTokenCap =
-      repCommStyle === 'brief'
-        ? 480
-        : repCommStyle === 'casual'
-          ? 900
-          : repCommStyle === 'formal'
-            ? 1200
-            : 3000
 
     const result = streamText({
       model: getModel(modelId),

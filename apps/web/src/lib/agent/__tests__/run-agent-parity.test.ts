@@ -431,6 +431,76 @@ describe('assembleAgentRun (Track D parity)', () => {
     expect(out.agentContext?.rep_profile).toBe(expectedRep)
   })
 
+  // Sprint 3 (Mission–Reality Gap): the dashboard route MUST delegate
+  // to assembleAgentRun. Pre-this-sprint the dashboard had its own
+  // inline assembly, so this test would silently pass while the
+  // surfaces drifted. The static-import assertion below locks it in.
+  // Both static and dynamic import shapes count — the dashboard route
+  // uses static `import { ... } from '@/lib/agent/run-agent'` while
+  // earlier Slack routes used `await import('@/lib/agent/run-agent')`.
+  // The regex below accepts either.
+  const RUN_AGENT_IMPORT_RE = /(?:from|import)\s*\(?\s*['"]@\/lib\/agent\/run-agent['"]/
+  // Sprint 3 introduced `apps/web/src/lib/slack/agent-bridge.ts` so
+  // both Slack routes (events + commands) reuse one
+  // `assembleAgentRun` invocation. Check imports against that bridge
+  // OR direct run-agent import — either route shape preserves
+  // parity.
+  const SLACK_BRIDGE_IMPORT_RE = /(?:from|import)\s*\(?\s*['"]@\/lib\/slack\/agent-bridge['"]/
+
+  it('the dashboard route imports assembleAgentRun (delegation contract)', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const routeFile = path.resolve(
+      __dirname,
+      '../../../app/api/agent/route.ts',
+    )
+    const source = fs.readFileSync(routeFile, 'utf8')
+    // Without this, a future refactor that splits Slack and dashboard
+    // into separate assembly paths would silently re-open the parity
+    // gap MISSION §9.4 forbids.
+    expect(source).toMatch(RUN_AGENT_IMPORT_RE)
+    expect(source).toMatch(/assembleAgentRun\s*\(/)
+  })
+
+  it('the slack events route delegates via agent-bridge (delegation contract)', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const routeFile = path.resolve(
+      __dirname,
+      '../../../app/api/slack/events/route.ts',
+    )
+    const source = fs.readFileSync(routeFile, 'utf8')
+    expect(source).toMatch(SLACK_BRIDGE_IMPORT_RE)
+    expect(source).toMatch(/callAgentForText\s*\(/)
+  })
+
+  it('the slack commands route delegates via agent-bridge (delegation contract)', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const routeFile = path.resolve(
+      __dirname,
+      '../../../app/api/slack/commands/route.ts',
+    )
+    const source = fs.readFileSync(routeFile, 'utf8')
+    expect(source).toMatch(SLACK_BRIDGE_IMPORT_RE)
+  })
+
+  it('the slack agent-bridge funnels into assembleAgentRun (single source of truth)', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const bridgeFile = path.resolve(
+      __dirname,
+      '../../slack/agent-bridge.ts',
+    )
+    const source = fs.readFileSync(bridgeFile, 'utf8')
+    // The bridge is the funnel point — every Slack-side agent call
+    // MUST go through assembleAgentRun. Without this assertion a
+    // future refactor could fork the Slack code path and re-open
+    // the parity gap.
+    expect(source).toMatch(RUN_AGENT_IMPORT_RE)
+    expect(source).toMatch(/assembleAgentRun\s*\(/)
+  })
+
   it('packer-success and legacy-fallback produce equivalent rep_profile (no path-dependent drift)', async () => {
     // Pin both paths to the same rep_profile shape so the
     // assertion below is meaningful: the test isn't claiming the

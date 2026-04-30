@@ -21,6 +21,9 @@ export { SlackDispatcher } from './notifications/slack-dispatcher'
 export type {
   PreCallBriefParams,
   WeeklyDigestParams,
+  DailyDigestParams,
+  DailyDigestPriority,
+  DailyDigestActionButton,
   LeadershipDigestParams,
   AlertParams,
   EscalationParams,

@@ -10,6 +10,8 @@ import {
   runPreCallBrief,
   runTranscriptIngest,
   runPortfolioDigest,
+  runDailyPush,
+  runTeamAggregation,
   runChurnEscalation,
   runEvalGrowth,
   runExemplarMiner,
@@ -69,6 +71,20 @@ export async function GET(req: Request) {
             break
           case 'portfolio_digest':
             await runPortfolioDigest(supabase, row.id)
+            break
+          case 'daily_push':
+            // Sprint 2 (Mission–Reality Gap roadmap) — top-3 priority
+            // accounts at the rep's local briefing time. Fan-out
+            // happens in /api/cron/daily-push; this dispatcher just
+            // executes the per-rep run.
+            await runDailyPush(supabase, row.id)
+            break
+          case 'team_aggregation':
+            // Sprint 4 (Mission–Reality Gap roadmap) — nightly snapshot
+            // of per-rep attainment, pipeline coverage, stalled deals,
+            // and forecast band into team_metrics. Powers
+            // /analytics/team for managers.
+            await runTeamAggregation(supabase, row.id)
             break
           case 'churn_escalation':
             await runChurnEscalation(supabase, row.id)

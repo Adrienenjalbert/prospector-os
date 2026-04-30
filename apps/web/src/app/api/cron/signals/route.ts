@@ -8,15 +8,59 @@ import {
 } from '@prospector/adapters'
 import { decryptCredentials, isEncryptedString } from '@/lib/crypto'
 
-const DEEP_RESEARCH_PROMPT = `You are a B2B sales intelligence analyst. Research the company "{company_name}" ({domain}) for recent developments relevant to temporary staffing needs.
+/**
+ * Build a tenant-aware deep-research prompt. Per cursorrules:
+ *   "DO NOT assume any specific tenant's vertical (e.g. Indeed Flex,
+ *    staffing) in any prompt or workflow — the system is multi-tenant
+ *    by design — read business_profiles.target_industries and
+ *    value_propositions."
+ *
+ * The static prompt previously hardcoded "temporary staffing needs" and
+ * staffing-specific signal types (`temp_job_posting`, "Staffing
+ * challenges", "Competitor staffing provider mentions"). That broke for
+ * every other tenant vertical. This builder reads the tenant's actual
+ * `business_profiles` row and synthesises a vertical-aware prompt; if
+ * the row is missing, falls back to a generic B2B sales-intelligence
+ * frame (no vertical assumption).
+ */
+interface TenantResearchContext {
+  companyDescription: string | null
+  targetIndustries: string[]
+  valueProps: { prop: string; when_to_use?: string }[]
+  industryContext: string | null
+}
+
+function buildDeepResearchPrompt(
+  ctx: TenantResearchContext,
+  companyName: string,
+  domain: string,
+): string {
+  const industriesLine = ctx.targetIndustries.length
+    ? `\nThis tenant sells primarily into: ${ctx.targetIndustries.join(', ')}.`
+    : ''
+  const valuePropsLine = ctx.valueProps.length
+    ? `\nKey value propositions the tenant leads with: ${ctx.valueProps
+        .slice(0, 3)
+        .map((v) => v.prop)
+        .join('; ')}.`
+    : ''
+  const industryNote = ctx.industryContext
+    ? `\nIndustry context this tenant operates in: ${ctx.industryContext}.`
+    : ''
+  const companyNote = ctx.companyDescription
+    ? `\nThe tenant is: ${ctx.companyDescription}.`
+    : ''
+
+  return `You are a B2B sales intelligence analyst. Research the company "${companyName}" (${domain}) for recent developments relevant to a sales conversation.
+${companyNote}${industryNote}${industriesLine}${valuePropsLine}
 
 Find information from the last 6 months on:
-1. Hiring activity — especially temporary, flexible, or agency roles
-2. Funding rounds or financial events
-3. Leadership changes — especially in Operations, HR, Facilities
-4. Expansion — new offices, facilities, markets
-5. Staffing challenges mentioned in news or reviews
-6. Competitor staffing provider mentions
+1. Hiring activity — growth, restructuring, or specific role expansion that signals demand for the tenant's product
+2. Funding rounds or financial events — investment, layoffs, profitability shifts
+3. Leadership changes — especially in roles that would be the tenant's typical buyer
+4. Expansion — new offices, facilities, markets, product launches
+5. Operational challenges or pain points mentioned in news, reviews, or social posts
+6. Competitor or vendor mentions — incumbents, displacements, or evaluations
 
 Return ONLY a JSON array of signals:
 [
@@ -26,11 +70,12 @@ Return ONLY a JSON array of signals:
     "description": "2-3 sentence description with specifics",
     "relevance": 0.0-1.0,
     "urgency": "immediate|this_week|this_month",
-    "recommended_action": "Specific action for the sales rep"
+    "recommended_action": "Specific action for the sales rep, framed against the tenant's value proposition"
   }
 ]
 
 Return empty array [] if no relevant signals found.`
+}
 
 type ClaudeSignal = {
   type: string
@@ -44,7 +89,8 @@ type ClaudeSignal = {
 async function runDeepResearch(
   companyName: string,
   domain: string,
-  config: { model: string; temperature: number; max_tokens: number }
+  config: { model: string; temperature: number; max_tokens: number },
+  tenantCtx: TenantResearchContext,
 ): Promise<ClaudeSignal[]> {
   // B3.4 + B4.1: route via `getModel()` AND switch to
   // `generateObject` with the shared ResearchSignalsSchema. Eliminates
@@ -58,9 +104,7 @@ async function runDeepResearch(
   const modelId = rawModel.includes('/') ? rawModel : `anthropic/${rawModel}`
 
   try {
-    const prompt = DEEP_RESEARCH_PROMPT
-      .replace('{company_name}', companyName)
-      .replace('{domain}', domain)
+    const prompt = buildDeepResearchPrompt(tenantCtx, companyName, domain)
 
     const { object } = await generateObject({
       model: getModel(modelId),
@@ -133,6 +177,22 @@ export async function GET(req: Request) {
       if (remaining <= 0) {
         tenantsOverBudget.push(tenant.id)
         continue
+      }
+
+      // Load the tenant's business profile so deep-research prompts are
+      // built per tenant vertical instead of hardcoded against staffing.
+      const { data: businessProfile } = await supabase
+        .from('business_profiles')
+        .select('company_description, target_industries, value_propositions, industry_context')
+        .eq('tenant_id', tenant.id)
+        .maybeSingle()
+      const tenantResearchCtx: TenantResearchContext = {
+        companyDescription: businessProfile?.company_description ?? null,
+        targetIndustries: (businessProfile?.target_industries as string[] | null) ?? [],
+        valueProps: ((businessProfile?.value_propositions as
+          | Array<{ prop: string; when_to_use?: string }>
+          | null) ?? []),
+        industryContext: businessProfile?.industry_context ?? null,
       }
 
       const staleThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
@@ -251,13 +311,14 @@ export async function GET(req: Request) {
           // data alone. The output is fluent fiction ("hiring surge",
           // "leadership change") that gets persisted as `signals` rows
           // and feeds the propensity scorer with hallucinated inputs.
-          // The hardcoded staffing-vertical prompt also violates the
-          // multi-tenant rule for any other tenant.
           //
-          // The proper replacement is a tool-using web-search Sonnet
-          // step — see plan D7.1. Until then, only tenants who explicitly
-          // opt in get this experimental signal source, and they accept
-          // the trade-off.
+          // The prompt itself is now built from the tenant's
+          // `business_profiles` row (target_industries, value_propositions,
+          // industry_context) so it is no longer vertical-locked. The
+          // hallucination risk remains — the proper replacement is a
+          // tool-using web-search Sonnet step (see plan D7.1). Until then,
+          // only tenants who explicitly opt in get this experimental
+          // signal source, and they accept the trade-off.
           const tenantBizConfig = (tenant.business_config as Record<string, unknown> | null) ?? {}
           const deepResearchOptIn = tenantBizConfig.deep_research_enabled === true
 
@@ -265,7 +326,7 @@ export async function GET(req: Request) {
           ? await shouldRunDeepResearch(supabase, tenant.id, company.icp_tier, company.name)
           : false
 
-        if (
+          if (
             company.icp_tier === 'A' &&
             deepResearchConfig &&
             deepResearchOptIn &&
@@ -277,7 +338,8 @@ export async function GET(req: Request) {
             const claudeSignals = await runDeepResearch(
               company.name,
               company.domain,
-              deepResearchConfig
+              deepResearchConfig,
+              tenantResearchCtx,
             )
 
             for (const sig of claudeSignals) {

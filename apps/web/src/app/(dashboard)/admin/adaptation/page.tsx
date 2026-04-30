@@ -35,6 +35,12 @@ export default async function AdaptationPage() {
   }
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  // Server component renders once per request — the React purity rule
+  // is a false positive here (it's calibrated for client components
+  // that re-render). The codebase has 22 pre-existing instances of
+  // this pattern; we follow the convention here rather than hoist.
+  // eslint-disable-next-line react-hooks/purity
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
   const [
     ledgerRes,
@@ -48,6 +54,11 @@ export default async function AdaptationPage() {
     memoryEventsRes,
     schemaRes,
     lintWarningsRes,
+    // Sprint 6 (Mission–Reality Gap roadmap) — 30-day cited-answer
+    // rate trend. MISSION §14 sets the target ≥ 95%; this panel
+    // makes the trend visible (not just the weekly snapshot in the
+    // table below).
+    citedAnswerEventsRes,
   ] = await Promise.all([
     supabase
       .from('calibration_ledger')
@@ -133,6 +144,19 @@ export default async function AdaptationPage() {
       .eq('event_type', 'wiki_page_lint_warning')
       .gte('created_at', sevenDaysAgo)
       .limit(200),
+    // Sprint 6 — every response_finished event in the last 30 days
+    // with its citation_count payload. The page reduces this
+    // client-side into per-day rates, then renders a sparkline +
+    // 30-day aggregate. Pulling occurred_at + payload (not
+    // created_at) so a slow telemetry write doesn't shift a row
+    // out of the window inconsistently.
+    supabase
+      .from('agent_events')
+      .select('payload, occurred_at')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('event_type', 'response_finished')
+      .gte('occurred_at', thirtyDaysAgo)
+      .limit(5000),
   ])
 
   // Phase 7 KPIs — triggers + bridges this week. Run as a separate
@@ -294,6 +318,48 @@ export default async function AdaptationPage() {
     bridgeYieldCounts[e.edge_kind] = (bridgeYieldCounts[e.edge_kind] ?? 0) + 1
   }
 
+  // Sprint 6 — 30-day cited-answer rate trend. Bucket each
+  // response_finished event by occurred_at day; rate per day = (rows
+  // with citation_count > 0) ÷ total rows that day. The MISSION §14
+  // target is ≥ 95% — anything below renders a red "below target"
+  // badge so a regressing tenant is immediately visible.
+  type CitedRow = { payload: { citation_count?: number } | null; occurred_at: string }
+  const citedRows = (citedAnswerEventsRes.data ?? []) as CitedRow[]
+  const citedByDay = new Map<string, { total: number; cited: number }>()
+  for (const row of citedRows) {
+    const day = (row.occurred_at ?? '').slice(0, 10)
+    if (!day) continue
+    const slot = citedByDay.get(day) ?? { total: 0, cited: 0 }
+    slot.total += 1
+    if ((row.payload?.citation_count ?? 0) > 0) slot.cited += 1
+    citedByDay.set(day, slot)
+  }
+  const citedSparkline: Array<{ day: string; rate: number; total: number }> = []
+  // Server-component loop — same once-per-request justification as above.
+  // eslint-disable-next-line react-hooks/purity
+  const renderEpoch = Date.now()
+  for (let d = 29; d >= 0; d--) {
+    const day = new Date(renderEpoch - d * 86400000).toISOString().slice(0, 10)
+    const slot = citedByDay.get(day) ?? { total: 0, cited: 0 }
+    citedSparkline.push({
+      day,
+      total: slot.total,
+      rate: slot.total > 0 ? slot.cited / slot.total : 0,
+    })
+  }
+  const citedTotalsAggregate = citedRows.reduce(
+    (acc, r) => ({
+      total: acc.total + 1,
+      cited: acc.cited + ((r.payload?.citation_count ?? 0) > 0 ? 1 : 0),
+    }),
+    { total: 0, cited: 0 },
+  )
+  const citedRate30d =
+    citedTotalsAggregate.total > 0
+      ? citedTotalsAggregate.cited / citedTotalsAggregate.total
+      : null
+  const citedTargetMet = citedRate30d !== null && citedRate30d >= 0.95
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <h1 className="text-2xl font-semibold text-zinc-100">Per-tenant adaptation</h1>
@@ -303,6 +369,48 @@ export default async function AdaptationPage() {
       </p>
 
       <section className="mt-6">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-zinc-200">
+            Cited-answer rate (30d)
+          </h2>
+          {citedRate30d !== null && (
+            <span
+              className={`rounded px-2 py-0.5 text-[11px] ${
+                citedTargetMet
+                  ? 'border border-emerald-700/40 bg-emerald-950/30 text-emerald-300'
+                  : 'border border-rose-700/40 bg-rose-950/30 text-rose-300'
+              }`}
+            >
+              {(citedRate30d * 100).toFixed(1)}% ·{' '}
+              {citedTargetMet ? 'meets ≥ 95% target' : 'below ≥ 95% target'}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-[11px] text-zinc-500">
+          MISSION §14 sets the target ≥ 95%. Per-day rate = responses with at
+          least one citation ÷ total responses. Sources:{' '}
+          <code className="rounded bg-zinc-900 px-1 text-[10px]">
+            agent_events.payload.citation_count
+          </code>{' '}
+          on <code className="rounded bg-zinc-900 px-1 text-[10px]">response_finished</code>.
+        </p>
+        {citedRows.length === 0 ? (
+          <p className="mt-3 text-xs text-zinc-500">
+            No agent responses in the last 30 days. The chart populates once
+            the dashboard chat or Slack mentions/DMs run.
+          </p>
+        ) : (
+          <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+            <CitedRateSparkline days={citedSparkline} />
+            <p className="mt-2 text-[11px] text-zinc-500">
+              {citedTotalsAggregate.cited}/{citedTotalsAggregate.total} responses cited at
+              least one source in the last 30 days.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-8">
         <h2 className="text-sm font-semibold text-zinc-200">Calibration ledger</h2>
         {(ledgerRes.data ?? []).length > 0 ? (
           <div className="mt-2 overflow-hidden rounded-lg border border-zinc-800">
@@ -792,6 +900,81 @@ function KpiCard({
       <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
       <div className="mt-1 text-lg font-semibold text-zinc-100 tabular-nums">{value}</div>
       <div className="mt-0.5 text-[11px] text-zinc-500">{sublabel}</div>
+    </div>
+  )
+}
+
+/**
+ * Inline-SVG cited-answer rate sparkline (Sprint 6). Same dep-free
+ * approach as the cost sparkline on /admin/roi. Threshold line at
+ * 95% (MISSION §14) drawn so dips below target are visually obvious.
+ */
+function CitedRateSparkline({
+  days,
+}: {
+  days: Array<{ day: string; rate: number; total: number }>
+}) {
+  const w = 600
+  const h = 100
+  const pad = 4
+  // Y axis: 0 to 1 (rate). Threshold line lives at 0.95.
+  const yFor = (r: number) => h - pad - r * (h - pad * 2)
+  const stepX = days.length > 1 ? (w - pad * 2) / (days.length - 1) : 0
+  const points = days.map((d, i) => ({
+    x: pad + i * stepX,
+    y: yFor(d.rate),
+  }))
+  const lineD = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+    .join(' ')
+
+  const last = days[days.length - 1]
+  return (
+    <div>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className="h-24 w-full"
+        role="img"
+        aria-label="Cited-answer rate per day, last 30 days"
+      >
+        {/* 95% target line */}
+        <line
+          x1={pad}
+          x2={w - pad}
+          y1={yFor(0.95)}
+          y2={yFor(0.95)}
+          stroke="currentColor"
+          strokeDasharray="3 3"
+          className="text-emerald-700/50"
+        />
+        <text
+          x={w - pad}
+          y={yFor(0.95) - 3}
+          fontSize="9"
+          textAnchor="end"
+          fill="currentColor"
+          className="fill-emerald-500/70"
+        >
+          95% target
+        </text>
+        <path
+          d={lineD}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          className="text-sky-300"
+        />
+      </svg>
+      <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
+        <span>{days[0]?.day}</span>
+        <span className="font-mono tabular-nums">
+          today: {(last?.rate ?? 0) * 100 < 1
+            ? '0%'
+            : `${((last?.rate ?? 0) * 100).toFixed(0)}%`}{' '}
+          ({last?.total ?? 0} responses)
+        </span>
+        <span>{last?.day}</span>
+      </div>
     </div>
   )
 }

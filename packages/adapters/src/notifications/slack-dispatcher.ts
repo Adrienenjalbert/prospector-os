@@ -13,6 +13,10 @@ const DEFAULT_COOLDOWN_DAYS: Record<string, number> = {
   leadership_digest: 6,
   alert: 2,
   escalation: 7,
+  // daily_digest: same-day cooldown enforced by the workflow's idempotency
+  // key (`daily_push:{tenant}:{rep}:{YYYY-MM-DD}`) — set to 0 here so the
+  // dispatcher doesn't double-gate.
+  daily_digest: 0,
 }
 
 export interface CooldownOptions {
@@ -308,6 +312,74 @@ export class SlackDispatcher {
     if (result.ok) {
       await this.recordCooldown('weekly_digest', cooldown)
       await this.recordPush('weekly_digest', pushBudget, null, params.interactionId)
+    }
+    return result
+  }
+
+  /**
+   * Daily morning push — top-N priority accounts for today, ≤150 words and
+   * ≤3 Next-Step buttons per MISSION §9.1. This is the AE's primary
+   * proactive touchpoint that the strategy doc has always promised but
+   * the codebase didn't ship until Sprint 2 of the mission-reality gap
+   * roadmap. The Pull-to-Push Ratio measured on /admin/roi depends on
+   * this method actually firing (it's the denominator).
+   *
+   * Cooldown semantics: the workflow already keys idempotency on
+   * `daily_push:{tenant}:{rep}:{YYYY-MM-DD}` so a same-day re-enqueue is
+   * a no-op upstream. The dispatcher's cooldown_days is set to 0 to
+   * avoid double-gating; the budget gate still fires.
+   */
+  async sendDailyDigest(
+    params: DailyDigestParams,
+    cooldown?: CooldownOptions,
+    pushBudget?: PushBudgetOptions,
+  ): Promise<DispatchResult> {
+    const skipCooldown = await this.guardCooldown('daily_digest', cooldown)
+    if (skipCooldown) return skipCooldown
+    const skipBudget = await this.guardPushBudget('daily_digest', pushBudget)
+    if (skipBudget) return skipBudget
+
+    const blocks: SlackBlock[] = [
+      section(`☀️ *Top ${params.priorities.length} today, ${params.recipientName}*`),
+      divider(),
+    ]
+
+    for (const p of params.priorities) {
+      const lines = [`*${p.accountName}*`]
+      lines.push(`_${p.reason}_`)
+      if (p.nextAction) lines.push(`▸ ${p.nextAction}`)
+      blocks.push(section(lines.join('\n')))
+    }
+
+    if (params.actionButtons.length > 0) {
+      // Keep buttons capped at 3 per MISSION §9.1. Caller is expected to
+      // pre-trim, but the slice here is defence in depth.
+      blocks.push({
+        type: 'actions',
+        block_id: `daily_push_actions_${params.interactionId}`,
+        elements: params.actionButtons.slice(0, 3).map((b) => {
+          const el: Record<string, unknown> = {
+            type: 'button',
+            text: { type: 'plain_text', text: b.label, emoji: true },
+            action_id: b.actionId,
+            value: b.value,
+          }
+          if (b.url) el.url = b.url
+          return el
+        }),
+      })
+    }
+
+    blocks.push(this.buildFeedbackActions(params.interactionId))
+
+    const result = await this.sendBlocks({
+      channel: params.channel,
+      text: `Top ${params.priorities.length} priorities today`,
+      blocks,
+    })
+    if (result.ok) {
+      await this.recordCooldown('daily_digest', cooldown)
+      await this.recordPush('daily_digest', pushBudget, null, params.interactionId)
     }
     return result
   }
@@ -645,6 +717,37 @@ export interface WeeklyDigestParams {
   watchAccounts: { name: string; reason: string }[]
   themes: string[]
   positiveSignals: string[]
+  interactionId: string
+}
+
+export interface DailyDigestPriority {
+  accountName: string
+  reason: string
+  nextAction?: string
+  /** URN of the company so the action buttons can deep-link / inject context. */
+  accountUrn?: string
+}
+
+export interface DailyDigestActionButton {
+  label: string
+  actionId: string
+  value: string
+  /**
+   * Optional external URL the button deep-links to (e.g. /inbox in
+   * the dashboard). When present Slack opens it in the browser AND
+   * still dispatches a block_action callback so the click is
+   * captured for telemetry.
+   */
+  url?: string
+}
+
+export interface DailyDigestParams {
+  channel: string
+  recipientName: string
+  /** Capped to ≤3 by the workflow per MISSION §9.1. */
+  priorities: DailyDigestPriority[]
+  /** ≤3 Next-Step buttons. */
+  actionButtons: DailyDigestActionButton[]
   interactionId: string
 }
 

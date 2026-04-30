@@ -35,6 +35,7 @@ import {
   enqueueMineCompositeTriggers,
   enqueueCompileBridgeNeighbourhoods,
   enqueueLintTriggers,
+  enqueueTeamAggregation,
 } from '@/lib/workflows'
 
 /**
@@ -183,6 +184,12 @@ export async function GET(req: Request) {
         // triggers. Expires stale rows (prior_beta += 1) and
         // dismisses orphans (company hard-deleted). Pure SQL.
         enqueueLintTriggers(supabase, tenantId),
+        // Sprint 4 (Mission–Reality Gap roadmap) — daily per-rep
+        // attainment / pipeline-coverage / forecast snapshot for
+        // /analytics/team. Pure SQL + bootstrap CI; no LLM cost.
+        // Idempotent per (tenant, day) so the daily cron's natural
+        // retries don't double-write.
+        enqueueTeamAggregation(supabase, tenantId),
       ])
       let ok = 0
       for (const r of results) {

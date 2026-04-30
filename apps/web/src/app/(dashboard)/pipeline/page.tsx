@@ -1,6 +1,9 @@
+import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { createSupabaseServer } from '@/lib/supabase/server'
 import { PipelineClient } from '@/components/pipeline/pipeline-client'
 import type { StageMetric } from '@/components/pipeline/pipeline-funnel-chart'
+import { isDemoTenantSlug } from '@/lib/demo-tenant'
 
 export const metadata = {
   title: 'Pipeline',
@@ -45,13 +48,19 @@ interface DealRow {
   contactName: string | null
 }
 
+// Vertical-neutral demo deals. Used ONLY when the active tenant is
+// flagged as a demo tenant (slug in NEXT_PUBLIC_DEMO_TENANT_SLUGS or
+// `demo`/`sandbox`). MISSION §9.8 — production tenants get an empty
+// state, never fabricated pipeline rows. The rule from .cursorrules
+// also forbids assuming any specific vertical (was previously
+// "Temp Staffing"-flavoured), so the labels here stay generic.
 const DEMO_DEALS: DealRow[] = [
-  { id: 'demo-p1', name: 'Q2 Temp Staffing', companyName: 'Acme Logistics', companyId: 'demo-001', companyPropensity: 87, companyIcpTier: 'A', value: 800_000, stage: 'Proposal', daysInStage: 22, isStalled: true, stallReason: 'No contact activity in 14 days', contactName: 'Sarah Chen' },
-  { id: 'demo-p2', name: 'Warehouse coverage FY25', companyName: 'Beta Warehousing', companyId: 'demo-002', companyPropensity: 79, companyIcpTier: 'A', value: 200_000, stage: 'Negotiation', daysInStage: 6, isStalled: false, stallReason: null, contactName: 'James Miller' },
-  { id: 'demo-p3', name: 'National rollout — Phase 1', companyName: 'Gamma Manufacturing', companyId: 'demo-003', companyPropensity: 63, companyIcpTier: 'A', value: 450_000, stage: 'Qualified', daysInStage: 11, isStalled: false, stallReason: null, contactName: null },
-  { id: 'demo-p4', name: 'Pilot — Manchester hub', companyName: 'Delta Distribution', companyId: null, companyPropensity: 45, companyIcpTier: 'B', value: 95_000, stage: 'Lead', daysInStage: 4, isStalled: false, stallReason: null, contactName: null },
-  { id: 'demo-p5', name: 'Seasonal surge staffing', companyName: 'Echo Foods Ltd', companyId: null, companyPropensity: 55, companyIcpTier: 'B', value: 120_000, stage: 'Proposal', daysInStage: 18, isStalled: true, stallReason: 'Waiting on budget approval', contactName: null },
-  { id: 'demo-p6', name: 'Driver pool setup', companyName: 'Foxtrot Transport', companyId: null, companyPropensity: 42, companyIcpTier: 'B', value: 180_000, stage: 'Lead', daysInStage: 7, isStalled: false, stallReason: null, contactName: null },
+  { id: 'demo-p1', name: 'Acme — Q2 expansion', companyName: 'Acme Logistics', companyId: 'demo-001', companyPropensity: 87, companyIcpTier: 'A', value: 800_000, stage: 'Proposal', daysInStage: 22, isStalled: true, stallReason: 'No contact activity in 14 days', contactName: 'Sarah Chen' },
+  { id: 'demo-p2', name: 'Beta — FY25 coverage', companyName: 'Beta Operations', companyId: 'demo-002', companyPropensity: 79, companyIcpTier: 'A', value: 200_000, stage: 'Negotiation', daysInStage: 6, isStalled: false, stallReason: null, contactName: 'James Miller' },
+  { id: 'demo-p3', name: 'Gamma — National rollout', companyName: 'Gamma Industries', companyId: 'demo-003', companyPropensity: 63, companyIcpTier: 'A', value: 450_000, stage: 'Qualified', daysInStage: 11, isStalled: false, stallReason: null, contactName: null },
+  { id: 'demo-p4', name: 'Delta — Pilot phase', companyName: 'Delta Holdings', companyId: null, companyPropensity: 45, companyIcpTier: 'B', value: 95_000, stage: 'Lead', daysInStage: 4, isStalled: false, stallReason: null, contactName: null },
+  { id: 'demo-p5', name: 'Echo — Seasonal expansion', companyName: 'Echo Group', companyId: null, companyPropensity: 55, companyIcpTier: 'B', value: 120_000, stage: 'Proposal', daysInStage: 18, isStalled: true, stallReason: 'Waiting on budget approval', contactName: null },
+  { id: 'demo-p6', name: 'Foxtrot — Initial deployment', companyName: 'Foxtrot Inc.', companyId: null, companyPropensity: 42, companyIcpTier: 'B', value: 180_000, stage: 'Lead', daysInStage: 7, isStalled: false, stallReason: null, contactName: null },
 ]
 
 const DEMO_STAGE_METRICS: StageMetric[] = [
@@ -61,11 +70,15 @@ const DEMO_STAGE_METRICS: StageMetric[] = [
   { stage: 'Negotiation', repConversion: 78, benchmarkConversion: 72, delta: 6, dealCount: 1, totalValue: 200_000, stallCount: 0, dropRate: 22, status: 'OPPORTUNITY' },
 ]
 
-async function fetchMergedPipelineData(): Promise<{
+interface PipelinePageData {
   deals: DealRow[]
   stageMetrics: StageMetric[]
   kpis: { totalPipeline: number; dealCount: number; stallCount: number; winRate: string; avgCycleDays: number; weightedRevenue: number }
-} | null> {
+  isDemoTenant: boolean
+  hasData: boolean
+}
+
+async function fetchMergedPipelineData(): Promise<PipelinePageData | null> {
   try {
     const supabase = await createSupabaseServer()
     const { data: { user } } = await supabase.auth.getUser()
@@ -78,13 +91,28 @@ async function fetchMergedPipelineData(): Promise<{
       .single()
     if (!profile?.rep_profile_id) return null
 
+    const { data: tenant } = await supabase
+      .from('tenants')
+      .select('slug')
+      .eq('id', profile.tenant_id)
+      .maybeSingle()
+    const isDemoTenant = isDemoTenantSlug(tenant?.slug)
+
     const { data: repProfile } = await supabase
       .from('rep_profiles')
       .select('crm_id, kpi_win_rate')
       .eq('id', profile.rep_profile_id)
       .single()
     const repCrmId = repProfile?.crm_id
-    if (!repCrmId) return null
+    if (!repCrmId) {
+      return {
+        deals: [],
+        stageMetrics: [],
+        kpis: { totalPipeline: 0, dealCount: 0, stallCount: 0, winRate: '—', avgCycleDays: 0, weightedRevenue: 0 },
+        isDemoTenant,
+        hasData: false,
+      }
+    }
 
     const tenantId = profile.tenant_id
 
@@ -114,7 +142,15 @@ async function fetchMergedPipelineData(): Promise<{
     ])
 
     const allOpps = oppsRes.data ?? []
-    if (allOpps.length === 0) return null
+    if (allOpps.length === 0) {
+      return {
+        deals: [],
+        stageMetrics: [],
+        kpis: { totalPipeline: 0, dealCount: 0, stallCount: 0, winRate: '—', avgCycleDays: 0, weightedRevenue: 0 },
+        isDemoTenant,
+        hasData: false,
+      }
+    }
 
     const openOpps = allOpps.filter((o) => !o.is_closed)
     const closedOpps = allOpps.filter((o) => o.is_closed)
@@ -230,6 +266,8 @@ async function fetchMergedPipelineData(): Promise<{
         avgCycleDays,
         weightedRevenue: Math.round(weightedRevenue),
       },
+      isDemoTenant,
+      hasData: true,
     }
   } catch (e) {
     console.error('[pipeline]', e)
@@ -237,20 +275,59 @@ async function fetchMergedPipelineData(): Promise<{
   }
 }
 
+function EmptyPipeline() {
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">No pipeline yet</h1>
+      <p className="mt-2 text-sm text-zinc-400">
+        Once your CRM has open opportunities owned by you, the funnel and
+        deal list render here. The nightly scoring run feeds this view.
+      </p>
+      <div className="mt-6 flex flex-wrap gap-3">
+        <Link
+          href="/objects/deals"
+          className="rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-100 hover:bg-zinc-800"
+        >
+          Browse deals
+        </Link>
+        <Link
+          href="/onboarding"
+          className="rounded-md border border-sky-700 bg-sky-900/40 px-4 py-2 text-sm text-sky-100 hover:bg-sky-900/60"
+        >
+          Connect your CRM
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 export default async function PipelinePage() {
   const data = await fetchMergedPipelineData()
-  const isDemo = !data
 
-  const deals = data?.deals ?? DEMO_DEALS
-  const stageMetrics = data?.stageMetrics ?? DEMO_STAGE_METRICS
-  const kpis = data?.kpis ?? {
-    totalPipeline: DEMO_DEALS.reduce((s, d) => s + (d.value ?? 0), 0),
-    dealCount: DEMO_DEALS.length,
-    stallCount: DEMO_DEALS.filter((d) => d.isStalled).length,
-    winRate: '24%',
-    avgCycleDays: 14,
-    weightedRevenue: 420_000,
+  if (!data) {
+    redirect('/login')
   }
 
-  return <PipelineClient deals={deals} stageMetrics={stageMetrics} kpis={kpis} isDemo={isDemo} />
+  // MISSION §9.8 — demo data only for explicitly flagged demo tenants.
+  // Real tenants with no pipeline get an honest empty state.
+  if (!data.hasData && !data.isDemoTenant) {
+    return <EmptyPipeline />
+  }
+
+  const useDemoData = !data.hasData && data.isDemoTenant
+
+  const deals = useDemoData ? DEMO_DEALS : data.deals
+  const stageMetrics = useDemoData ? DEMO_STAGE_METRICS : data.stageMetrics
+  const kpis = useDemoData
+    ? {
+        totalPipeline: DEMO_DEALS.reduce((s, d) => s + (d.value ?? 0), 0),
+        dealCount: DEMO_DEALS.length,
+        stallCount: DEMO_DEALS.filter((d) => d.isStalled).length,
+        winRate: '24%',
+        avgCycleDays: 14,
+        weightedRevenue: 420_000,
+      }
+    : data.kpis
+
+  return <PipelineClient deals={deals} stageMetrics={stageMetrics} kpis={kpis} isDemo={useDemoData} />
 }

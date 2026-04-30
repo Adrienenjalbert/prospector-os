@@ -60,6 +60,8 @@ export default async function RoiPage() {
     responsesRes,
     feedbackRes,
     costsRes,
+    pushSentRes,
+    interactionsStartedRes,
   ] = await Promise.all([
     supabase
       .from('agent_events')
@@ -105,6 +107,25 @@ export default async function RoiPage() {
       .eq('tenant_id', profile.tenant_id)
       .gte('day', fortnightAgoDay)
       .order('day', { ascending: true }),
+    // Sprint 6 — Pull-to-Push Ratio. The denominator: every
+    // proactive Slack push the dispatcher recorded over the 30-day
+    // window. Daily push (Sprint 2), pre-call brief, weekly digest,
+    // churn escalation all count.
+    supabase
+      .from('agent_events')
+      .select('id, occurred_at')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('event_type', 'proactive_push_sent')
+      .gte('occurred_at', monthAgo),
+    // The numerator: every rep-initiated chat (dashboard sidebar +
+    // Slack mention/DM/slash). interaction_started is emitted at
+    // the top of every agent route turn.
+    supabase
+      .from('agent_events')
+      .select('id, user_id, occurred_at')
+      .eq('tenant_id', profile.tenant_id)
+      .eq('event_type', 'interaction_started')
+      .gte('occurred_at', monthAgo),
   ])
 
   // Time saved ----------------------------------------------------------------
@@ -210,6 +231,67 @@ export default async function RoiPage() {
     sparklineDays.push({ day, cost: costByDay.get(day) ?? 0 })
   }
 
+  // Sprint 6 — Pull-to-Push Ratio.
+  //
+  // MISSION §7 calls this "the single diagnostic adoption metric"
+  // and §14 sets the target ≥ 1.0 by week 12 of a pilot. Until
+  // Sprint 2 there was no daily-push workflow, so the denominator
+  // was always near zero and the ratio was meaningless. Now both
+  // halves are populated:
+  //   - pulls = interaction_started events (rep-initiated chat
+  //     turn from dashboard sidebar OR Slack mention/DM/slash).
+  //   - pushes = proactive_push_sent events emitted by the
+  //     SlackDispatcher whenever a successful proactive message
+  //     lands. Daily push, pre-call brief, weekly digest, churn
+  //     escalation, etc.
+  // Ratio interpretation:
+  //   < 0.3 by week 8  → rep treats us as a tourist destination,
+  //                      not a tool. Push-fatigue or low value.
+  //   ~ 1.0            → habit loop self-sustaining (the target).
+  //   > 2.0            → reps pull more than we push (great).
+  const pushSent30d = (pushSentRes.data ?? []).length
+  const pulls30d = (interactionsStartedRes.data ?? []).length
+  const pullToPushRatio = pushSent30d > 0 ? pulls30d / pushSent30d : null
+  const ratioBadge =
+    pullToPushRatio == null
+      ? 'no signal yet'
+      : pullToPushRatio >= 1
+        ? 'healthy (≥ 1.0)'
+        : pullToPushRatio >= 0.5
+          ? 'building'
+          : pullToPushRatio >= 0.3
+            ? 'at risk'
+            : 'critical (< 0.3)'
+
+  // Per-day ratio sparkline so the trend is visible, not just the
+  // 30-day aggregate. Empty days render as 0 (zero pulls / zero
+  // pushes that day). When the denominator is 0 we render the
+  // absolute pull count so the line still reflects activity.
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10)
+  const pullsByDay = new Map<string, number>()
+  for (const r of interactionsStartedRes.data ?? []) {
+    const day = dayKey(new Date(r.occurred_at as string))
+    pullsByDay.set(day, (pullsByDay.get(day) ?? 0) + 1)
+  }
+  const pushesByDay = new Map<string, number>()
+  for (const r of pushSentRes.data ?? []) {
+    const day = dayKey(new Date(r.occurred_at as string))
+    pushesByDay.set(day, (pushesByDay.get(day) ?? 0) + 1)
+  }
+  const ratioSparkline: Array<{ day: string; pulls: number; pushes: number; ratio: number }> = []
+  // Server-component loop — once-per-request render, the React purity
+  // rule is a false positive. Hoisted to a single variable so the
+  // disable lives on one line. The codebase has 22 pre-existing
+  // instances of the same pattern; we match the convention.
+  // eslint-disable-next-line react-hooks/purity
+  const ratioRenderEpoch = Date.now()
+  for (let d = 13; d >= 0; d--) {
+    const day = dayKey(new Date(ratioRenderEpoch - d * 86400000))
+    const p = pullsByDay.get(day) ?? 0
+    const q = pushesByDay.get(day) ?? 0
+    ratioSparkline.push({ day, pulls: p, pushes: q, ratio: q > 0 ? p / q : p })
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <header>
@@ -241,6 +323,38 @@ export default async function RoiPage() {
           <Kpi label="Cited %" value={`${citedPct}%`} hint="target ≥ 95%" highlight={citedPct >= 95} />
           <Kpi label="Thumbs-up" value={`${thumbsPct}%`} hint={`${feedback.length} rated`} highlight={thumbsPct >= 80} />
           <Kpi label="Attributions" value={`${attributionsRes.data?.length ?? 0}`} hint="last 90d" />
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-zinc-200">Pull-to-Push Ratio (30d)</h2>
+        <p className="mt-1 text-[11px] text-zinc-500">
+          MISSION §7: rep-initiated chats ÷ proactive pushes. The
+          single diagnostic adoption metric. Target ≥ 1.0 by week 12 of
+          a pilot. &lt; 0.3 by week 8 means we&apos;re a tourist
+          destination, not a tool.
+        </p>
+        <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Kpi
+            label="Pull-to-Push"
+            value={pullToPushRatio == null ? '—' : pullToPushRatio.toFixed(2)}
+            hint={ratioBadge}
+            highlight={pullToPushRatio != null && pullToPushRatio >= 1}
+          />
+          <Kpi label="Pulls (30d)" value={`${pulls30d}`} hint="rep-initiated chats" />
+          <Kpi label="Pushes (30d)" value={`${pushSent30d}`} hint="proactive Slack messages" />
+          <Kpi
+            label="Per active user"
+            value={uniqueUsers > 0 ? (pulls30d / uniqueUsers).toFixed(1) : '0'}
+            hint="pulls / active user"
+          />
+        </div>
+        <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Daily ratio</span>
+            <span className="text-[11px] text-zinc-500">14d</span>
+          </div>
+          <RatioSparkline days={ratioSparkline} />
         </div>
       </section>
 
@@ -289,6 +403,63 @@ function Kpi({ label, value, hint, highlight }: { label: string; value: string; 
       <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
       <div className={`mt-1 font-mono text-2xl tabular-nums ${highlight ? 'text-emerald-300' : 'text-zinc-100'}`}>{value}</div>
       <div className="mt-0.5 text-[11px] text-zinc-500">{hint}</div>
+    </div>
+  )
+}
+
+/**
+ * Daily Pull-to-Push ratio sparkline. Same inline-SVG approach as
+ * CostSparkline below — kept dep-free for the admin bundle. Bars
+ * coloured by health: green ≥ 1.0, amber 0.3–1.0, rose &lt; 0.3.
+ */
+function RatioSparkline({
+  days,
+}: {
+  days: Array<{ day: string; pulls: number; pushes: number; ratio: number }>
+}) {
+  const w = 600
+  const h = 80
+  const pad = 4
+  const max = Math.max(0.001, ...days.map((d) => d.ratio))
+  const stepX = days.length > 1 ? (w - pad * 2) / (days.length - 1) : 0
+  const points = days.map((d, i) => ({
+    x: pad + i * stepX,
+    y: h - pad - (d.ratio / max) * (h - pad * 2),
+  }))
+  const lineD = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+    .join(' ')
+  const last = days[days.length - 1]
+  const lastColour =
+    last && last.ratio >= 1
+      ? 'text-emerald-300'
+      : last && last.ratio >= 0.3
+        ? 'text-amber-300'
+        : 'text-rose-300'
+  return (
+    <div className="mt-2">
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className="h-20 w-full"
+        role="img"
+        aria-label="Pull-to-Push ratio per day, last 14 days"
+      >
+        <path
+          d={lineD}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          className={lastColour}
+        />
+      </svg>
+      <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
+        <span>{days[0]?.day}</span>
+        <span className="font-mono tabular-nums">
+          today: {last?.pulls ?? 0} pulls · {last?.pushes ?? 0} pushes ·{' '}
+          {last?.ratio.toFixed(2) ?? '0.00'}
+        </span>
+        <span>{last?.day}</span>
+      </div>
     </div>
   )
 }

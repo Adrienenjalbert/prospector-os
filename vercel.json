@@ -7,6 +7,7 @@
     { "path": "/api/cron/workflows", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/learning", "schedule": "0 2 * * *" },
     { "path": "/api/cron/digests", "schedule": "0 13 * * 1" },
+    { "path": "/api/cron/daily-push", "schedule": "0 * * * *" },
     { "path": "/api/cron/embeddings", "schedule": "0 3 * * *" }
   ]
 }
